@@ -289,7 +289,6 @@ class BoardAnalysisResult(StrictModel):
     """Complete structured output returned by the Gemini model in model image coordinates."""
 
     board_summary: str = Field(
-        default="",
         max_length=MAX_BOARD_SUMMARY_LENGTH,
         description=(
             "At most two short sentences describing currently visible work; "
@@ -297,7 +296,6 @@ class BoardAnalysisResult(StrictModel):
         ),
     )
     errors: list[DetectedError] = Field(
-        default_factory=list,
         max_length=MAX_FINDINGS,
         description=(
             "List of at most 20 high-confidence demonstrable math, physics, or spelling errors "
@@ -502,6 +500,8 @@ class NotesResponse(StrictModel):
     lecture_title: str = Field(max_length=MAX_NOTES_TITLE_LENGTH)
     updates: list[NoteSectionUpdate] = Field(max_length=MAX_NOTES_UPDATES)
     latency_ms: int = Field(ge=0)
+
+
 class SpeechVoiceOption(StrictModel):
     """Selectable ElevenLabs voice advertised to the client settings UI."""
 

@@ -53,7 +53,7 @@ export const AnalysisResponseSchema = z
     latency_ms: z.number().int().nonnegative(),
   })
   .strict()
-export type AnalysisResponse = z.infer<typeof AnalysisResponseSchema>
+export type AnalysisResponse = z.infer<typeof AnalysisResponseSchema> & { incomplete?: boolean }
 
 export const SpeechVoiceOptionSchema = z
   .object({

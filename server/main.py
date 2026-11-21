@@ -7,15 +7,16 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Annotated, cast
 from uuid import UUID
 
 import httpx
+from anyio import CancelScope
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from google import genai
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -23,6 +24,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from analyzer import (
     AnalysisTimeoutError,
+    AnalyzerError,
     AsyncGenAIClient,
     ModelBlockedError,
     ModelTruncatedError,
@@ -51,6 +53,7 @@ from schemas import (
 )
 from speech import (
     DEFAULT_VOICE_KEY,
+    OpenedSpeechStream,
     SlidingWindowRateLimiter,
     SpeechAuthError,
     SpeechConfigError,
@@ -68,6 +71,7 @@ from vision import (
     ImageEncodingError,
     ImagePixelLimitError,
     InvalidCalibrationError,
+    PreparedImage,
     ProjectionError,
     UnsupportedImageFormatError,
     detect_board_corners,
@@ -79,6 +83,7 @@ from vision import (
 logger = logging.getLogger("chalkolate.api")
 
 MAX_SPEECH_BODY_BYTES = 4096
+PARTIAL_ANALYSIS_HEADER = "X-Chalkolate-Partial-Analysis"
 
 
 class ConcurrencyGate:
@@ -101,6 +106,28 @@ class ConcurrencyGate:
     @property
     def active(self) -> int:
         return self._active
+
+
+class SpeechStreamingResponse(StreamingResponse):
+    def __init__(self, opened: OpenedSpeechStream, gate: ConcurrencyGate) -> None:
+        super().__init__(
+            opened.iter_chunks(),
+            media_type=opened.media_type,
+            headers={"Cache-Control": "no-store"},
+        )
+        self.opened = opened
+        self.gate = gate
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            try:
+                # A disconnect can interrupt the response before iteration starts or at a yield.
+                with CancelScope(shield=True):
+                    await self.opened.aclose()
+            finally:
+                self.gate.release()
 
 
 class _StreamedBodyLimitExceeded(BaseException):
@@ -128,8 +155,10 @@ class RequestBodyLimitMiddleware:
         raw_content_length = headers.get(b"content-length")
         if raw_content_length is not None:
             try:
-                content_length = int(raw_content_length.decode("ascii"))
-            except (UnicodeDecodeError, ValueError):
+                if not raw_content_length.isdigit():
+                    raise ValueError
+                content_length = int(raw_content_length)
+            except ValueError:
                 await _send_error_json(
                     send,
                     status_code=400,
@@ -220,7 +249,7 @@ def _error_response(
 def _extract_request_id_best_effort(raw_metadata: str) -> str | None:
     try:
         data = json.loads(raw_metadata)
-    except (json.JSONDecodeError, TypeError):
+    except (ValueError, RecursionError):
         return None
     if not isinstance(data, dict):
         return None
@@ -268,6 +297,125 @@ def _speech_error_response(exc: SpeechError) -> JSONResponse:
     return _error_response(status_code=502, code="SPEECH_PROVIDER_ERROR", message=message)
 
 
+def _model_error_response(exc: AnalyzerError, request_id: str) -> JSONResponse:
+    if isinstance(exc, AnalysisTimeoutError):
+        return _error_response(
+            status_code=504,
+            code="UPSTREAM_TIMEOUT",
+            message=str(exc),
+            request_id=request_id,
+        )
+    if isinstance(exc, UpstreamRateLimitError):
+        headers = {"Retry-After": str(exc.retry_after_s)} if exc.retry_after_s is not None else None
+        return _error_response(
+            status_code=429,
+            code="UPSTREAM_RATE_LIMITED",
+            message=str(exc),
+            request_id=request_id,
+            headers=headers,
+        )
+    if isinstance(exc, UpstreamAuthError):
+        return _error_response(
+            status_code=502,
+            code="UPSTREAM_AUTH_ERROR",
+            message=str(exc),
+            request_id=request_id,
+        )
+    if isinstance(exc, UpstreamUnavailableError):
+        return _error_response(
+            status_code=503,
+            code="UPSTREAM_UNAVAILABLE",
+            message=str(exc),
+            request_id=request_id,
+            headers={"Retry-After": str(exc.retry_after_s or 5)},
+        )
+    if isinstance(exc, (ModelBlockedError, ModelTruncatedError, UnusableModelOutputError)):
+        return _error_response(
+            status_code=502,
+            code="UNUSABLE_MODEL_OUTPUT",
+            message=str(exc),
+            request_id=request_id,
+        )
+    if isinstance(exc, UpstreamProviderError):
+        return _error_response(
+            status_code=502,
+            code="UPSTREAM_PROVIDER_ERROR",
+            message=str(exc),
+            request_id=request_id,
+        )
+    raise exc
+
+
+async def _prepare_snapshot(
+    raw_bytes: bytes,
+    metadata: AnalysisMetadata | NotesMetadata,
+    settings: Settings,
+    request_id: str,
+) -> PreparedImage | JSONResponse:
+    try:
+        return await asyncio.to_thread(
+            prepare_image,
+            raw_bytes,
+            corners=metadata.corners,
+            max_image_pixels=settings.max_image_pixels,
+            max_long_edge=settings.max_model_long_edge,
+        )
+    except UnsupportedImageFormatError as exc:
+        return _error_response(
+            status_code=415,
+            code="UNSUPPORTED_IMAGE_FORMAT",
+            message=str(exc),
+            request_id=request_id,
+        )
+    except ImagePixelLimitError as exc:
+        return _error_response(
+            status_code=413,
+            code="IMAGE_PIXELS_EXCEEDED",
+            message=str(exc),
+            request_id=request_id,
+        )
+    except CorruptImageError as exc:
+        return _error_response(
+            status_code=422,
+            code="CORRUPT_IMAGE",
+            message=str(exc),
+            request_id=request_id,
+        )
+    except InvalidCalibrationError as exc:
+        return _error_response(
+            status_code=422,
+            code="INVALID_CALIBRATION",
+            message=str(exc),
+            request_id=request_id,
+        )
+    except ImageEncodingError as exc:
+        return _error_response(
+            status_code=500,
+            code="IMAGE_ENCODING_FAILED",
+            message=str(exc),
+            request_id=request_id,
+        )
+
+
+async def _read_image_upload(
+    image: UploadFile, max_bytes: int, request_id: str | None = None
+) -> bytes | JSONResponse:
+    raw_bytes = await image.read(max_bytes + 1)
+    if len(raw_bytes) > max_bytes:
+        return _error_response(
+            status_code=413,
+            code="PAYLOAD_TOO_LARGE",
+            message="Uploaded image exceeds maximum allowed byte size.",
+        )
+    if not raw_bytes:
+        return _error_response(
+            status_code=422,
+            code="EMPTY_IMAGE",
+            message="Uploaded image is empty.",
+        )
+    return raw_bytes
+
+
 def _default_client_factory(settings: Settings) -> AsyncGenAIClient:
     return cast(AsyncGenAIClient, genai.Client(api_key=settings.gemini_api_key))
 
@@ -288,6 +436,7 @@ def create_app(
     logging.basicConfig(level=getattr(logging, resolved_settings.log_level, logging.INFO))
 
     gate = ConcurrencyGate(resolved_settings.analysis_max_concurrency)
+    detection_gate = ConcurrencyGate(resolved_settings.analysis_max_concurrency)
     speech_gate = ConcurrencyGate(resolved_settings.speech_max_concurrency)
     notes_gate = ConcurrencyGate(resolved_settings.notes_max_concurrency)
     speech_rate_limiter = SlidingWindowRateLimiter(
@@ -298,24 +447,19 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        client: AsyncGenAIClient | None = None
-        if resolved_settings.analysis_configured:
-            client = resolved_factory(resolved_settings)
-        speech_client: httpx.AsyncClient | None = None
-        if resolved_settings.speech_configured:
-            speech_client = resolved_speech_factory(resolved_settings)
-        app.state.genai_client = client
-        app.state.speech_client = speech_client
-        try:
+        async with AsyncExitStack() as stack:
+            app.state.genai_client = None
+            app.state.speech_client = None
+            if resolved_settings.analysis_configured:
+                client = resolved_factory(resolved_settings)
+                stack.callback(client.close)
+                stack.push_async_callback(client.aio.aclose)
+                app.state.genai_client = client
+            if resolved_settings.speech_configured:
+                speech_client = resolved_speech_factory(resolved_settings)
+                stack.push_async_callback(speech_client.aclose)
+                app.state.speech_client = speech_client
             yield
-        finally:
-            if speech_client is not None:
-                await speech_client.aclose()
-            if client is not None:
-                try:
-                    await client.aio.aclose()
-                finally:
-                    client.close()
 
     app = FastAPI(
         title="Chalkolate API",
@@ -328,14 +472,6 @@ def create_app(
     app.state.notes_concurrency_gate = notes_gate
     app.state.voice_catalog = voice_catalog
 
-    if resolved_settings.cors_allowed_origins:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=list(resolved_settings.cors_allowed_origins),
-            allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Content-Type"],
-        )
-
     multipart_overhead = resolved_settings.max_metadata_bytes + 64 * 1024
     upload_limit = resolved_settings.max_upload_bytes + multipart_overhead
     app.add_middleware(
@@ -347,6 +483,14 @@ def create_app(
             "/api/speech": MAX_SPEECH_BODY_BYTES,
         },
     )
+    if resolved_settings.cors_allowed_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(resolved_settings.cors_allowed_origins),
+            allow_methods=["GET", "POST", "OPTIONS"],
+            allow_headers=["Content-Type"],
+            expose_headers=["Retry-After", PARTIAL_ANALYSIS_HEADER],
+        )
 
     @app.exception_handler(RequestValidationError)
     async def handle_request_validation(
@@ -394,22 +538,19 @@ def create_app(
         image: Annotated[UploadFile, File(...)],
     ) -> BoardDetectionResponse | JSONResponse:
         try:
-            raw_bytes = await image.read(resolved_settings.max_upload_bytes + 1)
-            if len(raw_bytes) > resolved_settings.max_upload_bytes:
-                return _error_response(
-                    status_code=413,
-                    code="PAYLOAD_TOO_LARGE",
-                    message="Uploaded image exceeds maximum allowed byte size.",
-                )
-            if not raw_bytes:
-                return _error_response(
-                    status_code=422,
-                    code="EMPTY_IMAGE",
-                    message="Uploaded image is empty.",
-                )
+            raw_bytes = await _read_image_upload(image, resolved_settings.max_upload_bytes)
+            if isinstance(raw_bytes, JSONResponse):
+                return raw_bytes
         finally:
             await image.close()
 
+        if not detection_gate.try_acquire():
+            return _error_response(
+                status_code=503,
+                code="CAPACITY_EXCEEDED",
+                message="Board detection is busy; try again shortly.",
+                headers={"Retry-After": "2"},
+            )
         try:
             detected = await asyncio.to_thread(
                 detect_board_corners,
@@ -434,6 +575,8 @@ def create_app(
                 code="CORRUPT_IMAGE",
                 message=str(exc),
             )
+        finally:
+            detection_gate.release()
 
         return BoardDetectionResponse(
             detected=detected.detected,
@@ -503,19 +646,11 @@ def create_app(
                 headers={"Retry-After": "2"},
             )
 
-        released = False
-
-        def release_once() -> None:
-            nonlocal released
-            if not released:
-                released = True
-                speech_gate.release()
-
         try:
             if payload.voice != DEFAULT_VOICE_KEY and not await voice_catalog.contains(
                 speech_client, resolved_settings, payload.voice
             ):
-                release_once()
+                speech_gate.release()
                 return _error_response(
                     status_code=422,
                     code="SPEECH_VOICE_UNAVAILABLE",
@@ -528,31 +663,18 @@ def create_app(
                 voice=payload.voice,
             )
         except SpeechError as exc:
-            release_once()
+            speech_gate.release()
             return _speech_error_response(exc)
         except BaseException:
-            release_once()
+            speech_gate.release()
             raise
 
-        async def body_iter() -> AsyncIterator[bytes]:
-            try:
-                async for chunk in opened.iter_chunks():
-                    yield chunk
-            finally:
-                try:
-                    await opened.aclose()
-                finally:
-                    release_once()
-
-        return StreamingResponse(
-            body_iter(),
-            media_type=opened.media_type,
-            headers={"Cache-Control": "no-store"},
-        )
+        return SpeechStreamingResponse(opened, speech_gate)
 
     @app.post("/api/analyze", response_model=AnalysisResponse)
     async def post_analyze(
         request: Request,
+        response: Response,
         image: Annotated[UploadFile, File(...)],
         metadata: Annotated[str, Form(...)],
     ) -> AnalysisResponse | JSONResponse:
@@ -588,21 +710,11 @@ def create_app(
                     request_id=request_id_str,
                 )
 
-            raw_bytes = await image.read(resolved_settings.max_upload_bytes + 1)
-            if len(raw_bytes) > resolved_settings.max_upload_bytes:
-                return _error_response(
-                    status_code=413,
-                    code="PAYLOAD_TOO_LARGE",
-                    message="Uploaded image exceeds maximum allowed byte size.",
-                    request_id=request_id_str,
-                )
-            if not raw_bytes:
-                return _error_response(
-                    status_code=422,
-                    code="EMPTY_IMAGE",
-                    message="Uploaded image is empty.",
-                    request_id=request_id_str,
-                )
+            raw_bytes = await _read_image_upload(
+                image, resolved_settings.max_upload_bytes, request_id_str
+            )
+            if isinstance(raw_bytes, JSONResponse):
+                return raw_bytes
         finally:
             await image.close()
 
@@ -625,49 +737,11 @@ def create_app(
             )
 
         try:
-            try:
-                prepared = await asyncio.to_thread(
-                    prepare_image,
-                    raw_bytes,
-                    corners=parsed_metadata.corners,
-                    max_image_pixels=resolved_settings.max_image_pixels,
-                    max_long_edge=resolved_settings.max_model_long_edge,
-                )
-            except UnsupportedImageFormatError as exc:
-                return _error_response(
-                    status_code=415,
-                    code="UNSUPPORTED_IMAGE_FORMAT",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
-            except ImagePixelLimitError as exc:
-                return _error_response(
-                    status_code=413,
-                    code="IMAGE_PIXELS_EXCEEDED",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
-            except CorruptImageError as exc:
-                return _error_response(
-                    status_code=422,
-                    code="CORRUPT_IMAGE",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
-            except InvalidCalibrationError as exc:
-                return _error_response(
-                    status_code=422,
-                    code="INVALID_CALIBRATION",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
-            except ImageEncodingError as exc:
-                return _error_response(
-                    status_code=500,
-                    code="IMAGE_ENCODING_FAILED",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
+            prepared = await _prepare_snapshot(
+                raw_bytes, parsed_metadata, resolved_settings, request_id_str
+            )
+            if isinstance(prepared, JSONResponse):
+                return prepared
 
             try:
                 model_result = await analyze_board_image(
@@ -676,55 +750,8 @@ def create_app(
                     parsed_metadata,
                     resolved_settings,
                 )
-            except AnalysisTimeoutError as exc:
-                return _error_response(
-                    status_code=504,
-                    code="UPSTREAM_TIMEOUT",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
-            except UpstreamRateLimitError as exc:
-                headers = (
-                    {"Retry-After": str(exc.retry_after_s)}
-                    if exc.retry_after_s is not None
-                    else None
-                )
-                return _error_response(
-                    status_code=429,
-                    code="UPSTREAM_RATE_LIMITED",
-                    message=str(exc),
-                    request_id=request_id_str,
-                    headers=headers,
-                )
-            except UpstreamAuthError as exc:
-                return _error_response(
-                    status_code=502,
-                    code="UPSTREAM_AUTH_ERROR",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
-            except UpstreamUnavailableError as exc:
-                return _error_response(
-                    status_code=503,
-                    code="UPSTREAM_UNAVAILABLE",
-                    message=str(exc),
-                    request_id=request_id_str,
-                    headers={"Retry-After": str(exc.retry_after_s or 5)},
-                )
-            except (ModelBlockedError, ModelTruncatedError, UnusableModelOutputError) as exc:
-                return _error_response(
-                    status_code=502,
-                    code="UNUSABLE_MODEL_OUTPUT",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
-            except UpstreamProviderError as exc:
-                return _error_response(
-                    status_code=502,
-                    code="UPSTREAM_PROVIDER_ERROR",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
+            except AnalyzerError as exc:
+                return _model_error_response(exc, request_id_str)
 
             try:
                 source_errors: list[SourceSpaceDetectedError] = [
@@ -739,6 +766,8 @@ def create_app(
                 )
 
             elapsed_ms = max(0, (time.perf_counter_ns() - started_ns) // 1_000_000)
+            if model_result.incomplete:
+                response.headers[PARTIAL_ANALYSIS_HEADER] = "1"
             return AnalysisResponse(
                 request_id=request_id_str,
                 board_summary=model_result.board_summary,
@@ -787,21 +816,11 @@ def create_app(
                     request_id=request_id_str,
                 )
 
-            raw_bytes = await image.read(resolved_settings.max_upload_bytes + 1)
-            if len(raw_bytes) > resolved_settings.max_upload_bytes:
-                return _error_response(
-                    status_code=413,
-                    code="PAYLOAD_TOO_LARGE",
-                    message="Uploaded image exceeds maximum allowed byte size.",
-                    request_id=request_id_str,
-                )
-            if not raw_bytes:
-                return _error_response(
-                    status_code=422,
-                    code="EMPTY_IMAGE",
-                    message="Uploaded image is empty.",
-                    request_id=request_id_str,
-                )
+            raw_bytes = await _read_image_upload(
+                image, resolved_settings.max_upload_bytes, request_id_str
+            )
+            if isinstance(raw_bytes, JSONResponse):
+                return raw_bytes
         finally:
             await image.close()
 
@@ -824,103 +843,18 @@ def create_app(
             )
 
         try:
-            try:
-                prepared = await asyncio.to_thread(
-                    prepare_image,
-                    raw_bytes,
-                    corners=parsed_metadata.corners,
-                    max_image_pixels=resolved_settings.max_image_pixels,
-                    max_long_edge=resolved_settings.max_model_long_edge,
-                )
-            except UnsupportedImageFormatError as exc:
-                return _error_response(
-                    status_code=415,
-                    code="UNSUPPORTED_IMAGE_FORMAT",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
-            except ImagePixelLimitError as exc:
-                return _error_response(
-                    status_code=413,
-                    code="IMAGE_PIXELS_EXCEEDED",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
-            except CorruptImageError as exc:
-                return _error_response(
-                    status_code=422,
-                    code="CORRUPT_IMAGE",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
-            except InvalidCalibrationError as exc:
-                return _error_response(
-                    status_code=422,
-                    code="INVALID_CALIBRATION",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
-            except ImageEncodingError as exc:
-                return _error_response(
-                    status_code=500,
-                    code="IMAGE_ENCODING_FAILED",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
+            prepared = await _prepare_snapshot(
+                raw_bytes, parsed_metadata, resolved_settings, request_id_str
+            )
+            if isinstance(prepared, JSONResponse):
+                return prepared
 
             try:
                 result = await build_notes_update(
                     client, prepared, parsed_metadata, resolved_settings
                 )
-            except AnalysisTimeoutError as exc:
-                return _error_response(
-                    status_code=504,
-                    code="UPSTREAM_TIMEOUT",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
-            except UpstreamRateLimitError as exc:
-                headers = (
-                    {"Retry-After": str(exc.retry_after_s)}
-                    if exc.retry_after_s is not None
-                    else None
-                )
-                return _error_response(
-                    status_code=429,
-                    code="UPSTREAM_RATE_LIMITED",
-                    message=str(exc),
-                    request_id=request_id_str,
-                    headers=headers,
-                )
-            except UpstreamAuthError as exc:
-                return _error_response(
-                    status_code=502,
-                    code="UPSTREAM_AUTH_ERROR",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
-            except UpstreamUnavailableError as exc:
-                return _error_response(
-                    status_code=503,
-                    code="UPSTREAM_UNAVAILABLE",
-                    message=str(exc),
-                    request_id=request_id_str,
-                    headers={"Retry-After": str(exc.retry_after_s or 5)},
-                )
-            except (ModelBlockedError, ModelTruncatedError, UnusableModelOutputError) as exc:
-                return _error_response(
-                    status_code=502,
-                    code="UNUSABLE_MODEL_OUTPUT",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
-            except UpstreamProviderError as exc:
-                return _error_response(
-                    status_code=502,
-                    code="UPSTREAM_PROVIDER_ERROR",
-                    message=str(exc),
-                    request_id=request_id_str,
-                )
+            except AnalyzerError as exc:
+                return _model_error_response(exc, request_id_str)
 
             updates = []
             for update in result.updates:
