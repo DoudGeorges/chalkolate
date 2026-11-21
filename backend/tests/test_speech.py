@@ -19,8 +19,12 @@ from speech import (
     SpeechRateLimitError,
     SpeechTimeoutError,
     SpeechUnavailableError,
+    VoiceCatalog,
+    fetch_elevenlabs_voices,
     open_elevenlabs_speech_stream,
+    parse_voice_catalog,
     prepare_spoken_text,
+    resolve_voice_id,
     validate_voice_id,
 )
 
@@ -110,6 +114,87 @@ async def test_open_elevenlabs_speech_stream_payload_and_chunks() -> None:
     assert body["apply_text_normalization"] == "auto"
     assert "x squared" in str(body["text"])
     assert "Newtons per meter" in str(body["text"])
+    assert "speed" not in body["voice_settings"]
+
+
+def test_resolve_voice_id_maps_default_and_validates_ids() -> None:
+    settings = _speech_settings()
+    assert resolve_voice_id(settings, "default") == "JBFqnCBsd6RMkjVDRZzb"
+    assert resolve_voice_id(settings, "abcXYZ123") == "abcXYZ123"
+    with pytest.raises(SpeechConfigError):
+        resolve_voice_id(settings, "../voices")
+
+
+def test_parse_voice_catalog_builds_labels_and_drops_invalid_entries() -> None:
+    voices = parse_voice_catalog(
+        {
+            "voices": [
+                {
+                    "voice_id": "zzz111",
+                    "name": "Rachel",
+                    "labels": {"description": "calm", "accent": "american", "gender": "female"},
+                },
+                {"voice_id": "aaa222", "name": "Adam", "labels": {}},
+                {"voice_id": "../bad", "name": "Evil"},
+                {"voice_id": "aaa222", "name": "Duplicate"},
+                "junk",
+            ]
+        }
+    )
+    assert [(v.voice_id, v.label) for v in voices] == [
+        ("aaa222", "Adam"),
+        ("zzz111", "Rachel (calm, american)"),
+    ]
+    with pytest.raises(SpeechProviderError):
+        parse_voice_catalog({"voices": "nope"})
+
+
+async def test_voice_catalog_fetches_with_api_key_and_caches() -> None:
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json={"voices": [{"voice_id": "v1", "name": "One"}]})
+
+    clock = [0.0]
+    catalog = VoiceCatalog(ttl_seconds=60.0, clock=lambda: clock[0])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        assert await catalog.contains(client, _speech_settings(), "v1")
+        assert not await catalog.contains(client, _speech_settings(), "v2")
+        assert len(calls) == 1
+        clock[0] = 61.0
+        await catalog.get(client, _speech_settings())
+        assert len(calls) == 2
+
+    assert str(calls[0].url) == "https://api.elevenlabs.io/v1/voices"
+    assert calls[0].method == "GET"
+    assert calls[0].headers["xi-api-key"] == "el-secret-key"
+
+
+async def test_fetch_voices_maps_auth_errors() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"detail": {"status": "invalid_api_key"}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        with pytest.raises(SpeechAuthError):
+            await fetch_elevenlabs_voices(client, _speech_settings())
+
+
+async def test_open_elevenlabs_speech_stream_uses_selected_voice() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["body"] = json.loads(request.content.decode("utf-8"))
+        return httpx.Response(200, headers={"content-type": "audio/mpeg"}, content=b"ID3")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        stream = await open_elevenlabs_speech_stream(
+            client, "Check the sign.", _speech_settings(), voice="onwK4e9ZLuTAKqWW03F9"
+        )
+        await stream.aclose()
+
+    assert "/text-to-speech/onwK4e9ZLuTAKqWW03F9/stream" in str(captured["url"])
 
 
 async def test_open_elevenlabs_speech_stream_maps_errors_safely() -> None:
