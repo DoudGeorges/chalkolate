@@ -102,36 +102,16 @@ describe('FindingsPanel, IssueCard, and TopBar refinements', () => {
     expect(screen.getByText('No math, physics, or spelling mistakes detected.')).toBeTruthy()
   })
 
-  it('lists only real non-OBS devices in TopBar camera dropdown and aligns source buttons cleanly', () => {
-    const onStartCamera = vi.fn()
-    render(
-      <TopBar
-        mediaKind="none"
-        mediaReady={false}
-        videoDevices={[
-          { deviceId: 'int-1', label: 'Integrated Webcam' },
-          { deviceId: 'ext-2', label: 'External USB Camera' },
-        ]}
-        selectedDeviceId="int-1"
-        onStartCamera={onStartCamera}
-        onStartScreenShare={vi.fn()}
-        onUploadFile={vi.fn()}
-        monitoring={false}
-        onToggleMonitoring={vi.fn()}
-        alertMode="voice_visual"
-        onChangeAlertMode={vi.fn()}
-      />,
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: 'Select camera device' }))
-    const items = screen.getAllByRole('menuitem').map((el) => el.textContent)
-    expect(items).toEqual(['Integrated Webcam', 'External USB Camera'])
-
-    fireEvent.click(screen.getByRole('menuitem', { name: 'External USB Camera' }))
-    expect(onStartCamera).toHaveBeenCalledWith('ext-2')
+  it('keeps the TopBar minimal with no Camera/Screen/Upload source buttons', () => {
+    render(<TopBar mediaReady monitoring={false} onToggleMonitoring={vi.fn()} />)
+    expect(screen.queryByRole('group', { name: 'Board source' })).toBeNull()
+    for (const name of ['Camera', 'Screen', 'Upload', 'Select camera device']) {
+      expect(screen.queryByRole('button', { name })).toBeNull()
+    }
+    expect(screen.getByRole('button', { name: /Start/ })).toBeEnabled()
   })
 
-  it('toggles FindingsPanel on click in both collapsed and expanded states and keeps backdrop blur on aside', () => {
+  it('toggles FindingsPanel on click in both collapsed and expanded states on a solid surface without glass blur', () => {
     const onToggle = vi.fn()
     const baseProps = {
       monitoring: false,
@@ -158,8 +138,9 @@ describe('FindingsPanel, IssueCard, and TopBar refinements', () => {
     const sidebar = container.querySelector('#findings-sidebar-content')
     const toggleBtn = screen.getByRole('button', { name: 'Expand findings panel' })
 
-    expect(wrapper.className).not.toContain('backdrop-blur-xl')
-    expect(sidebar?.className).toContain('backdrop-blur-xl')
+    expect(wrapper.className).not.toContain('backdrop-blur')
+    expect(sidebar?.className).not.toContain('backdrop-blur')
+    expect(sidebar?.className).toContain('bg-white')
     expect(toggleBtn.className).toContain('pointer-events-auto')
     expect(toggleBtn.getAttribute('aria-controls')).toBe('findings-sidebar-content')
 

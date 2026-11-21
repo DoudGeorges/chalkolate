@@ -103,10 +103,10 @@ export function DetectionOverlay({
                 top: `${pos.top}px`,
                 maxWidth: `${Math.max(120, Math.min(280, imageRect.width - 8))}px`,
               }}
-              className={`pointer-events-auto absolute flex items-center gap-1.5 rounded-lg border bg-panel px-2.5 py-1 text-left text-xs shadow-xl backdrop-blur-md transition duration-150 animate-pill-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
+              className={`pointer-events-auto absolute flex items-center gap-1.5 rounded-lg border bg-white px-2.5 py-1 text-left text-xs shadow-md transition duration-150 animate-pill-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
                 isHighlighted
-                  ? 'z-20 border-white/30 ring-1 ring-white/25'
-                  : 'z-10 border-line hover:border-white/20'
+                  ? 'z-20 border-zinc-300 ring-1 ring-zinc-300'
+                  : 'z-10 border-line hover:border-zinc-300'
               }`}
             >
               <span
@@ -114,7 +114,7 @@ export function DetectionOverlay({
                 style={{ backgroundColor: color }}
                 aria-hidden="true"
               />
-              <span className="truncate font-medium text-zinc-100">
+              <span className="truncate font-medium text-zinc-900">
                 <MathCorrection
                   correctionText={issue.correction_text}
                   correctionLatex={issue.correction_latex}

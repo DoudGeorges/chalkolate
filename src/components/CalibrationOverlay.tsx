@@ -113,22 +113,22 @@ export function CalibrationOverlay({
   const isDetecting = detectStatus === 'detecting'
 
   let statusText = 'Drag corners to align with the board'
-  let statusTone = 'text-zinc-300'
+  let statusTone = 'text-zinc-700'
   if (!validation.valid) {
     statusText = validation.reason ?? 'Adjust handles into a valid quadrilateral'
-    statusTone = 'text-rose-300'
+    statusTone = 'text-rose-700'
   } else if (detectStatus === 'detecting') {
     statusText = 'Detecting board corners…'
-    statusTone = 'text-zinc-200'
+    statusTone = 'text-zinc-800'
   } else if (detectStatus === 'detected') {
     statusText = 'Board detected — drag handles to refine'
-    statusTone = 'text-emerald-300/90'
+    statusTone = 'text-emerald-700'
   } else if (detectStatus === 'fallback') {
     statusText = 'Could not detect board edges — drag handles manually'
-    statusTone = 'text-zinc-300'
+    statusTone = 'text-zinc-700'
   } else if (detectStatus === 'error') {
     statusText = 'Auto-detect unavailable — drag handles manually'
-    statusTone = 'text-amber-300/90'
+    statusTone = 'text-amber-700'
   }
 
   return (
@@ -159,13 +159,13 @@ export function CalibrationOverlay({
           y="0"
           width="1000"
           height="1000"
-          fill="rgba(11, 11, 13, 0.62)"
+          fill="rgba(255, 255, 255, 0.72)"
           mask="url(#chalkolate-cal-mask)"
         />
         <polygon
           points={polygonPoints}
-          fill="rgba(231, 178, 122, 0.06)"
-          stroke={validation.valid ? '#e7b27a' : '#f43f5e'}
+          fill="rgba(24, 24, 27, 0.04)"
+          stroke={validation.valid ? '#18181b' : '#e11d48'}
           strokeWidth={2}
           strokeDasharray={isDetecting ? '6 4' : undefined}
           vectorEffect="non-scaling-stroke"
@@ -194,16 +194,16 @@ export function CalibrationOverlay({
             className="group absolute flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/80"
           >
             <span
-              className={`h-4 w-4 rounded-full border-2 bg-surface shadow-[0_0_0_2px_rgba(0,0,0,0.65)] transition duration-150 group-hover:scale-115 ${
+              className={`h-4 w-4 rounded-full border-2 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition duration-150 group-hover:scale-115 ${
                 draggingIndex === idx ? 'scale-120' : ''
-              } ${validation.valid ? 'border-accent' : 'border-rose-400'}`}
+              } ${validation.valid ? 'border-accent' : 'border-rose-500'}`}
             />
           </button>
         )
       })}
 
       {/* Polished calibration control bar */}
-      <div className="absolute bottom-4 left-1/2 flex w-max max-w-[94%] -translate-x-1/2 flex-wrap items-center justify-center gap-3 rounded-xl border border-line bg-panel/95 px-3.5 py-2 text-xs shadow-2xl backdrop-blur-xl">
+      <div className="absolute bottom-4 left-1/2 flex w-max max-w-[94%] -translate-x-1/2 flex-wrap items-center justify-center gap-3 rounded-xl border border-line bg-white px-3.5 py-2 text-xs shadow-lg">
         <span className={`inline-flex items-center gap-1.5 ${statusTone}`}>
           {isDetecting && (
             <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" aria-hidden="true" />
@@ -211,7 +211,7 @@ export function CalibrationOverlay({
           <span>{statusText}</span>
         </span>
 
-        <span className="hidden sm:inline-block h-4 w-px bg-white/10" aria-hidden="true" />
+        <span className="hidden sm:inline-block h-4 w-px bg-zinc-100" aria-hidden="true" />
 
         <div className="flex items-center gap-1.5">
           <button
@@ -219,22 +219,22 @@ export function CalibrationOverlay({
             onClick={onAutoDetect}
             disabled={isDetecting}
             title="Re-run automatic corner detection"
-            className="inline-flex items-center gap-1 rounded-lg border border-line bg-white/[0.04] px-2.5 py-1.5 font-medium text-zinc-200 transition hover:bg-white/[0.1] disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+            className="inline-flex items-center gap-1 rounded-lg border border-line bg-zinc-100 px-2.5 py-1.5 font-medium text-zinc-800 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           >
-            <Scan className="h-3.5 w-3.5 text-zinc-400" aria-hidden="true" />
+            <Scan className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" />
             <span>Auto-detect</span>
           </button>
           <button
             type="button"
             onClick={onResetCrop}
-            className="rounded-lg border border-line bg-white/[0.04] px-2.5 py-1.5 font-medium text-zinc-200 transition hover:bg-white/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+            className="rounded-lg border border-line bg-zinc-100 px-2.5 py-1.5 font-medium text-zinc-800 transition hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           >
             Reset
           </button>
           <button
             type="button"
             onClick={onCancel}
-            className="rounded-lg px-2.5 py-1.5 font-medium text-zinc-400 transition hover:bg-white/[0.06] hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+            className="rounded-lg px-2.5 py-1.5 font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           >
             Cancel
           </button>
@@ -242,7 +242,7 @@ export function CalibrationOverlay({
             type="button"
             onClick={onApply}
             disabled={!validation.valid || isDetecting}
-            className="rounded-lg bg-accent px-3 py-1.5 font-semibold text-zinc-950 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+            className="rounded-lg bg-accent px-3 py-1.5 font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           >
             Apply
           </button>
