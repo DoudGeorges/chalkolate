@@ -320,22 +320,21 @@ describe('Settings panel', () => {
   })
 })
 
-describe('TopBar settings button', () => {
+describe('TopBar', () => {
   const base = {
     mediaReady: false,
     monitoring: false,
     onToggleMonitoring: () => {},
-    onToggleSettings: () => {},
   }
 
-  it('hides Start/Stop and Settings on the landing page', () => {
+  it('hides Start/Stop on the landing page and never shows a Settings button', () => {
     const { rerender } = render(<TopBar {...base} onboarding />)
     expect(screen.queryByRole('button', { name: /Start/ })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Settings' })).toBeNull()
 
     rerender(<TopBar {...base} mediaReady onboarding={false} />)
     expect(screen.getByRole('button', { name: /Start/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Settings' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Settings' })).toBeNull()
   })
 
   it('offers Back to start once a source is live, but not on the landing page', () => {
@@ -346,23 +345,6 @@ describe('TopBar settings button', () => {
     rerender(<TopBar {...base} mediaReady onboarding={false} onGoHome={onGoHome} />)
     fireEvent.click(screen.getByRole('button', { name: /back to start/i }))
     expect(onGoHome).toHaveBeenCalledTimes(1)
-  })
-
-  it('toggles the settings panel', () => {
-    const onToggleSettings = vi.fn()
-    render(
-      <TopBar
-        mediaReady={false}
-        monitoring={false}
-        onToggleMonitoring={() => {}}
-        settingsOpen={false}
-        onToggleSettings={onToggleSettings}
-      />,
-    )
-    const button = screen.getByRole('button', { name: 'Settings' })
-    expect(button).toHaveAttribute('aria-controls', 'findings-sidebar-content')
-    fireEvent.click(button)
-    expect(onToggleSettings).toHaveBeenCalledTimes(1)
   })
 })
 

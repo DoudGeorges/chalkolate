@@ -1,13 +1,10 @@
-import { ArrowLeft, Play, Settings, Square } from 'lucide-react'
+import { ArrowLeft, Play, Square } from 'lucide-react'
 
 export interface TopBarProps {
   mediaReady: boolean
   monitoring: boolean
   onToggleMonitoring: () => void
-  /** Whether the left settings panel is open. */
-  settingsOpen?: boolean
-  onToggleSettings?: () => void
-  /** Landing page: hide Start/Stop and Settings so the welcome guide is the one path. */
+  /** Landing page: hide Start/Stop so the welcome guide is the one path. */
   onboarding?: boolean
   /** Close the current source and return to the welcome guide (shown when not onboarding). */
   onGoHome?: () => void
@@ -17,8 +14,6 @@ export function TopBar({
   mediaReady,
   monitoring,
   onToggleMonitoring,
-  settingsOpen = false,
-  onToggleSettings,
   onboarding = false,
   onGoHome,
 }: TopBarProps) {
@@ -42,7 +37,7 @@ export function TopBar({
         )}
       </div>
 
-      {/* Right: Start/Stop + Settings gear */}
+      {/* Right: Start/Stop */}
       <div className="flex items-center gap-2">
         {!onboarding && (
           <button
@@ -67,24 +62,6 @@ export function TopBar({
                 <span>Start</span>
               </>
             )}
-          </button>
-        )}
-
-        {!onboarding && onToggleSettings && (
-          <button
-            type="button"
-            aria-label="Settings"
-            aria-expanded={settingsOpen}
-            aria-controls="findings-sidebar-content"
-            title={settingsOpen ? 'Hide settings' : 'Show settings'}
-            onClick={onToggleSettings}
-            className={`inline-flex h-8 w-8 items-center justify-center rounded-lg border transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
-              settingsOpen
-                ? 'border-accent bg-accent/[0.06] text-accent'
-                : 'border-line bg-white text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900'
-            }`}
-          >
-            <Settings className="h-4 w-4 shrink-0" aria-hidden="true" />
           </button>
         )}
       </div>
