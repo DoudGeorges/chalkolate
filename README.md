@@ -2,16 +2,18 @@
 
 _Smarter than the front row._
 
-Shirely, Aidan, Jongmin, and Édouard (SAJE)
-
 ## Description
 
-A live lecture proofreader that watches whiteboards, chalkboards, and projected iPads to catch math, physics, and spelling mistakes in real time.
+Catches math, physics, and spelling mistakes as they happen during lectures by monitoring whiteboards, chalkboards, and projected iPads in real time.
 
 ## Problem
 
-A dropped minus sign, unit mismatch, or typo can easily throw off an entire lecture. Since most students are too hesitant to interrupt the professor, one small error snowballs until everyone is scratching out pages of notes.
+A missing minus sign, an incorrect unit, or a simple typo can completely change the result of a problem. Students often hesitate to interrupt the professor, so these mistakes can go unnoticed and end up in their notes, or waste valuable time when caught later.
 
 ## Solution
 
-Chalkolate watches the board as the professor writes, reading equations, steps, and text as they appear. When it spots a calculation error, wrong unit, or typo, it highlights the mistake right on the video feed and suggests a fix on screen, out loud, or both, so it gets corrected before it gets worse or wastes time tracking it down later.
+Chalkolate watches the board as the professor writes, checking equations, calculations, and text for mistakes. When it spots an error, it highlights the exact location on the live video feed and suggests a correction on screen, out loud, or both. This helps the professor catch mistakes before they affect the rest of a derivation or problem. It also helps students avoid copying errors into their notes while minimizing interruptions to the lecture.
+
+## Team
+
+Shirley Liu, Adnan Aidan Taha, Jongmin Lee, and Édouard Chassé (SAJE)
