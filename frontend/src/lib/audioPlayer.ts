@@ -292,19 +292,12 @@ async function playWithMediaSourceOrFallbackBlob(
 
     const sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg')
     reader = body.getReader()
-<<<<<<< HEAD
-    const mseChunks: Uint8Array[] = []
-    let totalLen = 0
-
-    while (true) {
-=======
     let playStarted = false
     let completionPromise: Promise<void> | null = null
     let playError: Error | null = null
 
     while (true) {
       if (playError) throw playError
->>>>>>> origin/main
       if (signal.aborted) {
         throw createAbortError()
       }
@@ -315,36 +308,6 @@ async function playWithMediaSourceOrFallbackBlob(
       const chunkCopy = new Uint8Array(value.byteLength)
       chunkCopy.set(value)
       collectedChunks.push(chunkCopy)
-<<<<<<< HEAD
-      mseChunks.push(chunkCopy)
-      totalLen += chunkCopy.byteLength
-    }
-
-    if (signal.aborted) {
-      throw createAbortError()
-    }
-    if (totalLen === 0) {
-      throw new Error('Received empty audio stream.')
-    }
-
-    const fullBytes = new Uint8Array(totalLen)
-    let offset = 0
-    for (const chunk of mseChunks) {
-      fullBytes.set(chunk, offset)
-      offset += chunk.byteLength
-    }
-
-    if (sourceBuffer.updating) {
-      await waitForEvent(sourceBuffer, 'updateend', signal)
-    }
-    if (signal.aborted) {
-      throw createAbortError()
-    }
-
-    sourceBuffer.appendBuffer(fullBytes)
-    await waitForEvent(sourceBuffer, 'updateend', signal)
-
-=======
 
       if (sourceBuffer.updating) {
         await waitForEvent(sourceBuffer, 'updateend', signal)
@@ -366,7 +329,6 @@ async function playWithMediaSourceOrFallbackBlob(
     }
 
     if (playError) throw playError
->>>>>>> origin/main
     if (signal.aborted) {
       throw createAbortError()
     }
@@ -378,9 +340,6 @@ async function playWithMediaSourceOrFallbackBlob(
       mediaSource.endOfStream()
     }
 
-<<<<<<< HEAD
-    await waitForAudioCompletion(audio, signal, notifyStartedOnce)
-=======
     if (completionPromise) {
       await completionPromise
     } else if (audio.buffered.length > 0) {
@@ -388,7 +347,6 @@ async function playWithMediaSourceOrFallbackBlob(
     } else {
       throw new Error('Received empty audio stream.')
     }
->>>>>>> origin/main
   } catch (err) {
     if (signal.aborted || isAbortError(err)) {
       throw createAbortError()

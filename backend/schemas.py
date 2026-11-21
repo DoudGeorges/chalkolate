@@ -8,22 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-<<<<<<< HEAD
-ErrorCategory = Literal[
-    "math",
-    "physics",
-    "chemistry",
-    "engineering",
-    "code",
-    "logic",
-    "concept",
-    "notation",
-    "grammar",
-    "spelling",
-]
-=======
 ErrorCategory = Literal["math", "physics", "spelling"]
->>>>>>> origin/main
 
 MAX_PREV_SUMMARY_LENGTH = 2000
 MAX_BOARD_SUMMARY_LENGTH = 600
@@ -151,23 +136,12 @@ class _FindingBase(StrictModel):
     """Shared validated finding payload prior to distinguishing coordinate spaces."""
 
     category: ErrorCategory = Field(
-<<<<<<< HEAD
-        description=(
-            "Best-fit error category across any academic or instructional content: math, physics, "
-            "chemistry, engineering, code, logic, concept, notation, grammar, or spelling."
-        ),
-=======
         description="Mistake category: math, physics, or spelling.",
->>>>>>> origin/main
     )
     detected_text: str = Field(
         min_length=1,
         max_length=MAX_DETECTED_TEXT_LENGTH,
-<<<<<<< HEAD
-        description="Exact visible erroneous term, equation fragment, token, unit, or phrase.",
-=======
         description="Exact visible erroneous term, equation fragment, unit, or misspelled word.",
->>>>>>> origin/main
     )
     correction_text: str = Field(
         min_length=1,
@@ -186,27 +160,14 @@ class _FindingBase(StrictModel):
         min_length=1,
         max_length=MAX_SPOKEN_ALERT_LENGTH,
         description=(
-<<<<<<< HEAD
-            "One concise natural-speech sentence (max 180 chars) identifying the visible "
-            "location (when supported) and explicit replacement in plain spoken words without "
-            "LaTeX or square-bracket tags."
-=======
             "One concise natural-speech alert sentence (max 180 chars) phrasing math, exponents, "
             "and units in plain spoken words without LaTeX markup or square-bracket tags."
->>>>>>> origin/main
         ),
     )
     explanation: str = Field(
         min_length=1,
         max_length=MAX_EXPLANATION_LENGTH,
-<<<<<<< HEAD
-        description=(
-            "One concise actionable sentence stating where the mistake appears and what to change "
-            "it to, adding brief reasoning only when essential."
-        ),
-=======
         description="One concise sentence explaining the error and correction.",
->>>>>>> origin/main
     )
     confidence: float = Field(
         ge=0.0,
@@ -321,13 +282,8 @@ class BoardAnalysisResult(StrictModel):
         default_factory=list,
         max_length=MAX_FINDINGS,
         description=(
-<<<<<<< HEAD
-            "List of at most 20 demonstrable errors currently visible across any academic, "
-            "technical, or instructional content on the board; empty list when none are justified."
-=======
             "List of at most 20 high-confidence demonstrable math, physics, or spelling errors "
             "currently visible in the image; empty list when none are justified."
->>>>>>> origin/main
         ),
     )
 

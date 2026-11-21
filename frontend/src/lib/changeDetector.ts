@@ -4,15 +4,9 @@ import { GrayscaleSample } from './frameCapture'
 /** Side length (in sample-grid pixels) of each change-detection tile. */
 export const TILE_PX = 16
 /** Per-pixel luma delta (after global brightness offset compensation) treated as changed. */
-<<<<<<< HEAD
-export const PIXEL_DELTA = 16
-/** Fraction of masked pixels in a tile that constitutes a persistent baseline difference. */
-export const CHANGED_TILE_FRACTION = 0.018
-=======
 export const PIXEL_DELTA = 20
 /** Fraction of masked pixels in a tile that constitutes a persistent baseline difference. */
 export const CHANGED_TILE_FRACTION = 0.03
->>>>>>> origin/main
 /** Fraction of masked pixels in a tile that indicates active frame-to-frame motion. */
 export const MOVING_TILE_FRACTION = 0.06
 /** Number of consecutive calm ticks a tile must hold before changes there count as persistent. */
@@ -39,10 +33,6 @@ export interface DetectorUpdate {
   activeChangedTiles: number
   persistentChangedTiles: number
   persistentChangedFraction: number
-<<<<<<< HEAD
-  writingInChangedZone: boolean
-=======
->>>>>>> origin/main
   sceneShift: boolean
   stillTicks: Uint16Array
 }
@@ -135,106 +125,6 @@ export function tileChangeFractions(
   return out
 }
 
-<<<<<<< HEAD
-function hasActiveOrCoolingNeighbor(
-  tx: number,
-  ty: number,
-  cols: number,
-  rows: number,
-  baseFracs: Float32Array,
-  stillTicks: Uint16Array,
-): boolean {
-  const y0 = Math.max(0, ty - 1)
-  const y1 = Math.min(rows - 1, ty + 1)
-  const x0 = Math.max(0, tx - 1)
-  const x1 = Math.min(cols - 1, tx + 1)
-  for (let ny = y0; ny <= y1; ny++) {
-    const rowOff = ny * cols
-    for (let nx = x0; nx <= x1; nx++) {
-      const idx = rowOff + nx
-      const nFrac = baseFracs[idx] ?? Number.NaN
-      if (Number.isNaN(nFrac)) continue
-      const nTicks = stillTicks[idx] ?? 0
-      if (
-        nTicks === 0 ||
-        (nFrac >= CHANGED_TILE_FRACTION && nTicks < STILL_TICKS_FOR_PERSISTENCE)
-      ) {
-        return true
-      }
-    }
-  }
-  return false
-}
-
-function evaluateBaselineChangeZones(
-  sample: GrayscaleSample,
-  baseline: GrayscaleSample,
-  stillTicks: Uint16Array,
-  mask: Uint8Array | null,
-): {
-  validTiles: number
-  activeChangedTiles: number
-  persistentChangedTiles: number
-  hasActiveOrCoolingNeighborNearSettled: boolean
-} {
-  const cols = Math.ceil(sample.width / TILE_PX)
-  const rows = Math.ceil(sample.height / TILE_PX)
-  const baseFracs = tileChangeFractions(baseline, sample, mask)
-
-  let validTiles = 0
-  let activeChangedTiles = 0
-  let persistentChangedTiles = 0
-  let hasActiveOrCoolingNeighborNearSettled = false
-
-  for (let ty = 0; ty < rows; ty++) {
-    const rowOff = ty * cols
-    for (let tx = 0; tx < cols; tx++) {
-      const i = rowOff + tx
-      const frac = baseFracs[i] ?? Number.NaN
-      if (Number.isNaN(frac)) continue
-      validTiles++
-      if (frac >= CHANGED_TILE_FRACTION) {
-        activeChangedTiles++
-        if ((stillTicks[i] ?? 0) >= STILL_TICKS_FOR_PERSISTENCE) {
-          persistentChangedTiles++
-          if (
-            !hasActiveOrCoolingNeighborNearSettled &&
-            hasActiveOrCoolingNeighbor(tx, ty, cols, rows, baseFracs, stillTicks)
-          ) {
-            hasActiveOrCoolingNeighborNearSettled = true
-          }
-        }
-      }
-    }
-  }
-
-  return {
-    validTiles,
-    activeChangedTiles,
-    persistentChangedTiles,
-    hasActiveOrCoolingNeighborNearSettled,
-  }
-}
-
-export function hasSettledChangesFromBaseline(
-  sample: GrayscaleSample,
-  baseline: GrayscaleSample,
-  stillTicks: Uint16Array,
-  mask: Uint8Array | null,
-): boolean {
-  if (sample.width !== baseline.width || sample.height !== baseline.height) {
-    return false
-  }
-  const tileCount = Math.ceil(sample.width / TILE_PX) * Math.ceil(sample.height / TILE_PX)
-  if (stillTicks.length !== tileCount) {
-    return false
-  }
-  const zone = evaluateBaselineChangeZones(sample, baseline, stillTicks, mask)
-  return zone.persistentChangedTiles > 0 && !zone.hasActiveOrCoolingNeighborNearSettled
-}
-
-=======
->>>>>>> origin/main
 export function updateDetector(
   state: DetectorState,
   sample: GrayscaleSample,
@@ -281,10 +171,6 @@ export function updateDetector(
   let activeChangedTiles = 0
   let persistentChangedTiles = 0
   let persistentChangedFraction = 0
-<<<<<<< HEAD
-  let writingInChangedZone = false
-=======
->>>>>>> origin/main
   let sceneShift = false
 
   if (baseline) {
@@ -292,20 +178,6 @@ export function updateDetector(
       activeChangedTiles = tileCount
       persistentChangedTiles = tileCount
       persistentChangedFraction = 1
-<<<<<<< HEAD
-      writingInChangedZone = false
-      sceneShift = true
-    } else {
-      const zone = evaluateBaselineChangeZones(sample, baseline, nextStillTicks, mask)
-      activeChangedTiles = zone.activeChangedTiles
-      persistentChangedTiles = zone.persistentChangedTiles
-      persistentChangedFraction =
-        zone.validTiles > 0 ? persistentChangedTiles / zone.validTiles : 0
-      writingInChangedZone =
-        activeChangedTiles > 0 &&
-        (persistentChangedTiles === 0 || zone.hasActiveOrCoolingNeighborNearSettled)
-      sceneShift = zone.validTiles > 0 && persistentChangedFraction >= SCENE_SHIFT_FRACTION
-=======
       sceneShift = true
     } else {
       const baseFracs = tileChangeFractions(baseline, sample, mask)
@@ -324,7 +196,6 @@ export function updateDetector(
       persistentChangedFraction =
         validTiles > 0 ? persistentChangedTiles / validTiles : 0
       sceneShift = validTiles > 0 && persistentChangedFraction >= SCENE_SHIFT_FRACTION
->>>>>>> origin/main
     }
   }
 
@@ -339,10 +210,6 @@ export function updateDetector(
     activeChangedTiles,
     persistentChangedTiles,
     persistentChangedFraction,
-<<<<<<< HEAD
-    writingInChangedZone,
-=======
->>>>>>> origin/main
     sceneShift,
     stillTicks: nextStillTicks,
   }
