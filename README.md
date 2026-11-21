@@ -4,7 +4,7 @@ _Smarter than the front row._
 
 ## Description
 
-Catches math, physics, and spelling mistakes as they happen during lectures by monitoring whiteboards, chalkboards, and projected iPads in real time.
+Catches math, physics, and spelling mistakes in near-real time during lectures by monitoring live cameras, shared screens, and uploaded lecture videos.
 
 ## Problem
 
@@ -12,7 +12,104 @@ A missing minus sign, an incorrect unit, or a simple typo can completely change 
 
 ## Solution
 
-Chalkolate watches the board as the professor writes, checking equations, calculations, and text for mistakes. When it spots an error, it highlights the exact location on the live video feed and suggests a correction on screen, out loud, or both. This helps the professor catch mistakes before they affect the rest of a derivation or problem. It also helps students avoid copying errors into their notes while minimizing interruptions to the lecture.
+Chalkolate continuously watches the lecture board, identifies newly written content even while the presenter keeps moving, highlights mistakes directly on the video feed, and keeps corrections pinned until resolved or dismissed.
+
+## Architecture & Privacy Notice
+
+- **Stateless backend (`backend/`)**: Accepts ordinary HTTP `multipart/form-data` snapshot uploads on `POST /api/analyze` (plus lightweight OpenCV corner detection on `POST /api/detect-board`), rectifies and auto-enhances low-contrast frames in memory, forwards the processed JPEG to Gemini (`gemini-3.8-flash`) via the official `google-genai` SDK, and projects findings back into canonical uploaded-image coordinates. When configured, `POST /api/speech` streams synthesized voice alerts from ElevenLabs (`eleven_v4_turbo`) over HTTPS without exposing keys to the browser.
+- **Browser-owned session (`frontend/`)**: Holds the active media stream or video playback, tile-based change detection, deduplicated persistent issue tracking with automatic resolution, dismissals, and sequential spoken alert playback (preferring ElevenLabs v4 Turbo streaming when configured, automatically falling back to `window.speechSynthesis`) without a database, WebSockets, or authentication.
+- **External data disclosure**: Analyzed board snapshots (plus the optional `previous_board_summary` text) are sent to the Google Gemini API for inference, and spoken alert text is sent to ElevenLabs when ElevenLabs TTS is configured. Do not point Chalkolate at confidential or restricted material without appropriate approval.
+
+## Prerequisites & Supported Versions
+
+- **Python**: `>= 3.12, < 3.14` (managed via `uv`; `backend/.python-version` pins `3.12`)
+- **Node.js**: `>= 22.0.0` with `npm`
+- **Gemini API key** (optional for preview/calibration/tests; required on the backend for live `POST /api/analyze` inference)
+- **ElevenLabs API key & Voice ID** (optional; enables natural ElevenLabs v4 Turbo speech synthesis with automatic fallback to browser `window.speechSynthesis`. Note: Voice Library voices require a paid ElevenLabs plan; free-tier accounts can use any premade ElevenLabs voice ID.)
+
+## Configuration
+
+Copy `.env.example` to `.env` at the repository root (or inside `backend/`):
+
+```bash
+cp .env.example .env
+```
+
+Key settings (process environment variables and `.env` values override defaults):
+- `GEMINI_API_KEY`: Backend-only Gemini API key. Never expose secrets via `VITE_*` variables.
+- `GEMINI_MODEL`: Gemini vision model ID (default `gemini-3.8-flash`).
+- `GEMINI_THINKING_LEVEL`: Reasoning level (`minimal`, `low`, `medium`, `high`; default `low`, use `minimal` for lowest latency).
+- `ELEVENLABS_API_KEY`: Backend-only ElevenLabs API key (optional; browser speech synthesis is used when unset or unavailable).
+- `ELEVENLABS_MODEL_ID`: ElevenLabs speech model ID (default `eleven_v4_turbo`).
+- `ELEVENLABS_VOICE_ID`: Target ElevenLabs voice identifier.
+- `ANALYSIS_CONFIDENCE_THRESHOLD`: Product heuristic confidence cutoff (default `0.85`; not a calibrated probability).
+- `MAX_MODEL_LONG_EDGE`: Maximum processed image dimension sent to Gemini (default `1600`; recommended `1600` for naturally sized board handwriting — check your `.env` if an older `1280` override is set).
+- `CORS_ALLOWED_ORIGINS`: Comma-separated explicit development origins (leave empty when using the Next.js `/api` dev rewrite).
+
+## Installation & Development
+
+All backend commands must be run from `backend/`, and all frontend commands from `frontend/` unless noted otherwise.
+
+### 1. Install dependencies
+
+From `backend/`:
+```bash
+uv sync
+```
+
+From `frontend/`:
+```bash
+npm install
+```
+
+### 2. Run locally in development
+
+Terminal 1 (from the repository root or `backend/`):
+```bash
+./backend/.venv/Scripts/python.exe -m uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8000 --env-file .env
+```
+
+Terminal 2 (from `frontend/`):
+```bash
+npm run dev
+```
+
+Open `http://localhost:5173`. Next.js rewrites `/api/*` requests to `http://127.0.0.1:8000` (override target via `CHALKOLATE_API_PROXY_TARGET`).
+
+### 3. Using Chalkolate
+
+1. Select a source in the top bar: **Camera** (choose integrated webcam, external camera, or virtual camera), **Screen**, or **Upload** (lecture video or image).
+2. Monitoring is **stopped by default** when the app opens and does not request camera permissions automatically.
+3. Click **Start** to begin near-real-time monitoring (click **Stop** at any time to pause analysis and speech while keeping preview and playback active).
+4. For uploaded lecture videos, use the bottom playback bar to play, pause, restart, or scrub; seeking or restarting resets tracked findings for the new timestamp.
+5. Click the subtle chevron along the right edge of the board (or any highlighted bounding box/pill) to smoothly expand or collapse the **Findings** sidebar; the video resizes naturally alongside it.
+6. Click the **Crop** icon at bottom-right to open board calibration — Chalkolate automatically detects likely board corners using OpenCV and lets you fine-tune them manually before applying.
+
+## Build, Lint, Type-Check, and Test Commands
+
+### Backend (working directory: `backend/`)
+
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy .
+uv run pytest -v
+```
+
+### Frontend (working directory: `frontend/`)
+
+```bash
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+## Capture Sources & Limitations
+
+- **Camera Devices**: Chalkolate displays real camera devices reported by the browser (excluding `OBS Virtual Camera`), prioritizes the integrated laptop webcam by default, releases prior stream handles before switching cameras, and retries transient driver lock/constraint errors.
+- **Screen Share**: Uses `navigator.mediaDevices.getDisplayMedia` (browser tabs, windows, or screens supported by the browser). To monitor an iPad, mirror it to the host via AirPlay, USB/Sidecar, or a capture card and select that window/device.
+- **Session-scoped tracking & dismissals**: Findings remain visible across motion, staleness, and transient API errors until verified resolved or dismissed. Dismissals suppress matching `detected_text` at that location for the current board session.
 
 ## Team
 
