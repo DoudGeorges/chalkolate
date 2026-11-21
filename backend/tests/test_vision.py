@@ -18,8 +18,10 @@ from vision import (
     PreparedImage,
     ProjectionError,
     UnsupportedImageFormatError,
+    _auto_enhance,
     cont_px_to_norm,
     decode_upright_bgr,
+    detect_board_corners,
     norm_to_cont_px,
     prepare_image,
     project_box_to_source,
@@ -107,7 +109,6 @@ def test_identity_calibration_and_uncalibrated_preserve_geometry_and_borders() -
     identity_prepared = prepare_image(
         raw_bytes,
         corners=[(0.0, 0.0), (1000.0, 0.0), (1000.0, 1000.0), (0.0, 1000.0)],
-        enhance_chalkboard=False,
         max_image_pixels=10_000_000,
         max_long_edge=1280,
     )
@@ -132,7 +133,6 @@ def test_identity_calibration_and_uncalibrated_preserve_geometry_and_borders() -
     large_prepared = prepare_image(
         _encode_pil_bytes(large, fmt="PNG"),
         corners=None,
-        enhance_chalkboard=False,
         max_image_pixels=10_000_000,
         max_long_edge=1280,
     )
@@ -160,7 +160,6 @@ def test_skewed_homography_roundtrip_and_four_corner_vs_diagonal_projection() ->
     prepared = prepare_image(
         raw_bytes,
         corners=corners_norm,
-        enhance_chalkboard=False,
         max_image_pixels=10_000_000,
         max_long_edge=1280,
     )
@@ -283,28 +282,92 @@ def test_projection_rejects_nonfinite_horizon_and_collapsed_boxes() -> None:
     assert projected.detected_text == "Acceleraton"
 
 
-def test_enhance_chalkboard_applies_clahe_in_lab_luminance() -> None:
-    # Low-contrast grayscale board image
-    img = np.full((240, 320, 3), 50, dtype=np.uint8)
-    cv2.putText(img, "F = ma", (40, 140), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (72, 72, 72), 3)
-    raw = _encode_pil_bytes(Image.fromarray(img), fmt="PNG")
+def test_auto_enhance_improves_low_contrast_and_preserves_high_contrast() -> None:
+    # Low-contrast chalkboard (L std < 45) gets LAB L-channel CLAHE boost
+    low = np.full((240, 320, 3), 50, dtype=np.uint8)
+    cv2.putText(low, "F = ma", (40, 140), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (72, 72, 72), 3)
+    low_enhanced = _auto_enhance(low)
+    assert low_enhanced.shape == low.shape
+    assert float(low_enhanced.std()) > float(low.std())
 
-    plain = prepare_image(
-        raw,
-        corners=None,
-        enhance_chalkboard=False,
-        max_image_pixels=1_000_000,
-        max_long_edge=1280,
-    )
-    enhanced = prepare_image(
-        raw,
-        corners=None,
-        enhance_chalkboard=True,
-        max_image_pixels=1_000_000,
-        max_long_edge=1280,
-    )
-    plain_bgr = decode_upright_bgr(plain.jpeg_bytes, max_image_pixels=1_000_000)
-    enh_bgr = decode_upright_bgr(enhanced.jpeg_bytes, max_image_pixels=1_000_000)
+    # High-contrast whiteboard/slide (L std >= 45) passes through pixel-identical
+    high = np.full((240, 320, 3), 245, dtype=np.uint8)
+    high[:, :160] = (20, 20, 20)
+    high_out = _auto_enhance(high)
+    assert np.array_equal(high_out, high)
 
-    assert enh_bgr.shape == plain_bgr.shape
-    assert float(enh_bgr.std()) > float(plain_bgr.std())
+
+def test_detect_board_corners_whiteboard_chalkboard_perspective_and_fallback() -> None:
+    # 1. Whiteboard on darker wall with writing inside
+    wb = np.full((600, 800, 3), 65, dtype=np.uint8)
+    cv2.rectangle(wb, (120, 90), (680, 510), (244, 245, 247), thickness=-1)
+    cv2.rectangle(wb, (120, 90), (680, 510), (160, 165, 170), thickness=3)
+    cv2.putText(
+        wb, "(a+b)^2 = a^2 + b^2", (180, 280), cv2.FONT_HERSHEY_SIMPLEX, 1.1, (25, 25, 35), 2
+    )
+    wb_bytes = _encode_pil_bytes(Image.fromarray(cv2.cvtColor(wb, cv2.COLOR_BGR2RGB)), fmt="PNG")
+    wb_res = detect_board_corners(wb_bytes, max_image_pixels=5_000_000)
+    assert wb_res.detected is True
+    assert wb_res.corners is not None
+    assert wb_res.confidence >= 0.45
+    expected_wb = [(150.0, 150.0), (850.0, 150.0), (850.0, 850.0), (150.0, 850.0)]
+    for actual, exp in zip(wb_res.corners, expected_wb, strict=True):
+        assert abs(actual[0] - exp[0]) <= 35.0
+        assert abs(actual[1] - exp[1]) <= 35.0
+
+    # 2. Dark green chalkboard on a light wall with chalk text
+    cb = np.full((600, 800, 3), 215, dtype=np.uint8)
+    cv2.rectangle(cb, (96, 108), (704, 492), (42, 68, 38), thickness=-1)
+    cv2.putText(cb, "F = m * a", (250, 310), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (235, 235, 230), 2)
+    cb_bytes = _encode_pil_bytes(Image.fromarray(cv2.cvtColor(cb, cv2.COLOR_BGR2RGB)), fmt="PNG")
+    cb_res = detect_board_corners(cb_bytes, max_image_pixels=5_000_000)
+    assert cb_res.detected is True
+    assert cb_res.corners is not None
+    expected_cb = [(120.0, 180.0), (880.0, 180.0), (880.0, 820.0), (120.0, 820.0)]
+    for actual, exp in zip(cb_res.corners, expected_cb, strict=True):
+        assert abs(actual[0] - exp[0]) <= 35.0
+        assert abs(actual[1] - exp[1]) <= 35.0
+
+    # 3. Perspective-skewed board trapezoid
+    skew = np.full((600, 800, 3), 55, dtype=np.uint8)
+    poly_px = np.array([[140, 110], [670, 160], [720, 490], [90, 450]], dtype=np.int32)
+    cv2.fillConvexPoly(skew, poly_px, (240, 240, 242))
+    skew_bytes = _encode_pil_bytes(
+        Image.fromarray(cv2.cvtColor(skew, cv2.COLOR_BGR2RGB)), fmt="PNG"
+    )
+    skew_res = detect_board_corners(skew_bytes, max_image_pixels=5_000_000)
+    assert skew_res.detected is True
+    assert skew_res.corners is not None
+    expected_skew = [
+        (140 * 1000 / 800, 110 * 1000 / 600),
+        (670 * 1000 / 800, 160 * 1000 / 600),
+        (720 * 1000 / 800, 490 * 1000 / 600),
+        (90 * 1000 / 800, 450 * 1000 / 600),
+    ]
+    for actual, exp in zip(skew_res.corners, expected_skew, strict=True):
+        assert abs(actual[0] - exp[0]) <= 40.0
+        assert abs(actual[1] - exp[1]) <= 40.0
+
+    # 4. Uniform wall returns detected=False honestly
+    flat = np.full((480, 640, 3), 130, dtype=np.uint8)
+    flat_bytes = _encode_pil_bytes(Image.fromarray(flat), fmt="PNG")
+    flat_res = detect_board_corners(flat_bytes, max_image_pixels=5_000_000)
+    assert flat_res.detected is False
+    assert flat_res.corners is None
+    assert flat_res.confidence == 0.0
+
+    # 5. Cluttered non-board scene (random circles) returns detected=False
+    clutter = np.full((480, 640, 3), 120, dtype=np.uint8)
+    rng = np.random.default_rng(42)
+    for _ in range(35):
+        cx = int(rng.integers(20, 620))
+        cy = int(rng.integers(20, 460))
+        rad = int(rng.integers(12, 48))
+        col = tuple(int(v) for v in rng.integers(30, 230, size=3))
+        cv2.circle(clutter, (cx, cy), rad, col, thickness=-1)
+    clutter_bytes = _encode_pil_bytes(
+        Image.fromarray(cv2.cvtColor(clutter, cv2.COLOR_BGR2RGB)), fmt="PNG"
+    )
+    clutter_res = detect_board_corners(clutter_bytes, max_image_pixels=5_000_000)
+    assert clutter_res.detected is False
+    assert clutter_res.corners is None

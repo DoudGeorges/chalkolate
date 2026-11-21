@@ -8,16 +8,17 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-SubjectHint = Literal["auto", "math", "physics", "general"]
 ErrorCategory = Literal["math", "physics", "spelling"]
 
-MAX_SUMMARY_LENGTH = 2000
+MAX_PREV_SUMMARY_LENGTH = 2000
+MAX_BOARD_SUMMARY_LENGTH = 600
 MAX_FINDINGS = 20
 MAX_DETECTED_TEXT_LENGTH = 300
 MAX_CORRECTION_TEXT_LENGTH = 300
 MAX_CORRECTION_LATEX_LENGTH = 300
 MAX_SPOKEN_ALERT_LENGTH = 180
-MAX_EXPLANATION_LENGTH = 500
+MAX_EXPLANATION_LENGTH = 300
+MAX_SPEECH_TEXT_LENGTH = 240
 
 
 def _validate_finite_coord(value: object) -> float:
@@ -72,14 +73,10 @@ class AnalysisMetadata(StrictModel):
     )
     previous_board_summary: str = Field(
         default="",
-        max_length=MAX_SUMMARY_LENGTH,
+        max_length=MAX_PREV_SUMMARY_LENGTH,
         description=(
             "Optional brief summary of the previous analyzed board state, up to 2,000 characters."
         ),
-    )
-    subject_hint: SubjectHint = Field(
-        default="auto",
-        description="Optional lecture subject hint: auto, math, physics, or general.",
     )
     corners: list[tuple[float, float]] | None = Field(
         default=None,
@@ -90,24 +87,14 @@ class AnalysisMetadata(StrictModel):
             "each normalized to 0..1000 in the upright, unmirrored uploaded image."
         ),
     )
-    deep_mode: bool = Field(
-        default=False,
-        description=(
-            "Whether to request the higher-reasoning Deep Mode backend model when configured."
-        ),
-    )
-    enhance_chalkboard: bool = Field(
-        default=False,
-        description="Whether to apply CLAHE luminance contrast enhancement before analysis.",
-    )
 
     @field_validator("previous_board_summary")
     @classmethod
     def _validate_prev_summary(cls, value: str) -> str:
         trimmed = value.strip()
-        if len(trimmed) > MAX_SUMMARY_LENGTH:
+        if len(trimmed) > MAX_PREV_SUMMARY_LENGTH:
             raise ValueError(
-                f"previous_board_summary must not exceed {MAX_SUMMARY_LENGTH} characters."
+                f"previous_board_summary must not exceed {MAX_PREV_SUMMARY_LENGTH} characters."
             )
         return trimmed
 
@@ -173,13 +160,14 @@ class _FindingBase(StrictModel):
         min_length=1,
         max_length=MAX_SPOKEN_ALERT_LENGTH,
         description=(
-            "One concise plain-language spoken alert sentence (max 180 chars) without LaTeX markup."
+            "One concise natural-speech alert sentence (max 180 chars) phrasing math, exponents, "
+            "and units in plain spoken words without LaTeX markup or square-bracket tags."
         ),
     )
     explanation: str = Field(
         min_length=1,
         max_length=MAX_EXPLANATION_LENGTH,
-        description="One or two concise sentences explaining the error and correction.",
+        description="One concise sentence explaining the error and correction.",
     )
     confidence: float = Field(
         ge=0.0,
@@ -284,9 +272,9 @@ class BoardAnalysisResult(StrictModel):
 
     board_summary: str = Field(
         default="",
-        max_length=MAX_SUMMARY_LENGTH,
+        max_length=MAX_BOARD_SUMMARY_LENGTH,
         description=(
-            "Concise summary of the currently visible lecture work only, up to 2,000 characters; "
+            "At most two short sentences describing currently visible work; "
             "empty string if the board is blank or illegible."
         ),
     )
@@ -303,8 +291,10 @@ class BoardAnalysisResult(StrictModel):
     @classmethod
     def _validate_board_summary(cls, value: str) -> str:
         trimmed = value.strip()
-        if len(trimmed) > MAX_SUMMARY_LENGTH:
-            raise ValueError(f"board_summary must not exceed {MAX_SUMMARY_LENGTH} characters.")
+        if len(trimmed) > MAX_BOARD_SUMMARY_LENGTH:
+            raise ValueError(
+                f"board_summary must not exceed {MAX_BOARD_SUMMARY_LENGTH} characters."
+            )
         return trimmed
 
     @model_validator(mode="after")
@@ -319,7 +309,7 @@ class AnalysisResponse(StrictModel):
 
     request_id: str = Field(description="UUID echoed from the validated request metadata.")
     board_summary: str = Field(
-        max_length=MAX_SUMMARY_LENGTH,
+        max_length=MAX_BOARD_SUMMARY_LENGTH,
         description="Concise summary of the currently visible board.",
     )
     errors: list[SourceSpaceDetectedError] = Field(
@@ -333,13 +323,36 @@ class AnalysisResponse(StrictModel):
     latency_ms: int = Field(ge=0, description="Nonnegative server elapsed latency in milliseconds.")
 
 
+class SpeechRequest(StrictModel):
+    """Client text-to-speech synthesis request generated from an alert sentence."""
+
+    text: str = Field(
+        min_length=1,
+        max_length=MAX_SPEECH_TEXT_LENGTH,
+        description="Plain-language spoken alert sentence to synthesize.",
+    )
+
+    @field_validator("text")
+    @classmethod
+    def _validate_text(cls, value: str) -> str:
+        return _normalize_required_text(value, "text", MAX_SPEECH_TEXT_LENGTH)
+
+
 class HealthResponse(StrictModel):
     """Process health and configuration availability flags without upstream probing."""
 
     status: Literal["ok"] = "ok"
     analysis_configured: bool
-    deep_mode_configured: bool
+    speech_configured: bool = False
     credentials_verified: Literal[False] = False
+
+
+class BoardDetectionResponse(StrictModel):
+    """Automatic OpenCV board boundary detection result in source-image 0..1000 coordinates."""
+
+    detected: bool
+    corners: list[tuple[float, float]] | None = Field(default=None, min_length=4, max_length=4)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class ErrorEnvelope(StrictModel):

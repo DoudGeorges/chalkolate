@@ -6,12 +6,15 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal, cast
 
 from dotenv import load_dotenv
 
 BACKEND_DIR = Path(__file__).resolve().parent
 REPO_ROOT = BACKEND_DIR.parent
 
+ThinkingLevelName = Literal["minimal", "low", "medium", "high"]
+VALID_THINKING_LEVELS = frozenset({"minimal", "low", "medium", "high"})
 VALID_LOG_LEVELS = frozenset({"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"})
 
 
@@ -24,34 +27,44 @@ class Settings:
     """Immutable backend configuration."""
 
     gemini_api_key: str = field(default="", repr=False)
-    gemini_model: str = "gemini-4-hydrogen"
-    gemini_deep_model: str = "gemini-4-carbon"
+    gemini_model: str = "gemini-3.8-flash"
+    gemini_thinking_level: ThinkingLevelName = "low"
+    elevenlabs_api_key: str = field(default="", repr=False)
+    elevenlabs_model_id: str = "eleven_v4_turbo"
+    elevenlabs_voice_id: str = ""
+    speech_timeout_seconds: float = 10.0
+    speech_max_concurrency: int = 2
+    speech_rate_limit_per_minute: int = 30
     confidence_threshold: float = 0.85
     analysis_max_concurrency: int = 2
-    analysis_timeout_seconds: float = 30.0
-    analysis_deep_timeout_seconds: float = 60.0
+    analysis_timeout_seconds: float = 20.0
     analysis_max_output_tokens: int = 4096
-    analysis_deep_max_output_tokens: int = 8192
     max_upload_bytes: int = 10 * 1024 * 1024
     max_metadata_bytes: int = 16 * 1024
     max_image_pixels: int = 25_000_000
-    max_model_long_edge: int = 1280
+    max_model_long_edge: int = 1600
     cors_allowed_origins: tuple[str, ...] = ()
     log_level: str = "INFO"
 
     def __post_init__(self) -> None:
+        if self.gemini_thinking_level not in VALID_THINKING_LEVELS:
+            raise ConfigurationError(
+                f"GEMINI_THINKING_LEVEL must be one of {sorted(VALID_THINKING_LEVELS)}."
+            )
         if not 0.0 <= self.confidence_threshold <= 1.0:
             raise ConfigurationError("ANALYSIS_CONFIDENCE_THRESHOLD must be between 0.0 and 1.0.")
         if self.analysis_max_concurrency < 1:
             raise ConfigurationError("ANALYSIS_MAX_CONCURRENCY must be >= 1.")
         if self.analysis_timeout_seconds <= 0:
             raise ConfigurationError("ANALYSIS_TIMEOUT_SECONDS must be > 0.")
-        if self.analysis_deep_timeout_seconds <= 0:
-            raise ConfigurationError("ANALYSIS_DEEP_TIMEOUT_SECONDS must be > 0.")
         if self.analysis_max_output_tokens < 64:
             raise ConfigurationError("ANALYSIS_MAX_OUTPUT_TOKENS must be >= 64.")
-        if self.analysis_deep_max_output_tokens < 64:
-            raise ConfigurationError("ANALYSIS_DEEP_MAX_OUTPUT_TOKENS must be >= 64.")
+        if self.speech_timeout_seconds <= 0:
+            raise ConfigurationError("SPEECH_TIMEOUT_SECONDS must be > 0.")
+        if self.speech_max_concurrency < 1:
+            raise ConfigurationError("SPEECH_MAX_CONCURRENCY must be >= 1.")
+        if self.speech_rate_limit_per_minute < 1:
+            raise ConfigurationError("SPEECH_RATE_LIMIT_PER_MINUTE must be >= 1.")
         if self.max_upload_bytes < 1024:
             raise ConfigurationError("MAX_UPLOAD_BYTES must be >= 1024.")
         if self.max_metadata_bytes < 256:
@@ -69,13 +82,17 @@ class Settings:
 
     @property
     def analysis_configured(self) -> bool:
-        """Whether normal analysis has credentials and a configured model."""
+        """Whether analysis has credentials and a configured model."""
         return bool(self.gemini_api_key.strip() and self.gemini_model.strip())
 
     @property
-    def deep_mode_configured(self) -> bool:
-        """Whether Deep Mode is available and backed by a non-empty model ID."""
-        return self.analysis_configured and bool(self.gemini_deep_model.strip())
+    def speech_configured(self) -> bool:
+        """Whether ElevenLabs TTS has credentials, a model ID, and a target voice ID."""
+        return bool(
+            self.elevenlabs_api_key.strip()
+            and self.elevenlabs_model_id.strip()
+            and self.elevenlabs_voice_id.strip()
+        )
 
 
 def _get_str(env: Mapping[str, str], key: str, default: str) -> str:
@@ -106,6 +123,15 @@ def _get_float(env: Mapping[str, str], key: str, default: float) -> float:
     return value
 
 
+def _parse_thinking_level(raw: str) -> ThinkingLevelName:
+    lowered = raw.strip().lower()
+    if lowered not in VALID_THINKING_LEVELS:
+        raise ConfigurationError(
+            f"GEMINI_THINKING_LEVEL must be one of {sorted(VALID_THINKING_LEVELS)}."
+        )
+    return cast(ThinkingLevelName, lowered)
+
+
 def _parse_origins(raw: str) -> tuple[str, ...]:
     if not raw.strip():
         return ()
@@ -117,7 +143,8 @@ def _parse_origins(raw: str) -> tuple[str, ...]:
             )
         if not (origin.startswith("http://") or origin.startswith("https://")):
             raise ConfigurationError(
-                f"Invalid origin in CORS_ALLOWED_ORIGINS: {origin!r}. Must start with http:// or https://."
+                f"Invalid origin in CORS_ALLOWED_ORIGINS: {origin!r}. "
+                "Must start with http:// or https://."
             )
     return origins
 
@@ -140,18 +167,22 @@ def load_settings(
 
     return Settings(
         gemini_api_key=_get_str(env, "GEMINI_API_KEY", ""),
-        gemini_model=_get_str(env, "GEMINI_MODEL", "gemini-4-hydrogen"),
-        gemini_deep_model=_get_str(env, "GEMINI_DEEP_MODEL", "gemini-4-carbon"),
+        gemini_model=_get_str(env, "GEMINI_MODEL", "gemini-3.8-flash"),
+        gemini_thinking_level=_parse_thinking_level(_get_str(env, "GEMINI_THINKING_LEVEL", "low")),
+        elevenlabs_api_key=_get_str(env, "ELEVENLABS_API_KEY", ""),
+        elevenlabs_model_id=_get_str(env, "ELEVENLABS_MODEL_ID", "eleven_v4_turbo"),
+        elevenlabs_voice_id=_get_str(env, "ELEVENLABS_VOICE_ID", ""),
+        speech_timeout_seconds=_get_float(env, "SPEECH_TIMEOUT_SECONDS", 10.0),
+        speech_max_concurrency=_get_int(env, "SPEECH_MAX_CONCURRENCY", 2),
+        speech_rate_limit_per_minute=_get_int(env, "SPEECH_RATE_LIMIT_PER_MINUTE", 30),
         confidence_threshold=_get_float(env, "ANALYSIS_CONFIDENCE_THRESHOLD", 0.85),
         analysis_max_concurrency=_get_int(env, "ANALYSIS_MAX_CONCURRENCY", 2),
-        analysis_timeout_seconds=_get_float(env, "ANALYSIS_TIMEOUT_SECONDS", 30.0),
-        analysis_deep_timeout_seconds=_get_float(env, "ANALYSIS_DEEP_TIMEOUT_SECONDS", 60.0),
+        analysis_timeout_seconds=_get_float(env, "ANALYSIS_TIMEOUT_SECONDS", 20.0),
         analysis_max_output_tokens=_get_int(env, "ANALYSIS_MAX_OUTPUT_TOKENS", 4096),
-        analysis_deep_max_output_tokens=_get_int(env, "ANALYSIS_DEEP_MAX_OUTPUT_TOKENS", 8192),
         max_upload_bytes=_get_int(env, "MAX_UPLOAD_BYTES", 10 * 1024 * 1024),
         max_metadata_bytes=_get_int(env, "MAX_METADATA_BYTES", 16 * 1024),
         max_image_pixels=_get_int(env, "MAX_IMAGE_PIXELS", 25_000_000),
-        max_model_long_edge=_get_int(env, "MAX_MODEL_LONG_EDGE", 1280),
+        max_model_long_edge=_get_int(env, "MAX_MODEL_LONG_EDGE", 1600),
         cors_allowed_origins=_parse_origins(_get_str(env, "CORS_ALLOWED_ORIGINS", "")),
         log_level=_get_str(env, "LOG_LEVEL", "INFO").upper(),
     )

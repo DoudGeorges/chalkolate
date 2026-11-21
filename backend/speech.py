@@ -1,0 +1,305 @@
+"""ElevenLabs v4 Turbo streaming text-to-speech client, text normalizer, and rate limiter."""
+
+from __future__ import annotations
+
+import json
+import logging
+import math
+import re
+import time
+from collections import deque
+from collections.abc import AsyncIterator, Mapping
+from dataclasses import dataclass
+
+import httpx
+
+from config import Settings
+
+logger = logging.getLogger("chalkolate.speech")
+
+ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1"
+ELEVENLABS_OUTPUT_FORMAT = "mp3_44100_128"
+MAX_PREPARED_SPEECH_CHARS = 300
+VOICE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
+_BRACKETS_RE = re.compile(r"[\[\]]")
+_MS2_RE = re.compile(r"(?<![A-Za-z])m\s*/\s*s(?:\^2|²)(?![A-Za-z0-9])")
+_MS_RE = re.compile(r"(?<![A-Za-z])m\s*/\s*s(?![A-Za-z0-9])")
+_NM_RE = re.compile(r"(?<![A-Za-z])N\s*/\s*m(?![A-Za-z0-9])")
+_SQ_RE = re.compile(r"(?:\^2|²)")
+_CU_RE = re.compile(r"(?:\^3|³)")
+_WS_RE = re.compile(r"\s+")
+_RETRY_AFTER_RE = re.compile(r"^\d+$")
+
+
+class SpeechError(Exception):
+    """Base error raised during speech synthesis setup or upstream streaming."""
+
+
+class SpeechConfigError(SpeechError):
+    """Raised when ElevenLabs speech synthesis is unconfigured or invalid."""
+
+
+class SpeechAuthError(SpeechError):
+    """Raised when ElevenLabs rejects the backend API key or voice permissions."""
+
+
+class SpeechQuotaError(SpeechError):
+    """Raised when ElevenLabs rejects synthesis due to exhausted credits/quota."""
+
+    def __init__(self, message: str, *, retry_after_s: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+
+
+class SpeechPlanError(SpeechError):
+    """Raised when the configured voice requires a higher ElevenLabs plan tier."""
+
+
+class SpeechRateLimitError(SpeechError):
+    """Raised when ElevenLabs rate-limits or concurrency-limits the request."""
+
+    def __init__(self, message: str, *, retry_after_s: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+
+
+class SpeechTimeoutError(SpeechError):
+    """Raised when the upstream ElevenLabs request times out."""
+
+
+class SpeechUnavailableError(SpeechError):
+    """Raised when ElevenLabs is temporarily unreachable or overloaded."""
+
+    def __init__(self, message: str, *, retry_after_s: int | None = None) -> None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+
+
+class SpeechProviderError(SpeechError):
+    """Raised for unexpected non-success responses from ElevenLabs."""
+
+
+def validate_voice_id(voice_id: str) -> str:
+    """Validate and return an ElevenLabs voice ID safe for URL path interpolation."""
+    cleaned = voice_id.strip()
+    if not VOICE_ID_PATTERN.fullmatch(cleaned):
+        raise SpeechConfigError("Configured ELEVENLABS_VOICE_ID is invalid.")
+    return cleaned
+
+
+def prepare_spoken_text(raw: str) -> str:
+    """Sanitize and normalize math/physics shorthand into natural TTS prose."""
+    cleaned = _CONTROL_CHARS_RE.sub(" ", raw)
+    # Strip square brackets so eleven_v4_turbo never interprets math intervals as audio tags.
+    cleaned = _BRACKETS_RE.sub(" ", cleaned)
+
+    cleaned = _MS2_RE.sub(" meters per second squared ", cleaned)
+    cleaned = _MS_RE.sub(" meters per second ", cleaned)
+    cleaned = _NM_RE.sub(" Newtons per meter ", cleaned)
+    cleaned = _SQ_RE.sub(" squared ", cleaned)
+    cleaned = _CU_RE.sub(" cubed ", cleaned)
+
+    replacements = (
+        ("\u00d7", " times "),
+        ("\u22c5", " times "),
+        ("≠", " is not equal to "),
+        ("≈", " is approximately "),
+        ("±", " plus or minus "),
+        ("\u2212", " minus "),
+        ("√", " square root of "),
+        ("∫", " integral of "),
+        ("π", " pi "),
+        ("θ", " theta "),
+        ("Δ", " delta "),
+    )
+    for symbol, spoken in replacements:
+        cleaned = cleaned.replace(symbol, spoken)
+
+    normalized = _WS_RE.sub(" ", cleaned).strip()
+    if not normalized:
+        raise ValueError("Spoken text must not be empty.")
+    if len(normalized) > MAX_PREPARED_SPEECH_CHARS:
+        normalized = normalized[:MAX_PREPARED_SPEECH_CHARS].rstrip()
+    return normalized
+
+
+class SlidingWindowRateLimiter:
+    """Lightweight per-client sliding-window request limiter without background timers."""
+
+    def __init__(self, max_requests: int, window_seconds: float = 60.0) -> None:
+        self._max_requests = max_requests
+        self._window_seconds = window_seconds
+        self._buckets: dict[str, deque[float]] = {}
+
+    def try_acquire(self, key: str) -> tuple[bool, int]:
+        now = time.monotonic()
+        cutoff = now - self._window_seconds
+
+        if len(self._buckets) > 1000:
+            stale_keys = [
+                bucket_key
+                for bucket_key, stamps in self._buckets.items()
+                if not stamps or stamps[-1] <= cutoff
+            ]
+            for stale_key in stale_keys:
+                del self._buckets[stale_key]
+
+        stamps = self._buckets.setdefault(key, deque())
+        while stamps and stamps[0] <= cutoff:
+            stamps.popleft()
+
+        if len(stamps) >= self._max_requests:
+            retry_after = max(1, math.ceil(stamps[0] + self._window_seconds - now))
+            return False, retry_after
+
+        stamps.append(now)
+        return True, 0
+
+
+@dataclass
+class OpenedSpeechStream:
+    """Open upstream ElevenLabs HTTP audio stream with guaranteed cleanup."""
+
+    response: httpx.Response
+    media_type: str = "audio/mpeg"
+
+    async def iter_chunks(self, chunk_size: int = 8192) -> AsyncIterator[bytes]:
+        async for chunk in self.response.aiter_bytes(chunk_size=chunk_size):
+            if chunk:
+                yield chunk
+
+    async def aclose(self) -> None:
+        await self.response.aclose()
+
+
+def _parse_retry_after(headers: Mapping[str, str]) -> int | None:
+    raw = headers.get("retry-after") or headers.get("Retry-After")
+    if isinstance(raw, str):
+        trimmed = raw.strip()
+        if _RETRY_AFTER_RE.fullmatch(trimmed):
+            return max(1, int(trimmed))
+    return None
+
+
+def _extract_error_tags(body_bytes: bytes) -> tuple[str | None, str | None]:
+    if not body_bytes:
+        return None, None
+    try:
+        parsed = json.loads(body_bytes.decode("utf-8", errors="ignore"))
+    except json.JSONDecodeError:
+        return None, None
+    if not isinstance(parsed, dict):
+        return None, None
+    detail = parsed.get("detail")
+    if isinstance(detail, dict):
+        raw_code = detail.get("code")
+        raw_status = detail.get("status")
+        code = raw_code.strip().lower() if isinstance(raw_code, str) and raw_code.strip() else None
+        status = (
+            raw_status.strip().lower()
+            if isinstance(raw_status, str) and raw_status.strip()
+            else None
+        )
+        return code, status
+    return None, None
+
+
+async def open_elevenlabs_speech_stream(
+    client: httpx.AsyncClient,
+    text: str,
+    settings: Settings,
+) -> OpenedSpeechStream:
+    """Open a streaming MP3 request to ElevenLabs v4 Turbo without logging secrets or text."""
+    if not settings.speech_configured:
+        raise SpeechConfigError("ElevenLabs speech synthesis is not configured.")
+
+    voice_id = validate_voice_id(settings.elevenlabs_voice_id)
+    try:
+        prepared_text = prepare_spoken_text(text)
+    except ValueError as exc:
+        raise SpeechProviderError("Speech text is empty after sanitization.") from exc
+
+    url = (
+        f"{ELEVENLABS_BASE_URL}/text-to-speech/{voice_id}/stream"
+        f"?output_format={ELEVENLABS_OUTPUT_FORMAT}"
+    )
+    payload = {
+        "text": prepared_text,
+        "model_id": settings.elevenlabs_model_id.strip(),
+        "apply_text_normalization": "auto",
+        "voice_settings": {
+            "stability": 0.55,
+            "similarity_boost": 0.75,
+        },
+    }
+    timeout = httpx.Timeout(
+        connect=5.0,
+        read=settings.speech_timeout_seconds,
+        write=5.0,
+        pool=5.0,
+    )
+    request = client.build_request(
+        "POST",
+        url,
+        headers={
+            "xi-api-key": settings.elevenlabs_api_key.strip(),
+            "Content-Type": "application/json",
+            "Accept": "audio/mpeg",
+        },
+        json=payload,
+        timeout=timeout,
+    )
+
+    try:
+        response = await client.send(request, stream=True)
+    except httpx.TimeoutException as exc:
+        raise SpeechTimeoutError("Speech synthesis timed out.") from exc
+    except httpx.HTTPError as exc:
+        raise SpeechUnavailableError("Speech provider connection failed.") from exc
+
+    if response.status_code != 200:
+        status_code = response.status_code
+        retry_after_s = _parse_retry_after(response.headers)
+        detail_code: str | None = None
+        detail_status: str | None = None
+        try:
+            body_bytes = await response.aread()
+            detail_code, detail_status = _extract_error_tags(body_bytes[:4096])
+        finally:
+            await response.aclose()
+
+        logger.warning(
+            "ElevenLabs TTS upstream failure status=%s code=%s tag=%s",
+            status_code,
+            detail_code or "unknown",
+            detail_status or "unknown",
+        )
+
+        if status_code in (401, 403):
+            raise SpeechAuthError("ElevenLabs credentials or voice permissions were rejected.")
+        if detail_code == "quota_exceeded" or detail_status == "quota_exceeded":
+            raise SpeechQuotaError(
+                "ElevenLabs character quota exceeded; falling back to browser voice.",
+                retry_after_s=retry_after_s or 60,
+            )
+        if status_code == 402 or detail_code == "paid_plan_required":
+            raise SpeechPlanError(
+                "Configured ElevenLabs voice requires a paid plan; use a premade voice or upgrade."
+            )
+        if status_code == 429:
+            raise SpeechRateLimitError(
+                "ElevenLabs speech rate limit reached.",
+                retry_after_s=retry_after_s or 10,
+            )
+        if status_code in (408, 504):
+            raise SpeechTimeoutError("Speech synthesis request timed out upstream.")
+        if status_code == 503:
+            raise SpeechUnavailableError(
+                "ElevenLabs speech service is temporarily unavailable.",
+                retry_after_s=retry_after_s or 5,
+            )
+        raise SpeechProviderError("Speech synthesis provider returned an unexpected error.")
+
+    return OpenedSpeechStream(response=response, media_type="audio/mpeg")

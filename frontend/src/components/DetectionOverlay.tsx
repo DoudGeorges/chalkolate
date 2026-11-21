@@ -6,6 +6,7 @@ import { MathCorrection } from './MathCorrection'
 export interface DetectionOverlayProps {
   imageRect: ContainedImageRect
   issues: readonly TrackedIssue[]
+  locationsUnverified?: boolean
   selectedIssueId: string | null
   hoveredIssueId: string | null
   onSelectIssue: (issueId: string) => void
@@ -55,12 +56,13 @@ export function DetectionOverlay({
               width={xmax - xmin}
               height={ymax - ymin}
               fill={color}
-              fillOpacity={isHighlighted ? 0.18 : 0.08}
+              fillOpacity={isHighlighted ? 0.18 : 0.1}
               stroke={color}
+              strokeOpacity={1}
               strokeWidth={isHighlighted ? 3 : 2}
               vectorEffect="non-scaling-stroke"
               rx={4}
-              className="pointer-events-auto cursor-pointer transition-opacity"
+              className="pointer-events-auto cursor-pointer transition-opacity duration-150"
               tabIndex={0}
               role="button"
               aria-pressed={issue.id === selectedIssueId}
@@ -99,11 +101,12 @@ export function DetectionOverlay({
               style={{
                 left: `${pos.left}px`,
                 top: `${pos.top}px`,
-                borderColor: color,
                 maxWidth: `${Math.max(120, Math.min(280, imageRect.width - 8))}px`,
               }}
-              className={`pointer-events-auto absolute flex items-center gap-1.5 rounded-md border bg-slate-950/92 px-2 py-1 text-left text-xs shadow-lg transition focus-visible:outline-2 focus-visible:outline-amber-400 ${
-                isHighlighted ? 'z-20 ring-2 ring-white/40' : 'z-10'
+              className={`pointer-events-auto absolute flex items-center gap-1.5 rounded-lg border bg-panel px-2.5 py-1 text-left text-xs shadow-xl backdrop-blur-md transition duration-150 animate-pill-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
+                isHighlighted
+                  ? 'z-20 border-white/30 ring-1 ring-white/25'
+                  : 'z-10 border-line hover:border-white/20'
               }`}
             >
               <span
@@ -111,7 +114,7 @@ export function DetectionOverlay({
                 style={{ backgroundColor: color }}
                 aria-hidden="true"
               />
-              <span className="truncate font-medium text-slate-200">
+              <span className="truncate font-medium text-zinc-100">
                 <MathCorrection
                   correctionText={issue.correction_text}
                   correctionLatex={issue.correction_latex}

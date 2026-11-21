@@ -13,6 +13,7 @@ from schemas import (
     AnalysisMetadata,
     AnalysisResponse,
     BoardAnalysisResult,
+    BoardDetectionResponse,
     DetectedError,
     SourceSpaceDetectedError,
 )
@@ -39,19 +40,24 @@ def test_analysis_metadata_valid_and_unknown_fields_rejected() -> None:
         {
             "request_id": req_id,
             "previous_board_summary": "Quadratic expansion",
-            "subject_hint": "math",
             "corners": [[10, 10], [990, 10], [990, 990], [10, 990]],
-            "deep_mode": True,
-            "enhance_chalkboard": False,
         }
     )
     parsed = AnalysisMetadata.model_validate_json(payload)
     assert str(parsed.request_id) == req_id
-    assert parsed.deep_mode is True
+    assert parsed.previous_board_summary == "Quadratic expansion"
 
-    bad_extra = json.dumps({"request_id": req_id, "dismissed_errors": ["abc"]})
+    bad_extra = json.dumps({"request_id": req_id, "deep_mode": True})
     with pytest.raises(ValidationError):
         AnalysisMetadata.model_validate_json(bad_extra)
+
+    bad_subject = json.dumps({"request_id": req_id, "subject_hint": "math"})
+    with pytest.raises(ValidationError):
+        AnalysisMetadata.model_validate_json(bad_subject)
+
+    bad_dismissed = json.dumps({"request_id": req_id, "dismissed_errors": ["abc"]})
+    with pytest.raises(ValidationError):
+        AnalysisMetadata.model_validate_json(bad_dismissed)
 
 
 def test_analysis_metadata_bounds_and_invalid_corners() -> None:
@@ -60,11 +66,6 @@ def test_analysis_metadata_bounds_and_invalid_corners() -> None:
     with pytest.raises(ValidationError):
         AnalysisMetadata.model_validate_json(
             json.dumps({"request_id": req_id, "previous_board_summary": "x" * 2001})
-        )
-
-    with pytest.raises(ValidationError):
-        AnalysisMetadata.model_validate_json(
-            json.dumps({"request_id": req_id, "subject_hint": "chemistry"})
         )
 
     with pytest.raises(ValidationError):
@@ -82,6 +83,15 @@ def test_analysis_metadata_bounds_and_invalid_corners() -> None:
             request_id=uuid4(),
             corners=[(0.0, 0.0), (math.nan, 0.0), (100.0, 100.0), (0.0, 100.0)],
         )
+
+    det_ok = BoardDetectionResponse(
+        detected=True,
+        corners=[(100.0, 100.0), (900.0, 100.0), (900.0, 900.0), (100.0, 900.0)],
+        confidence=0.88,
+    )
+    assert det_ok.detected is True
+    det_none = BoardDetectionResponse(detected=False, corners=None, confidence=0.0)
+    assert det_none.corners is None
 
 
 def test_detected_error_bounds_delimiters_and_box_validation() -> None:
@@ -124,6 +134,12 @@ def test_board_analysis_result_max_findings_and_malformed_json() -> None:
     many_errors = [_valid_finding_dict() for _ in range(21)]
     with pytest.raises(ValidationError):
         BoardAnalysisResult.model_validate({"board_summary": "ok", "errors": many_errors})
+
+    with pytest.raises(ValidationError):
+        BoardAnalysisResult.model_validate({"board_summary": "x" * 601, "errors": []})
+
+    with pytest.raises(ValidationError):
+        DetectedError.model_validate(_valid_finding_dict(explanation="x" * 301))
 
     with pytest.raises(ValidationError):
         BoardAnalysisResult.model_validate_json('{"board_summary": "unterminated')
