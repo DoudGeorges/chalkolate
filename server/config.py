@@ -39,6 +39,9 @@ class Settings:
     analysis_max_concurrency: int = 2
     analysis_timeout_seconds: float = 12.0
     analysis_max_output_tokens: int = 4096
+    notes_max_concurrency: int = 1
+    notes_timeout_seconds: float = 40.0
+    notes_max_output_tokens: int = 6144
     max_upload_bytes: int = 10 * 1024 * 1024
     max_metadata_bytes: int = 16 * 1024
     max_image_pixels: int = 25_000_000
@@ -59,6 +62,12 @@ class Settings:
             raise ConfigurationError("ANALYSIS_TIMEOUT_SECONDS must be > 0.")
         if self.analysis_max_output_tokens < 64:
             raise ConfigurationError("ANALYSIS_MAX_OUTPUT_TOKENS must be >= 64.")
+        if self.notes_max_concurrency < 1:
+            raise ConfigurationError("NOTES_MAX_CONCURRENCY must be >= 1.")
+        if self.notes_timeout_seconds <= 0:
+            raise ConfigurationError("NOTES_TIMEOUT_SECONDS must be > 0.")
+        if self.notes_max_output_tokens < 64:
+            raise ConfigurationError("NOTES_MAX_OUTPUT_TOKENS must be >= 64.")
         if self.speech_timeout_seconds <= 0:
             raise ConfigurationError("SPEECH_TIMEOUT_SECONDS must be > 0.")
         if self.speech_max_concurrency < 1:
@@ -179,6 +188,9 @@ def load_settings(
         analysis_max_concurrency=_get_int(env, "ANALYSIS_MAX_CONCURRENCY", 2),
         analysis_timeout_seconds=_get_float(env, "ANALYSIS_TIMEOUT_SECONDS", 12.0),
         analysis_max_output_tokens=_get_int(env, "ANALYSIS_MAX_OUTPUT_TOKENS", 4096),
+        notes_max_concurrency=_get_int(env, "NOTES_MAX_CONCURRENCY", 1),
+        notes_timeout_seconds=_get_float(env, "NOTES_TIMEOUT_SECONDS", 40.0),
+        notes_max_output_tokens=_get_int(env, "NOTES_MAX_OUTPUT_TOKENS", 6144),
         max_upload_bytes=_get_int(env, "MAX_UPLOAD_BYTES", 10 * 1024 * 1024),
         max_metadata_bytes=_get_int(env, "MAX_METADATA_BYTES", 16 * 1024),
         max_image_pixels=_get_int(env, "MAX_IMAGE_PIXELS", 25_000_000),

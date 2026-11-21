@@ -293,6 +293,17 @@ async def test_analyze_failure_modes_never_become_empty_success() -> None:
             assert exc_info.value.retry_after_s == 7
 
 
+def test_user_prompt_carries_answer_format_preference() -> None:
+    from analyzer import build_user_prompt
+
+    rid = uuid4()
+    assert "exact symbolic form" in build_user_prompt(AnalysisMetadata(request_id=rid))
+    fraction = build_user_prompt(AnalysisMetadata(request_id=rid, answer_format="fraction"))
+    assert "reduced fractions" in fraction
+    decimals = build_user_prompt(AnalysisMetadata(request_id=rid, answer_format="decimal3"))
+    assert "3 places after the decimal point" in decimals
+    with pytest.raises(ValueError):
+        AnalysisMetadata.model_validate({"request_id": str(rid), "answer_format": "bogus"})
 def _finding(**over: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
         "category": "math",

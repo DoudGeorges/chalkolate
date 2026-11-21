@@ -9,7 +9,6 @@ export interface TopBarProps {
   /** Close the current source and return to the welcome guide (shown when not onboarding). */
   onGoHome?: () => void
 }
-
 export function TopBar({
   mediaReady,
   monitoring,
