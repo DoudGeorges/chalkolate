@@ -291,3 +291,37 @@ async def test_analyze_failure_modes_never_become_empty_success() -> None:
             await analyze_board_image(_FakeClient(raises_api), prepared, meta, settings)
         if isinstance(exc_info.value, UpstreamRateLimitError):
             assert exc_info.value.retry_after_s == 7
+
+
+def _finding(**over: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "category": "math",
+        "detected_text": "1+1=3",
+        "correction_text": "1+1=2",
+        "correction_latex": None,
+        "spoken_alert": "One plus one is two.",
+        "explanation": "Arithmetic sum is incorrect.",
+        "box_2d": [100, 100, 200, 300],
+        "confidence": 0.99,
+    }
+    base.update(over)
+    return base
+
+
+@pytest.mark.asyncio
+async def test_analyze_drops_invalid_findings_but_keeps_valid_ones() -> None:
+    settings = _make_settings()
+    prepared = _make_prepared()
+    meta = AnalysisMetadata(request_id=uuid4())
+
+    async def mixed(**_k: Any) -> types.GenerateContentResponse:
+        return _ok_response(
+            {
+                "board_summary": "Board",
+                "errors": [_finding(box_2d=[500, 100, 200, 300]), _finding()],
+            }
+        )
+
+    result = await analyze_board_image(_FakeClient(mixed), prepared, meta, settings)
+    assert len(result.errors) == 1
+    assert result.errors[0].box_2d == [100, 100, 200, 300]
