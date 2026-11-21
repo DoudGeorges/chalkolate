@@ -20,7 +20,7 @@ RGBImage = NDArray[np.uint8]
 HomographyMatrix = NDArray[np.float64]
 PointArray = NDArray[np.float64]
 
-SUPPORTED_PILLOW_FORMATS = frozenset({"JPEG", "PNG", "WEBP", "BMP"})
+SUPPORTED_PILLOW_FORMATS = ("JPEG", "PNG", "WEBP", "BMP")
 MIN_CORNER_SEPARATION_NORM = 20.0
 MIN_CORNER_SIN = 0.08
 MIN_QUAD_AREA_NORM = 2500.0
@@ -137,55 +137,45 @@ def decode_upright_bgr(raw_bytes: bytes, *, max_image_pixels: int) -> BGRImage:
     if not raw_bytes:
         raise CorruptImageError("Image payload is empty.")
 
-    old_max_pixels = Image.MAX_IMAGE_PIXELS
-    # Keep Pillow's decompression-bomb protection active at a high ceiling while avoiding
-    # spurious DecompressionBombWarning when small test caps reject via ImagePixelLimitError.
-    Image.MAX_IMAGE_PIXELS = max(max_image_pixels * 2, 50_000_000)
     try:
-        try:
-            with Image.open(io.BytesIO(raw_bytes)) as opened:
-                fmt = (opened.format or "").upper()
-                if fmt not in SUPPORTED_PILLOW_FORMATS:
-                    raise UnsupportedImageFormatError(
-                        f"Unsupported image format {fmt or 'unknown'}. "
-                        "Allowed: JPEG, PNG, WEBP, BMP."
-                    )
+        with Image.open(io.BytesIO(raw_bytes), formats=SUPPORTED_PILLOW_FORMATS) as opened:
+            fmt = (opened.format or "").upper()
+            if fmt not in SUPPORTED_PILLOW_FORMATS:
+                raise UnsupportedImageFormatError(
+                    f"Unsupported image format {fmt or 'unknown'}. Allowed: JPEG, PNG, WEBP, BMP."
+                )
 
-                width, height = opened.size
-                if width <= 0 or height <= 0:
-                    raise CorruptImageError("Image has nonpositive dimensions.")
-                if width * height > max_image_pixels:
+            width, height = opened.size
+            if width <= 0 or height <= 0:
+                raise CorruptImageError("Image has nonpositive dimensions.")
+            if width * height > max_image_pixels:
+                raise ImagePixelLimitError(
+                    f"Image pixel count ({width * height}) exceeds limit ({max_image_pixels})."
+                )
+
+            opened.load()
+            upright = ImageOps.exif_transpose(opened)
+            try:
+                u_w, u_h = upright.size
+                if u_w <= 0 or u_h <= 0:
+                    raise CorruptImageError("Transposed image has nonpositive dimensions.")
+                if u_w * u_h > max_image_pixels:
                     raise ImagePixelLimitError(
-                        f"Image pixel count ({width * height}) exceeds limit ({max_image_pixels})."
+                        f"Image pixel count ({u_w * u_h}) exceeds limit ({max_image_pixels})."
                     )
-
-                opened.load()
-                upright = ImageOps.exif_transpose(opened)
-                try:
-                    u_w, u_h = upright.size
-                    if u_w <= 0 or u_h <= 0:
-                        raise CorruptImageError("Transposed image has nonpositive dimensions.")
-                    if u_w * u_h > max_image_pixels:
-                        raise ImagePixelLimitError(
-                            f"Image pixel count ({u_w * u_h}) exceeds limit ({max_image_pixels})."
-                        )
-                    with upright.convert("RGB") as rgb_img:
-                        rgb_array: RGBImage = np.asarray(rgb_img, dtype=np.uint8)
-                finally:
-                    if upright is not opened:
-                        upright.close()
-        except VisionError:
-            raise
-        except Image.DecompressionBombError as exc:
-            raise ImagePixelLimitError("Image exceeds maximum safe pixel count.") from exc
-        except UnidentifiedImageError as exc:
-            raise UnsupportedImageFormatError(
-                "Uploaded file is not a valid supported image."
-            ) from exc
-        except (OSError, SyntaxError, ValueError, EOFError) as exc:
-            raise CorruptImageError("Uploaded image appears corrupt or truncated.") from exc
-    finally:
-        Image.MAX_IMAGE_PIXELS = old_max_pixels
+                with upright.convert("RGB") as rgb_img:
+                    rgb_array: RGBImage = np.asarray(rgb_img, dtype=np.uint8)
+            finally:
+                if upright is not opened:
+                    upright.close()
+    except VisionError:
+        raise
+    except Image.DecompressionBombError as exc:
+        raise ImagePixelLimitError("Image exceeds maximum safe pixel count.") from exc
+    except UnidentifiedImageError as exc:
+        raise UnsupportedImageFormatError("Uploaded file is not a valid supported image.") from exc
+    except (OSError, SyntaxError, ValueError, EOFError) as exc:
+        raise CorruptImageError("Uploaded image appears corrupt or truncated.") from exc
 
     bgr = cast(BGRImage, cv2.cvtColor(rgb_array, cv2.COLOR_RGB2BGR))
     return bgr

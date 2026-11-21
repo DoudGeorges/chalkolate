@@ -9,6 +9,7 @@ import re
 import time
 from typing import Protocol
 
+import httpx
 from google.genai import errors as genai_errors
 from google.genai import types
 from pydantic import ValidationError
@@ -142,6 +143,12 @@ class UnusableModelOutputError(AnalyzerError):
     """Raised when Gemini returns missing, invalid, or schema-noncompliant output."""
 
 
+class AnalyzedBoard(BoardAnalysisResult):
+    """Validated findings with completeness information for issue reconciliation."""
+
+    incomplete: bool = False
+
+
 class AsyncModelsAPI(Protocol):
     """Minimal structural protocol for async Gemini generate_content calls."""
 
@@ -237,7 +244,7 @@ def _map_api_error(exc: genai_errors.APIError) -> AnalyzerError:
     return UpstreamProviderError("Analysis provider returned an unexpected error.")
 
 
-def _validate_response_completion(response: types.GenerateContentResponse) -> str:
+def validate_response_completion(response: types.GenerateContentResponse) -> str:
     feedback = response.prompt_feedback
     if feedback is not None and feedback.block_reason is not None:
         raise ModelBlockedError("Model blocked this snapshot before generating a response.")
@@ -271,11 +278,11 @@ def _parse_tolerant(raw_json: str) -> tuple[BoardAnalysisResult, int]:
     """
     try:
         data = json.loads(raw_json)
-    except ValueError as exc:
+    except (ValueError, RecursionError) as exc:
         raise UnusableModelOutputError("Model returned malformed JSON.") from exc
     if not isinstance(data, dict):
         raise UnusableModelOutputError("Model returned JSON that failed schema validation.")
-    raw_errors = data.get("errors", [])
+    raw_errors = data.get("errors")
     if not isinstance(raw_errors, list):
         raise UnusableModelOutputError("Model returned JSON that failed schema validation.")
 
@@ -292,7 +299,7 @@ def _parse_tolerant(raw_json: str) -> tuple[BoardAnalysisResult, int]:
         dropped += len(valid) - MAX_FINDINGS
         valid = valid[:MAX_FINDINGS]
     try:
-        result = BoardAnalysisResult(board_summary=data.get("board_summary", ""), errors=valid)
+        result = BoardAnalysisResult.model_validate({**data, "errors": valid})
     except ValidationError as exc:
         raise UnusableModelOutputError(
             "Model returned JSON that failed schema validation."
@@ -300,42 +307,61 @@ def _parse_tolerant(raw_json: str) -> tuple[BoardAnalysisResult, int]:
     return result, dropped
 
 
+async def generate_board_response(
+    client: AsyncGenAIClient,
+    prepared: PreparedImage,
+    settings: Settings,
+    *,
+    prompt: str,
+    system_instruction: str,
+    response_schema: dict[str, object],
+    max_output_tokens: int,
+    deadline_seconds: float,
+) -> types.GenerateContentResponse:
+    """Request structured Gemini output with a deadline that includes SDK retries."""
+    retry_delay = min(_RETRY_MAX_DELAY_S, deadline_seconds / 4)
+    attempt_ms = max(1, round((deadline_seconds - retry_delay) / _RETRY_ATTEMPTS * 1000))
+    config = types.GenerateContentConfig(
+        system_instruction=system_instruction,
+        response_mime_type="application/json",
+        response_json_schema=response_schema,
+        thinking_config=types.ThinkingConfig(
+            thinking_level=_THINKING_LEVEL_MAP[settings.gemini_thinking_level]
+        ),
+        max_output_tokens=max_output_tokens,
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        http_options=types.HttpOptions(
+            timeout=attempt_ms,
+            retry_options=types.HttpRetryOptions(
+                attempts=_RETRY_ATTEMPTS,
+                initial_delay=min(1.0, retry_delay),
+                max_delay=retry_delay,
+                http_status_codes=[503],
+            ),
+        ),
+    )
+    image = types.Part.from_bytes(data=prepared.jpeg_bytes, mime_type="image/jpeg")
+    try:
+        async with asyncio.timeout(deadline_seconds):
+            return await client.aio.models.generate_content(
+                model=settings.gemini_model, contents=[image, prompt], config=config
+            )
+    except (TimeoutError, httpx.TimeoutException) as exc:
+        raise AnalysisTimeoutError("Board model request timed out before completion.") from exc
+    except genai_errors.APIError as exc:
+        raise _map_api_error(exc) from exc
+    except (httpx.TransportError, OSError) as exc:
+        raise UpstreamUnavailableError("Could not reach the board analysis provider.") from exc
+
+
 async def analyze_board_image(
     client: AsyncGenAIClient,
     prepared: PreparedImage,
     metadata: AnalysisMetadata,
     settings: Settings,
-) -> BoardAnalysisResult:
+) -> AnalyzedBoard:
     """Analyze a prepared JPEG snapshot with Gemini and return confidence-filtered findings."""
-    model_name = settings.gemini_model
-    thinking_level = _THINKING_LEVEL_MAP[settings.gemini_thinking_level]
-    timeout_seconds = settings.analysis_timeout_seconds
-    max_output_tokens = settings.analysis_max_output_tokens
-
-    config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_INSTRUCTION,
-        response_mime_type="application/json",
-        response_json_schema=_RESPONSE_JSON_SCHEMA,
-        thinking_config=types.ThinkingConfig(thinking_level=thinking_level),
-        max_output_tokens=max_output_tokens,
-        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-        http_options=types.HttpOptions(
-            timeout=max(1000, round(timeout_seconds * 1000)),
-            retry_options=types.HttpRetryOptions(
-                attempts=_RETRY_ATTEMPTS,
-                initial_delay=1.0,
-                max_delay=_RETRY_MAX_DELAY_S,
-                http_status_codes=[503],
-            ),
-        ),
-    )
-
-    image_part = types.Part.from_bytes(data=prepared.jpeg_bytes, mime_type="image/jpeg")
-    user_prompt = build_user_prompt(metadata)
-
-    # The SDK timeout applies per attempt, so the outer deadline must cover every attempt plus
-    # the inter-attempt delay; otherwise a 503 retry is cut off by this guard.
-    total_budget = timeout_seconds * _RETRY_ATTEMPTS + _RETRY_MAX_DELAY_S
+    total_budget = settings.analysis_timeout_seconds * _RETRY_ATTEMPTS + _RETRY_MAX_DELAY_S
 
     started = time.perf_counter()
     outcome = "ok"
@@ -343,17 +369,16 @@ async def analyze_board_image(
     tokens: tuple[int | None, int | None, int | None] = (None, None, None)
     raw_count = kept_count = dropped_count = 0
     try:
-        try:
-            async with asyncio.timeout(total_budget):
-                response = await client.aio.models.generate_content(
-                    model=model_name,
-                    contents=[image_part, user_prompt],
-                    config=config,
-                )
-        except TimeoutError as exc:
-            raise AnalysisTimeoutError("Board analysis timed out before completion.") from exc
-        except genai_errors.APIError as exc:
-            raise _map_api_error(exc) from exc
+        response = await generate_board_response(
+            client,
+            prepared,
+            settings,
+            prompt=build_user_prompt(metadata),
+            system_instruction=SYSTEM_INSTRUCTION,
+            response_schema=_RESPONSE_JSON_SCHEMA,
+            max_output_tokens=settings.analysis_max_output_tokens,
+            deadline_seconds=total_budget,
+        )
 
         if response.candidates:
             reason = response.candidates[0].finish_reason
@@ -366,7 +391,7 @@ async def analyze_board_image(
                 usage.thoughts_token_count,
             )
 
-        raw_json = _validate_response_completion(response)
+        raw_json = validate_response_completion(response)
         parsed, dropped_count = _parse_tolerant(raw_json)
         raw_count = len(parsed.errors)
 
@@ -378,11 +403,12 @@ async def analyze_board_image(
             if finding.confidence >= settings.confidence_threshold
         ]
         kept_count = len(filtered_errors)
-        return BoardAnalysisResult(
+        return AnalyzedBoard(
             board_summary=parsed.board_summary,
             errors=filtered_errors,
+            incomplete=dropped_count > 0,
         )
-    except AnalyzerError as exc:
+    except (Exception, asyncio.CancelledError) as exc:
         outcome = type(exc).__name__
         raise
     finally:

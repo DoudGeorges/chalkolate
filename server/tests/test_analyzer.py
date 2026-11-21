@@ -304,6 +304,8 @@ def test_user_prompt_carries_answer_format_preference() -> None:
     assert "3 places after the decimal point" in decimals
     with pytest.raises(ValueError):
         AnalysisMetadata.model_validate({"request_id": str(rid), "answer_format": "bogus"})
+
+
 def _finding(**over: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
         "category": "math",
@@ -336,3 +338,26 @@ async def test_analyze_drops_invalid_findings_but_keeps_valid_ones() -> None:
     result = await analyze_board_image(_FakeClient(mixed), prepared, meta, settings)
     assert len(result.errors) == 1
     assert result.errors[0].box_2d == [100, 100, 200, 300]
+    assert result.incomplete
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"board_summary": "Board"},
+        {"errors": []},
+        {"board_summary": "Board", "errors": [], "unexpected": True},
+        {"board_summary": "Board", "errors": [{}]},
+    ],
+)
+async def test_analyze_rejects_invalid_envelopes(payload: dict[str, Any]) -> None:
+    async def invalid(**_k: Any) -> types.GenerateContentResponse:
+        return _ok_response(payload)
+
+    with pytest.raises(UnusableModelOutputError):
+        await analyze_board_image(
+            _FakeClient(invalid),
+            _make_prepared(),
+            AnalysisMetadata(request_id=uuid4()),
+            _make_settings(),
+        )
