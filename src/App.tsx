@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { detectBoardCorners, fetchHealth, fetchVoices } from './api/client'
-import { CalibrationCorners, HealthResponse, SpeechVoiceOption } from './api/schemas'
+import {
+  AnswerFormat,
+  AnswerFormatSchema,
+  CalibrationCorners,
+  HealthResponse,
+  SpeechVoiceOption,
+} from './api/schemas'
 import { CalibrationDetectStatus } from './components/CalibrationOverlay'
 import { FindingsPanel, SidePanelTab } from './components/FindingsPanel'
+import { NotesPanel } from './components/NotesPanel'
 import { SettingsContent } from './components/SettingsContent'
 import { Stage } from './components/Stage'
 import { VoiceSettings } from './components/VoiceSettings'
@@ -11,6 +18,7 @@ import { ToastItem, Toasts } from './components/Toasts'
 import { TopBar } from './components/TopBar'
 import { VerificationResultSummary, useBoardMonitor } from './hooks/useBoardMonitor'
 import { useMediaSource } from './hooks/useMediaSource'
+import { useNotesBuilder } from './hooks/useNotesBuilder'
 import { useSpeechAlerts } from './hooks/useSpeechAlerts'
 import { AlertMode } from './lib/categoryColors'
 import { parseVoiceLabel } from './lib/voiceLabels'
@@ -23,6 +31,10 @@ import {
 import { captureJpegBlob } from './lib/frameCapture'
 import { DEFAULT_CALIBRATION_CORNERS, validateCalibrationQuad } from './lib/geometry'
 import { TrackedIssue } from './lib/issueTracker'
+import { exportMarkdown, exportPrintHtml } from './lib/notes'
+import { exportLatex } from './lib/notesLatex'
+
+const ANSWER_FORMAT_KEY = 'chalkolate.answerFormat.v1'
 
 const LAUNCH_TIMEOUT_MS = 60_000
 
@@ -33,6 +45,22 @@ export function App() {
   // Monitoring is always stopped by default when the application opens.
   const [monitoring, setMonitoring] = useState(false)
   const [alertMode, setAlertMode] = useState<AlertMode>('voice_visual')
+  const [answerFormat, setAnswerFormat] = useState<AnswerFormat>(() => {
+    try {
+      const parsed = AnswerFormatSchema.safeParse(window.localStorage.getItem(ANSWER_FORMAT_KEY))
+      return parsed.success ? parsed.data : 'exact'
+    } catch {
+      return 'exact'
+    }
+  })
+  const handleChangeAnswerFormat = (format: AnswerFormat) => {
+    setAnswerFormat(format)
+    try {
+      window.localStorage.setItem(ANSWER_FORMAT_KEY, format)
+    } catch {
+      /* preference simply is not remembered */
+    }
+  }
   const [voicePreferences, setVoicePreferences] =
     useState<VoicePreferences>(loadVoicePreferences)
   const [elevenLabsVoices, setElevenLabsVoices] = useState<SpeechVoiceOption[]>([])
@@ -59,6 +87,9 @@ export function App() {
 
   // One right-side panel hosts both Findings and Settings as tabs.
   const [panelOpen, setPanelOpen] = useState(false)
+  // Notes build automatically once a source is live; the professor can pause them.
+  const [notesPaused, setNotesPaused] = useState(false)
+  const [notesOpen, setNotesOpen] = useState(false)
   const [sidebarTab, setSidebarTab] = useState<SidePanelTab>('findings')
   const openSettings = useCallback(() => {
     setSidebarTab('settings')
@@ -343,10 +374,55 @@ export function App() {
     monitoring,
     calibrationEditing,
     committedCorners,
+    answerFormat,
     onNewFindings: handleNewFindings,
     onInvalidateSpeech: speech.cancelAll,
     onVerificationResult: handleVerificationResult,
   })
+
+  const notesActive = !notesPaused && (health?.analysis_configured ?? false)
+  const notesBuilder = useNotesBuilder({
+    mediaSource: activeMediaElement,
+    mediaReady: media.state.ready,
+    sourceGeneration: media.state.sourceGeneration,
+    enabled: notesActive,
+    calibrationEditing,
+    committedCorners,
+  })
+
+  const handleExportMarkdown = () => {
+    const blob = new Blob([exportMarkdown(notesBuilder.notes)], {
+      type: 'text/markdown;charset=utf-8',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'lecture-notes.md'
+    a.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  }
+
+  const handleExportLatex = () => {
+    const blob = new Blob([exportLatex(notesBuilder.notes)], { type: 'application/x-tex' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'lecture-notes.tex'
+    a.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  }
+
+  const handleExportPrint = () => {
+    const blob = new Blob([exportPrintHtml(notesBuilder.notes)], { type: 'text/html' })
+    const url = URL.createObjectURL(blob)
+    const win = window.open(url, '_blank')
+    if (win) {
+      win.addEventListener('load', () => win.print())
+    } else {
+      pushToast({ message: 'Allow pop-ups to open the printable notes.', tone: 'info' })
+    }
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  }
 
   markSpokenRef.current = monitor.markSpoken
   monitorCallbacksRef.current = {
@@ -635,6 +711,26 @@ export function App() {
           }
         />
 
+        <NotesPanel
+          open={notesOpen}
+          active={notesActive && media.state.ready}
+          paused={notesPaused}
+          mediaReady={media.state.ready}
+          phase={notesBuilder.phase}
+          error={notesBuilder.error}
+          notes={notesBuilder.notes}
+          onToggleOpen={() => setNotesOpen((prev) => !prev)}
+          onTogglePaused={() => setNotesPaused((prev) => !prev)}
+          onSnapshotNow={() => void notesBuilder.snapshotNow()}
+          onExportMarkdown={handleExportMarkdown}
+          onExportLatex={handleExportLatex}
+          onExportPrint={handleExportPrint}
+          onClear={() => {
+            if (window.confirm('Clear all lecture notes? This cannot be undone.')) {
+              notesBuilder.clear()
+            }
+          }}
+        />
         {!onboarding && (
           <FindingsPanel
             open={panelOpen}
@@ -645,6 +741,8 @@ export function App() {
               <SettingsContent
                 alertMode={alertMode}
                 onChangeAlertMode={handleChangeAlertMode}
+                answerFormat={answerFormat}
+                onChangeAnswerFormat={handleChangeAnswerFormat}
                 voicePreferences={effectiveVoicePreferences}
                 onChangeVoicePreferences={handleChangeVoicePreferences}
                 elevenLabsConfigured={speechConfigured}

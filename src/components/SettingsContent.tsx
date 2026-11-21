@@ -2,6 +2,7 @@ import { Check } from 'lucide-react'
 import { AlertMode } from '../lib/categoryColors'
 import { ALERT_MODE_OPTIONS } from './alertModeOptions'
 import { VoiceSettings, VoiceSettingsProps } from './VoiceSettings'
+import { AnswerFormat } from '../api/schemas'
 
 export interface SettingsContentProps
   extends Omit<VoiceSettingsProps, 'preferences' | 'onChange' | 'voiceOnly'> {
@@ -9,6 +10,8 @@ export interface SettingsContentProps
   onChangeAlertMode: (mode: AlertMode) => void
   voicePreferences: VoiceSettingsProps['preferences']
   onChangeVoicePreferences: VoiceSettingsProps['onChange']
+  answerFormat?: AnswerFormat
+  onChangeAnswerFormat?: (format: AnswerFormat) => void
 }
 
 /** Settings tab body of the right side panel: alert mode, voice, and how much it talks. */
@@ -17,6 +20,8 @@ export function SettingsContent({
   onChangeAlertMode,
   voicePreferences,
   onChangeVoicePreferences,
+  answerFormat = 'exact',
+  onChangeAnswerFormat,
   ...voiceProps
 }: SettingsContentProps) {
   return (
@@ -61,6 +66,38 @@ export function SettingsContent({
             )
           })}
         </div>
+      </section>
+
+      <section className="space-y-2 border-t border-line pt-4">
+        <span className="block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+          Answer format
+        </span>
+        <div role="radiogroup" aria-label="Answer format" className="grid grid-cols-3 gap-1.5">
+          {([
+            ['exact', 'Exact', '√2/2'],
+            ['fraction', 'Fractions', '3/8'],
+            ['decimal3', '3 decimals', '0.375'],
+          ] as const).map(([format, label, example]) => (
+            <button
+              key={format}
+              type="button"
+              role="radio"
+              aria-checked={answerFormat === format}
+              onClick={() => onChangeAnswerFormat?.(format)}
+              className={`rounded-lg border px-2 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
+                answerFormat === format
+                  ? 'border-accent bg-accent/[0.06]'
+                  : 'border-line bg-white hover:border-zinc-300'
+              }`}
+            >
+              <span className="block text-[11px] font-medium">{label}</span>
+              <span className="block text-[10px] text-zinc-500">{example}</span>
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] leading-snug text-zinc-500">
+          How numbers are written in corrections. Lecture notes copy the board as written.
+        </p>
       </section>
 
       {alertMode === 'visual_only' ? (
