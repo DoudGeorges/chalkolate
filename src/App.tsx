@@ -713,9 +713,10 @@ export function App() {
 
         <NotesPanel
           open={notesOpen}
-          active={notesActive && media.state.ready}
+          active={notesActive && media.state.ready && !calibrationEditing}
+          configured={health?.analysis_configured ?? false}
           paused={notesPaused}
-          mediaReady={media.state.ready}
+          mediaReady={media.state.ready && !calibrationEditing}
           phase={notesBuilder.phase}
           error={notesBuilder.error}
           notes={notesBuilder.notes}

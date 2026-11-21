@@ -7,6 +7,7 @@ export interface NotesPanelProps {
   open: boolean
   /** Notes are being built automatically right now (source live and not paused). */
   active: boolean
+  configured: boolean
   paused: boolean
   mediaReady: boolean
   phase: NotesPhase
@@ -26,7 +27,7 @@ function NoteBody({ markdown }: { markdown: string }) {
   const html = useMemo(() => renderNotesBodyHtml(markdown), [markdown])
   return (
     <div
-      className="space-y-2 text-sm leading-relaxed text-zinc-200 [&_li]:ml-4 [&_ol]:list-decimal [&_ul]:list-disc"
+      className="space-y-2 text-sm leading-relaxed text-zinc-700 [&_li]:ml-4 [&_ol]:list-decimal [&_ul]:list-disc"
       dangerouslySetInnerHTML={{ __html: html }}
     />
   )
@@ -35,6 +36,7 @@ function NoteBody({ markdown }: { markdown: string }) {
 export function NotesPanel({
   open,
   active,
+  configured,
   paused,
   mediaReady,
   phase,
@@ -56,7 +58,7 @@ export function NotesPanel({
         ? 'Paused'
         : active
           ? 'Automatic — notes update as the board settles'
-          : 'Waiting for a camera, screen, or video'
+          : configured ? 'Waiting for a camera, screen, or video' : 'Board analysis unavailable'
 
   return (
     <>
@@ -65,7 +67,7 @@ export function NotesPanel({
         onClick={onToggleOpen}
         aria-expanded={open}
         aria-label="Toggle lecture notes"
-        className="absolute bottom-3 left-3 z-20 flex h-8 items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900/90 px-3 text-xs text-zinc-200 hover:bg-zinc-800"
+        className="absolute bottom-3 left-3 z-20 flex h-8 items-center gap-1.5 rounded-full border border-line bg-white px-3 text-xs text-zinc-700 hover:bg-zinc-100"
       >
         <FileText className="h-3.5 w-3.5" aria-hidden />
         Notes{count > 0 ? ` (${count})` : ''}
@@ -75,45 +77,45 @@ export function NotesPanel({
       {open && (
         <aside
           aria-label="Lecture notes"
-          className="absolute inset-y-0 right-0 z-30 flex w-full max-w-md flex-col border-l border-zinc-800 bg-zinc-950 shadow-xl"
+          className="absolute inset-y-0 right-0 z-30 flex w-full max-w-md flex-col border-l border-line bg-white shadow-xl"
         >
-          <header className="flex items-center justify-between gap-2 border-b border-zinc-800 px-3 py-2">
-            <h2 className="truncate text-sm font-medium text-zinc-100">
+          <header className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
+            <h2 className="truncate text-sm font-medium text-zinc-900">
               {notes.title || 'Lecture notes'}
             </h2>
             <button
               type="button"
               onClick={onToggleOpen}
               aria-label="Close notes"
-              className="rounded p-1 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+              className="rounded p-1 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
             >
               <X className="h-4 w-4" aria-hidden />
             </button>
           </header>
 
-          <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 px-3 py-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2 text-xs">
             <button
               type="button"
               onClick={onTogglePaused}
-              className="rounded border border-zinc-700 px-2 py-1 text-zinc-100 hover:bg-zinc-800 disabled:opacity-40"
+              className="rounded border border-line px-2 py-1 text-zinc-900 hover:bg-zinc-100 disabled:opacity-40"
             >
               {paused ? 'Resume notes' : 'Pause notes'}
             </button>
             <button
               type="button"
               onClick={onSnapshotNow}
-              disabled={!mediaReady}
-              className="flex items-center gap-1 rounded border border-zinc-700 px-2 py-1 text-zinc-200 hover:bg-zinc-800 disabled:opacity-40"
+              disabled={!mediaReady || !configured}
+              className="flex items-center gap-1 rounded border border-line px-2 py-1 text-zinc-700 hover:bg-zinc-100 disabled:opacity-40"
             >
               <Camera className="h-3 w-3" aria-hidden /> Add board now
             </button>
-            <span className="text-zinc-400" role="status">
+            <span className="text-zinc-600" role="status">
               {status}
             </span>
           </div>
 
           {error && (
-            <div role="alert" className="border-b border-amber-500/20 bg-amber-950/30 px-3 py-1.5 text-xs text-amber-200">
+            <div role="alert" className="border-b border-amber-500/20 bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
               {error}
             </div>
           )}
@@ -121,19 +123,18 @@ export function NotesPanel({
           <div className="flex-1 space-y-5 overflow-y-auto px-3 py-3">
             {count === 0 ? (
               <p className="text-sm text-zinc-500">
-                No notes yet. Notes build automatically once a camera, screen, or video is
-                live.
+                No notes yet.
               </p>
             ) : (
               notes.sections.map((section) => (
                 <section key={section.id} aria-label={section.heading}>
-                  <h3 className="mb-1 text-sm font-semibold text-zinc-100">{section.heading}</h3>
+                  <h3 className="mb-1 text-sm font-semibold text-zinc-900">{section.heading}</h3>
                   <NoteBody markdown={section.body_markdown} />
                   {section.figure && (
                     <img
                       src={section.figure}
                       alt={`Board snapshot: ${section.heading}`}
-                      className="mt-2 rounded border border-zinc-800"
+                      className="mt-2 rounded border border-line"
                     />
                   )}
                 </section>
@@ -141,12 +142,12 @@ export function NotesPanel({
             )}
           </div>
 
-          <footer className="flex items-center gap-2 border-t border-zinc-800 px-3 py-2 text-xs">
+          <footer className="flex flex-wrap items-center gap-2 border-t border-line px-3 py-2 text-xs">
             <button
               type="button"
               onClick={onExportMarkdown}
               disabled={count === 0}
-              className="flex items-center gap-1 rounded border border-zinc-700 px-2 py-1 text-zinc-100 hover:bg-zinc-800 disabled:opacity-40"
+              className="flex items-center gap-1 rounded border border-line px-2 py-1 text-zinc-900 hover:bg-zinc-100 disabled:opacity-40"
             >
               <Download className="h-3 w-3" aria-hidden /> Export Markdown
             </button>
@@ -154,7 +155,7 @@ export function NotesPanel({
               type="button"
               onClick={onExportLatex}
               disabled={count === 0}
-              className="flex items-center gap-1 rounded border border-zinc-700 px-2 py-1 text-zinc-100 hover:bg-zinc-800 disabled:opacity-40"
+              className="flex items-center gap-1 rounded border border-line px-2 py-1 text-zinc-900 hover:bg-zinc-100 disabled:opacity-40"
             >
               <Download className="h-3 w-3" aria-hidden /> LaTeX
             </button>
@@ -162,7 +163,7 @@ export function NotesPanel({
               type="button"
               onClick={onExportPrint}
               disabled={count === 0}
-              className="flex items-center gap-1 rounded border border-zinc-700 px-2 py-1 text-zinc-100 hover:bg-zinc-800 disabled:opacity-40"
+              className="flex items-center gap-1 rounded border border-line px-2 py-1 text-zinc-900 hover:bg-zinc-100 disabled:opacity-40"
             >
               <Printer className="h-3 w-3" aria-hidden /> Print / PDF
             </button>
@@ -170,7 +171,7 @@ export function NotesPanel({
               type="button"
               onClick={onClear}
               disabled={count === 0}
-              className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-zinc-400 hover:text-rose-300 disabled:opacity-40"
+              className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-zinc-600 hover:text-rose-700 disabled:opacity-40"
             >
               <Trash2 className="h-3 w-3" aria-hidden /> Clear
             </button>

@@ -45,8 +45,9 @@ export interface NotesBuilderDeps {
 }
 
 async function defaultThumbnail(blob: Blob, box: Box2D | null): Promise<string | null> {
+  let bitmap: ImageBitmap | undefined
   try {
-    const bitmap = await createImageBitmap(blob)
+    bitmap = await createImageBitmap(blob)
     const crop = cropRect(box, bitmap.width, bitmap.height)
     const scale = Math.min(1, 800 / Math.max(crop.w, crop.h))
     const canvas = document.createElement('canvas')
@@ -55,10 +56,11 @@ async function defaultThumbnail(blob: Blob, box: Box2D | null): Promise<string |
     const ctx = canvas.getContext('2d')
     if (!ctx) return null
     ctx.drawImage(bitmap, crop.x, crop.y, crop.w, crop.h, 0, 0, canvas.width, canvas.height)
-    bitmap.close()
     return canvas.toDataURL('image/jpeg', 0.7)
   } catch {
     return null
+  } finally {
+    bitmap?.close()
   }
 }
 
@@ -94,6 +96,12 @@ interface Captured {
   sample: GrayscaleSample
 }
 
+interface NotesRequest {
+  controller: AbortController
+  sample: GrayscaleSample
+  startedAt: number
+}
+
 /**
  * Builds lecture notes incrementally from calm, content-changing board snapshots. Runs its own
  * low-rate sampling loop and detector state; it shares no state, gate, or request with
@@ -121,10 +129,8 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
   notesRef.current = notes
   const [phase, setPhase] = useState<NotesPhase>('idle')
   const [error, setError] = useState<string | null>(null)
-  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null)
-
-  const runtimeRef = useRef({ mediaSource, mediaReady, committedCorners, enabled })
-  runtimeRef.current = { mediaSource, mediaReady, committedCorners, enabled }
+  const runtimeRef = useRef({ mediaSource, mediaReady, committedCorners, enabled, calibrationEditing })
+  runtimeRef.current = { mediaSource, mediaReady, committedCorners, enabled, calibrationEditing }
 
   const sessionGenRef = useRef(0)
   const detectorRef = useRef<DetectorState>(createDetectorState())
@@ -133,7 +139,7 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
   const lastSentAtRef = useRef(0)
   const stableRef = useRef<(Captured & { capturedAt: number }) | null>(null)
   const capturingRef = useRef(false)
-  const inFlightRef = useRef<AbortController | null>(null)
+  const inFlightRef = useRef<NotesRequest | null>(null)
   const pendingRef = useRef<Captured | null>(null)
   const backoffUntilRef = useRef(0)
   const maskRef = useRef<{ key: string; w: number; h: number; mask: Uint8Array | null }>({
@@ -162,7 +168,8 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
       const d = depsRef.current
       const gen = sessionGenRef.current
       const controller = new AbortController()
-      inFlightRef.current = controller
+      const request = { controller, sample: item.sample, startedAt: d.now() }
+      inFlightRef.current = request
       setPhase('building')
       const corners = runtimeRef.current.committedCorners
       const metadata: NotesMetadataPayload = {
@@ -183,13 +190,12 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
         const now = d.now()
         commitNotes(applyNotesUpdate(notesRef.current, response, figures, now))
         sentRef.current = item.sample
-        lastSentAtRef.current = now
+        lastSentAtRef.current = request.startedAt
         if (stableRef.current && stableRef.current.sample === item.sample) {
           stableRef.current = null
         }
         backoffUntilRef.current = 0
         setError(null)
-        setLastUpdatedAt(now)
       } catch (err) {
         if (controller.signal.aborted || gen !== sessionGenRef.current) return
         if (err instanceof DOMException && err.name === 'AbortError') return
@@ -200,14 +206,15 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
         backoffUntilRef.current = d.now() + retryMs
         setError(err instanceof Error && err.message ? err.message : 'Notes update failed.')
       } finally {
-        if (inFlightRef.current === controller) {
+        if (inFlightRef.current === request) {
           inFlightRef.current = null
           const next = pendingRef.current
-          if (next && gen === sessionGenRef.current) {
+          if (next && gen === sessionGenRef.current && d.now() >= backoffUntilRef.current) {
             pendingRef.current = null
             submitRef.current(next)
           } else {
-            setPhase(runtimeRef.current.enabled ? 'watching' : 'idle')
+            const rt = runtimeRef.current
+            setPhase(rt.enabled && rt.mediaReady && !rt.calibrationEditing ? 'watching' : 'idle')
           }
         }
       }
@@ -221,6 +228,7 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
         pendingRef.current = item
         return
       }
+      pendingRef.current = null
       void run(item)
     },
     [run],
@@ -229,7 +237,7 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
 
   const captureCurrent = useCallback(async (): Promise<Captured | null> => {
     const rt = runtimeRef.current
-    if (!rt.mediaSource || !rt.mediaReady || capturingRef.current) return null
+    if (!rt.mediaSource || !rt.mediaReady || rt.calibrationEditing || capturingRef.current) return null
     capturingRef.current = true
     const d = depsRef.current
     const gen = sessionGenRef.current
@@ -245,19 +253,24 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
     }
   }, [])
 
-  const resetTracking = useCallback(() => {
+  const cancelWork = useCallback(() => {
     sessionGenRef.current += 1
-    inFlightRef.current?.abort()
+    inFlightRef.current?.controller.abort()
     inFlightRef.current = null
     pendingRef.current = null
+  }, [])
+
+  const resetTracking = useCallback(() => {
+    cancelWork()
     stableRef.current = null
     sentRef.current = null
     lastSentAtRef.current = 0
     backoffUntilRef.current = 0
     calmTicksRef.current = 0
     detectorRef.current = createDetectorState()
-    setPhase(runtimeRef.current.enabled ? 'watching' : 'idle')
-  }, [])
+    const rt = runtimeRef.current
+    setPhase(rt.enabled && rt.mediaReady && !rt.calibrationEditing ? 'watching' : 'idle')
+  }, [cancelWork])
 
   const prevGenRef = useRef(sourceGeneration)
   useEffect(() => {
@@ -279,7 +292,7 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
   const tick = useCallback(() => {
     const rt = runtimeRef.current
     const d = depsRef.current
-    if (!rt.mediaSource || !rt.mediaReady) return
+    if (!rt.enabled || !rt.mediaSource || !rt.mediaReady || rt.calibrationEditing) return
     const sample = d.sampleFrame(rt.mediaSource, canvas(sampleCanvasRef))
     if (!sample) return
 
@@ -300,7 +313,12 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
       det.movingFraction <= NOTES_CALM_MOVING_FRACTION ? calmTicksRef.current + 1 : 0
 
     const nowMs = d.now()
-    const sent = sentRef.current
+    const inFlight = inFlightRef.current
+    if (pendingRef.current && !inFlight && nowMs >= backoffUntilRef.current) {
+      submit(pendingRef.current)
+      return
+    }
+    const sent = inFlight?.sample ?? sentRef.current
     const stable = stableRef.current
     const action = decideNotesAction({
       nowMs,
@@ -308,20 +326,20 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
       hasSent: sent !== null,
       diffFromSent: sent ? changedTileFraction(sent, sample, mask) : 0,
       diffFromStable: stable ? changedTileFraction(stable.sample, sample, mask) : null,
-      lastSentAtMs: lastSentAtRef.current,
+      lastSentAtMs: inFlight?.startedAt ?? lastSentAtRef.current,
       stableCapturedAtMs: stable?.capturedAt ?? null,
     })
-    if (action === 'none') return
+    if (action === 'none' || nowMs < backoffUntilRef.current) return
 
     if (action === 'flush_stable' && stable) {
       stableRef.current = null
       submit({ blob: stable.blob, sample: stable.sample })
       return
     }
-    if (nowMs < backoffUntilRef.current) return
-
+    const gen = sessionGenRef.current
     void captureCurrent().then((captured) => {
-      if (!captured) return
+      const current = runtimeRef.current
+      if (!captured || gen !== sessionGenRef.current || !current.enabled || current.calibrationEditing) return
       if (action === 'capture_stable') {
         stableRef.current = { ...captured, capturedAt: d.now() }
       } else if (action === 'send_now') {
@@ -333,39 +351,31 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
 
   useEffect(() => {
     if (!enabled || !mediaReady || calibrationEditing) {
-      // Do not lose calm content that was never sent: flush the retained stable frame once.
-      const stable = stableRef.current
-      if (stable && !enabled) {
-        stableRef.current = null
-        submitRef.current({ blob: stable.blob, sample: stable.sample })
-      } else if (!inFlightRef.current) {
-        setPhase('idle')
-      }
+      cancelWork()
+      stableRef.current = null
+      calmTicksRef.current = 0
+      setPhase('idle')
       return
     }
     setPhase((prev) => (prev === 'building' ? prev : 'watching'))
     const timer = window.setInterval(tick, NOTES_SAMPLE_INTERVAL_MS)
     tick()
     return () => window.clearInterval(timer)
-  }, [calibrationEditing, enabled, mediaReady, tick])
+  }, [calibrationEditing, cancelWork, enabled, mediaReady, tick])
 
-  useEffect(() => {
-    return () => {
-      inFlightRef.current?.abort()
-    }
-  }, [])
+  useEffect(() => cancelWork, [cancelWork])
 
   const snapshotNow = useCallback(async () => {
+    const gen = sessionGenRef.current
     const captured = await captureCurrent()
-    if (captured) submitRef.current(captured)
+    if (captured && gen === sessionGenRef.current) submitRef.current(captured)
   }, [captureCurrent])
 
   const clear = useCallback(() => {
     resetTracking()
     setError(null)
-    setLastUpdatedAt(null)
     commitNotes(createEmptyNotes())
   }, [commitNotes, resetTracking])
 
-  return { notes, phase, error, lastUpdatedAt, snapshotNow, clear }
+  return { notes, phase, error, snapshotNow, clear }
 }
