@@ -3,16 +3,19 @@ import { detectBoardCorners, fetchHealth } from './api/client'
 import { CalibrationCorners, HealthResponse } from './api/schemas'
 import { CalibrationDetectStatus } from './components/CalibrationOverlay'
 import { FindingsPanel } from './components/FindingsPanel'
+import { NotesPanel } from './components/NotesPanel'
 import { Stage } from './components/Stage'
 import { ToastItem, Toasts } from './components/Toasts'
 import { TopBar } from './components/TopBar'
 import { VerificationResultSummary, useBoardMonitor } from './hooks/useBoardMonitor'
 import { useMediaSource } from './hooks/useMediaSource'
+import { useNotesBuilder } from './hooks/useNotesBuilder'
 import { useSpeechAlerts } from './hooks/useSpeechAlerts'
 import { AlertMode } from './lib/categoryColors'
 import { captureJpegBlob } from './lib/frameCapture'
 import { DEFAULT_CALIBRATION_CORNERS, validateCalibrationQuad } from './lib/geometry'
 import { TrackedIssue } from './lib/issueTracker'
+import { exportMarkdown, exportPrintHtml } from './lib/notes'
 
 export function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
@@ -34,6 +37,9 @@ export function App() {
   const calibrationCanvasRef = useRef<HTMLCanvasElement | null>(null)
 
   const [panelOpen, setPanelOpen] = useState(false)
+  // Notes recording is its own opt-in toggle, independent of mistake monitoring.
+  const [notesRecording, setNotesRecording] = useState(false)
+  const [notesOpen, setNotesOpen] = useState(false)
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null)
   const [hoveredIssueId, setHoveredIssueId] = useState<string | null>(null)
   const [pulseBadge, setPulseBadge] = useState(false)
@@ -218,6 +224,39 @@ export function App() {
     onInvalidateSpeech: speech.cancelAll,
     onVerificationResult: handleVerificationResult,
   })
+
+  const notesBuilder = useNotesBuilder({
+    mediaSource: activeMediaElement,
+    mediaReady: media.state.ready,
+    sourceGeneration: media.state.sourceGeneration,
+    enabled: notesRecording,
+    calibrationEditing,
+    committedCorners,
+  })
+
+  const handleExportMarkdown = () => {
+    const blob = new Blob([exportMarkdown(notesBuilder.notes)], {
+      type: 'text/markdown;charset=utf-8',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'lecture-notes.md'
+    a.click()
+    window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
+  }
+
+  const handleExportPrint = () => {
+    const blob = new Blob([exportPrintHtml(notesBuilder.notes)], { type: 'text/html' })
+    const url = URL.createObjectURL(blob)
+    const win = window.open(url, '_blank')
+    if (win) {
+      win.addEventListener('load', () => win.print())
+    } else {
+      pushToast({ message: 'Allow pop-ups to open the printable notes.', tone: 'info' })
+    }
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+  }
 
   markSpokenRef.current = monitor.markSpoken
   monitorCallbacksRef.current = {
@@ -454,6 +493,28 @@ export function App() {
           onCancelCalibration={handleCancelCalibration}
           onCheckNow={monitor.requestCheckNow}
           onUserVideoSeekOrRestart={monitor.handleVideoSeek}
+        />
+
+        <NotesPanel
+          open={notesOpen}
+          recording={notesRecording}
+          mediaReady={media.state.ready}
+          phase={notesBuilder.phase}
+          error={notesBuilder.error}
+          notes={notesBuilder.notes}
+          onToggleOpen={() => setNotesOpen((prev) => !prev)}
+          onToggleRecording={() => {
+            setNotesRecording((prev) => !prev)
+            setNotesOpen(true)
+          }}
+          onSnapshotNow={() => void notesBuilder.snapshotNow()}
+          onExportMarkdown={handleExportMarkdown}
+          onExportPrint={handleExportPrint}
+          onClear={() => {
+            if (window.confirm('Clear all lecture notes? This cannot be undone.')) {
+              notesBuilder.clear()
+            }
+          }}
         />
 
         {showVisualFindings && (

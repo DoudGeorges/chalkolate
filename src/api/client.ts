@@ -7,6 +7,9 @@ import {
   ErrorEnvelopeSchema,
   HealthResponse,
   HealthResponseSchema,
+  NotesMetadataPayload,
+  NotesResponse,
+  NotesResponseSchema,
 } from './schemas'
 
 export class ApiClientError extends Error {
@@ -267,4 +270,59 @@ export async function requestSpeechStream(
   }
 
   return response
+}
+
+/** Incremental Permanotes update. Independent of /api/analyze; never shares its state. */
+export async function requestNotesUpdate(
+  imageBlob: Blob,
+  metadata: NotesMetadataPayload,
+  signal?: AbortSignal,
+): Promise<NotesResponse> {
+  const formData = new FormData()
+  formData.append('image', imageBlob, 'notes-snapshot.jpg')
+  formData.append('metadata', JSON.stringify(metadata))
+
+  let response: Response
+  try {
+    response = await fetch('/api/notes', { method: 'POST', body: formData, signal })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw err
+    }
+    throw new ApiClientError('Network error while updating lecture notes.', {
+      code: 'NETWORK_ERROR',
+      status: 0,
+    })
+  }
+
+  if (!response.ok) {
+    throw await parseErrorResponse(response)
+  }
+
+  let raw: unknown
+  try {
+    raw = await response.json()
+  } catch {
+    throw new ApiClientError('Notes response was not valid JSON.', {
+      code: 'MALFORMED_RESPONSE',
+      status: response.status,
+    })
+  }
+
+  const parsed = NotesResponseSchema.safeParse(raw)
+  if (!parsed.success) {
+    throw new ApiClientError('Notes response failed schema validation.', {
+      code: 'INVALID_RESPONSE_CONTRACT',
+      status: response.status,
+      requestId: metadata.request_id,
+    })
+  }
+  if (parsed.data.request_id !== metadata.request_id) {
+    throw new ApiClientError('Notes response request_id did not match the request.', {
+      code: 'REQUEST_ID_MISMATCH',
+      status: response.status,
+      requestId: parsed.data.request_id,
+    })
+  }
+  return parsed.data
 }

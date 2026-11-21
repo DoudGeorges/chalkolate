@@ -34,12 +34,16 @@ from analyzer import (
     analyze_board_image,
 )
 from config import Settings, load_settings
+from notes import build_notes_update
 from schemas import (
+    MAX_NOTES_METADATA_BYTES,
     AnalysisMetadata,
     AnalysisResponse,
     BoardDetectionResponse,
     ErrorEnvelope,
     HealthResponse,
+    NotesMetadata,
+    NotesResponse,
     SourceSpaceDetectedError,
     SpeechRequest,
 )
@@ -64,6 +68,7 @@ from vision import (
     UnsupportedImageFormatError,
     detect_board_corners,
     prepare_image,
+    project_box_to_source,
     project_finding_to_source,
 )
 
@@ -245,6 +250,7 @@ def create_app(
 
     gate = ConcurrencyGate(resolved_settings.analysis_max_concurrency)
     speech_gate = ConcurrencyGate(resolved_settings.speech_max_concurrency)
+    notes_gate = ConcurrencyGate(resolved_settings.notes_max_concurrency)
     speech_rate_limiter = SlidingWindowRateLimiter(
         resolved_settings.speech_rate_limit_per_minute,
         60.0,
@@ -279,6 +285,7 @@ def create_app(
     app.state.settings = resolved_settings
     app.state.concurrency_gate = gate
     app.state.speech_concurrency_gate = speech_gate
+    app.state.notes_concurrency_gate = notes_gate
 
     if resolved_settings.cors_allowed_origins:
         app.add_middleware(
@@ -295,6 +302,7 @@ def create_app(
         path_limits={
             "/api/analyze": upload_limit,
             "/api/detect-board": upload_limit,
+            "/api/notes": upload_limit + MAX_NOTES_METADATA_BYTES,
             "/api/speech": MAX_SPEECH_BODY_BYTES,
         },
     )
@@ -702,6 +710,198 @@ def create_app(
             )
         finally:
             gate.release()
+
+    @app.post("/api/notes", response_model=NotesResponse)
+    async def post_notes(
+        request: Request,
+        image: Annotated[UploadFile, File(...)],
+        metadata: Annotated[str, Form(...)],
+    ) -> NotesResponse | JSONResponse:
+        """Incremental Permanotes update; fully independent of /api/analyze state and gate."""
+        started_ns = time.perf_counter_ns()
+        request_id_str: str | None = None
+
+        try:
+            if len(metadata.encode("utf-8")) > MAX_NOTES_METADATA_BYTES:
+                return _error_response(
+                    status_code=413,
+                    code="METADATA_TOO_LARGE",
+                    message="Notes metadata exceeds maximum allowed size.",
+                )
+            request_id_str = _extract_request_id_best_effort(metadata)
+            try:
+                parsed_metadata = NotesMetadata.model_validate_json(metadata)
+            except ValidationError:
+                return _error_response(
+                    status_code=422,
+                    code="INVALID_METADATA",
+                    message="Invalid notes metadata payload.",
+                    request_id=request_id_str,
+                )
+            request_id_str = str(parsed_metadata.request_id)
+
+            if not resolved_settings.analysis_configured:
+                return _error_response(
+                    status_code=503,
+                    code="ANALYSIS_NOT_CONFIGURED",
+                    message="Backend GEMINI_API_KEY or model is not configured.",
+                    request_id=request_id_str,
+                )
+
+            raw_bytes = await image.read(resolved_settings.max_upload_bytes + 1)
+            if len(raw_bytes) > resolved_settings.max_upload_bytes:
+                return _error_response(
+                    status_code=413,
+                    code="PAYLOAD_TOO_LARGE",
+                    message="Uploaded image exceeds maximum allowed byte size.",
+                    request_id=request_id_str,
+                )
+            if not raw_bytes:
+                return _error_response(
+                    status_code=422,
+                    code="EMPTY_IMAGE",
+                    message="Uploaded image is empty.",
+                    request_id=request_id_str,
+                )
+        finally:
+            await image.close()
+
+        client = cast(AsyncGenAIClient | None, getattr(request.app.state, "genai_client", None))
+        if client is None:
+            return _error_response(
+                status_code=503,
+                code="ANALYSIS_NOT_CONFIGURED",
+                message="Backend analysis client is unavailable.",
+                request_id=request_id_str,
+            )
+
+        if not notes_gate.try_acquire():
+            return _error_response(
+                status_code=503,
+                code="CAPACITY_EXCEEDED",
+                message="Notes service is busy; try again shortly.",
+                request_id=request_id_str,
+                headers={"Retry-After": "2"},
+            )
+
+        try:
+            try:
+                prepared = await asyncio.to_thread(
+                    prepare_image,
+                    raw_bytes,
+                    corners=parsed_metadata.corners,
+                    max_image_pixels=resolved_settings.max_image_pixels,
+                    max_long_edge=resolved_settings.max_model_long_edge,
+                )
+            except UnsupportedImageFormatError as exc:
+                return _error_response(
+                    status_code=415,
+                    code="UNSUPPORTED_IMAGE_FORMAT",
+                    message=str(exc),
+                    request_id=request_id_str,
+                )
+            except ImagePixelLimitError as exc:
+                return _error_response(
+                    status_code=413,
+                    code="IMAGE_PIXELS_EXCEEDED",
+                    message=str(exc),
+                    request_id=request_id_str,
+                )
+            except CorruptImageError as exc:
+                return _error_response(
+                    status_code=422,
+                    code="CORRUPT_IMAGE",
+                    message=str(exc),
+                    request_id=request_id_str,
+                )
+            except InvalidCalibrationError as exc:
+                return _error_response(
+                    status_code=422,
+                    code="INVALID_CALIBRATION",
+                    message=str(exc),
+                    request_id=request_id_str,
+                )
+            except ImageEncodingError as exc:
+                return _error_response(
+                    status_code=500,
+                    code="IMAGE_ENCODING_FAILED",
+                    message=str(exc),
+                    request_id=request_id_str,
+                )
+
+            try:
+                result = await build_notes_update(
+                    client, prepared, parsed_metadata, resolved_settings
+                )
+            except AnalysisTimeoutError as exc:
+                return _error_response(
+                    status_code=504,
+                    code="UPSTREAM_TIMEOUT",
+                    message=str(exc),
+                    request_id=request_id_str,
+                )
+            except UpstreamRateLimitError as exc:
+                headers = (
+                    {"Retry-After": str(exc.retry_after_s)}
+                    if exc.retry_after_s is not None
+                    else None
+                )
+                return _error_response(
+                    status_code=429,
+                    code="UPSTREAM_RATE_LIMITED",
+                    message=str(exc),
+                    request_id=request_id_str,
+                    headers=headers,
+                )
+            except UpstreamAuthError as exc:
+                return _error_response(
+                    status_code=502,
+                    code="UPSTREAM_AUTH_ERROR",
+                    message=str(exc),
+                    request_id=request_id_str,
+                )
+            except UpstreamUnavailableError as exc:
+                return _error_response(
+                    status_code=503,
+                    code="UPSTREAM_UNAVAILABLE",
+                    message=str(exc),
+                    request_id=request_id_str,
+                    headers={"Retry-After": str(exc.retry_after_s or 5)},
+                )
+            except (ModelBlockedError, ModelTruncatedError, UnusableModelOutputError) as exc:
+                return _error_response(
+                    status_code=502,
+                    code="UNUSABLE_MODEL_OUTPUT",
+                    message=str(exc),
+                    request_id=request_id_str,
+                )
+            except UpstreamProviderError as exc:
+                return _error_response(
+                    status_code=502,
+                    code="UPSTREAM_PROVIDER_ERROR",
+                    message=str(exc),
+                    request_id=request_id_str,
+                )
+
+            updates = []
+            for update in result.updates:
+                source_box: list[int] | None = None
+                if update.has_figure and update.figure_box_2d is not None:
+                    try:
+                        source_box = project_box_to_source(update.figure_box_2d, prepared)
+                    except ProjectionError:
+                        source_box = None  # fall back to the whole frame client-side
+                updates.append(update.model_copy(update={"figure_box_2d": source_box}))
+
+            elapsed_ms = max(0, (time.perf_counter_ns() - started_ns) // 1_000_000)
+            return NotesResponse(
+                request_id=request_id_str,
+                lecture_title=result.lecture_title,
+                updates=updates,
+                latency_ms=elapsed_ms,
+            )
+        finally:
+            notes_gate.release()
 
     return app
 

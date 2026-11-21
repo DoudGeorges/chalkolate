@@ -4,6 +4,7 @@ import {
   BoardDetectionResponseSchema,
   ErrorEnvelopeSchema,
   HealthResponseSchema,
+  NotesResponseSchema,
 } from '../api/schemas'
 
 describe('API Zod response schemas', () => {
@@ -121,5 +122,39 @@ describe('API Zod response schemas', () => {
         latency_ms: 10,
       }),
     ).toThrow()
+  })
+})
+
+describe('NotesResponseSchema', () => {
+  const valid = {
+    request_id: '00000000-0000-4000-8000-000000000001',
+    lecture_title: '',
+    updates: [
+      { id: 'sec-1', heading: 'H', body_markdown: 'b', has_figure: false, figure_box_2d: null, after_section_id: null },
+    ],
+    latency_ms: 3,
+  }
+
+  it('accepts a valid response and rejects extras, bad ids, or inverted boxes', () => {
+    expect(
+      NotesResponseSchema.safeParse({
+        ...valid,
+        updates: [{ ...valid.updates[0], has_figure: true, figure_box_2d: [10, 10, 200, 300] }],
+      }).success,
+    ).toBe(true)
+    expect(
+      NotesResponseSchema.safeParse({
+        ...valid,
+        updates: [{ ...valid.updates[0], figure_box_2d: [300, 10, 200, 300] }],
+      }).success,
+    ).toBe(false)
+    expect(NotesResponseSchema.safeParse(valid).success).toBe(true)
+    expect(NotesResponseSchema.safeParse({ ...valid, extra: 1 }).success).toBe(false)
+    expect(
+      NotesResponseSchema.safeParse({
+        ...valid,
+        updates: [{ ...valid.updates[0], id: 'bad id' }],
+      }).success,
+    ).toBe(false)
   })
 })

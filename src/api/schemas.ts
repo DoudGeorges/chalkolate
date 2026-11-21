@@ -88,3 +88,43 @@ export interface AnalysisMetadataPayload {
   previous_board_summary: string
   corners: CalibrationCorners | null
 }
+
+const NoteIdSchema = z
+  .string()
+  .min(1)
+  .max(40)
+  .regex(/^[A-Za-z0-9_-]+$/)
+
+export const NoteSectionUpdateSchema = z
+  .object({
+    id: NoteIdSchema,
+    heading: z.string().trim().min(1).max(120),
+    body_markdown: z.string().trim().min(1).max(3000),
+    has_figure: z.boolean(),
+    figure_box_2d: Box2DSchema.nullable(),
+    after_section_id: NoteIdSchema.nullable(),
+  })
+  .strict()
+export type NoteSectionUpdate = z.infer<typeof NoteSectionUpdateSchema>
+
+export const NotesResponseSchema = z
+  .object({
+    request_id: z.string().uuid(),
+    lecture_title: z.string().max(160),
+    updates: z.array(NoteSectionUpdateSchema).max(8),
+    latency_ms: z.number().int().nonnegative(),
+  })
+  .strict()
+export type NotesResponse = z.infer<typeof NotesResponseSchema>
+
+export interface NotesContextSection {
+  id: string
+  heading: string
+  body_markdown: string
+}
+
+export interface NotesMetadataPayload {
+  request_id: string
+  sections: NotesContextSection[]
+  corners: CalibrationCorners | null
+}
