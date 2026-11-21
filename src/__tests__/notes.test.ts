@@ -64,6 +64,19 @@ describe('buildNotesContext', () => {
     expect(ctx[0]?.body_markdown).toBe('')
     expect(ctx[0]?.heading).toBe('Heading 0')
   })
+
+  it('counts escaped JSON and multibyte characters within the byte budget', () => {
+    const sections = Array.from({ length: 40 }, (_, i) => ({
+      id: 'section-' + i,
+      heading: 'Café "\n\\',
+      body_markdown: '\\\nπ"'.repeat(100),
+      figure: null,
+      updatedAt: i,
+    }))
+    const context = buildNotesContext(sections, 700)
+    expect(new TextEncoder().encode(JSON.stringify(context)).length).toBeLessThanOrEqual(700)
+    expect(context.at(-1)?.id).toBe('section-39')
+  })
 })
 
 describe('persistence', () => {

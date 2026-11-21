@@ -38,4 +38,16 @@ describe('exportLatex', () => {
     })
     expect(tex).toContain('a \\textbackslash{} b \\textasciitilde{} c')
   })
+
+  it('writes an unsupported command as text and preserves standard formulas', () => {
+    const tex = exportLatex({
+      title: '',
+      sections: [{
+        id: 'a', heading: 'Math', figure: null, updatedAt: 0,
+        body_markdown: 'Compare $\\custom{a}$ with $\\frac{2}{3}$.',
+      }],
+    })
+    expect(tex).toContain('\\texttt{\\textbackslash{}custom\\{a\\}}')
+    expect(tex).toContain('$\\frac{2}{3}$')
+  })
 })

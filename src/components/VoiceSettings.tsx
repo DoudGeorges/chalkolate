@@ -23,13 +23,10 @@ export interface VoiceSettingsProps {
 
 const SEARCH_THRESHOLD = 6
 
-function SectionLabel({ children, aside }: { children: string; aside?: React.ReactNode }) {
+function SectionLabel({ children }: { children: string }) {
   return (
-    <div className="flex items-center justify-between">
-      <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-        {children}
-      </span>
-      {aside}
+    <div className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+      {children}
     </div>
   )
 }
