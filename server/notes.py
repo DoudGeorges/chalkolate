@@ -1,26 +1,19 @@
 """Permanotes: incremental lecture-notes building from board snapshots via Gemini.
 
-This module is deliberately separate from ``analyzer`` so the notes path can never block,
-alter, or share state with mistake detection. It only reuses the analyzer's provider error
-mapping and response completion checks.
+Notes and mistake detection use the same Gemini request handling and independent schedules.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 
-from google.genai import errors as genai_errors
-from google.genai import types
 from pydantic import ValidationError
 
 from analyzer import (
-    _THINKING_LEVEL_MAP,
-    AnalysisTimeoutError,
     AsyncGenAIClient,
     UnusableModelOutputError,
-    _map_api_error,
-    _validate_response_completion,
+    generate_board_response,
+    validate_response_completion,
 )
 from config import Settings
 from schemas import BoardNotesResult, NotesMetadata
@@ -86,41 +79,18 @@ async def build_notes_update(
     settings: Settings,
 ) -> BoardNotesResult:
     """Ask Gemini for incremental notes updates for one prepared board snapshot."""
-    timeout_seconds = settings.notes_timeout_seconds
-    config = types.GenerateContentConfig(
+    response = await generate_board_response(
+        client,
+        prepared,
+        settings,
+        prompt=build_notes_prompt(metadata),
         system_instruction=NOTES_SYSTEM_INSTRUCTION,
-        response_mime_type="application/json",
-        response_json_schema=_NOTES_RESPONSE_JSON_SCHEMA,
-        thinking_config=types.ThinkingConfig(
-            thinking_level=_THINKING_LEVEL_MAP[settings.gemini_thinking_level]
-        ),
+        response_schema=_NOTES_RESPONSE_JSON_SCHEMA,
         max_output_tokens=settings.notes_max_output_tokens,
-        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-        http_options=types.HttpOptions(
-            timeout=max(1000, round(timeout_seconds * 1000)),
-            retry_options=types.HttpRetryOptions(
-                attempts=2,
-                initial_delay=1.0,
-                max_delay=2.0,
-                http_status_codes=[503],
-            ),
-        ),
+        deadline_seconds=settings.notes_timeout_seconds,
     )
-    image_part = types.Part.from_bytes(data=prepared.jpeg_bytes, mime_type="image/jpeg")
 
-    try:
-        async with asyncio.timeout(timeout_seconds):
-            response = await client.aio.models.generate_content(
-                model=settings.gemini_model,
-                contents=[image_part, build_notes_prompt(metadata)],
-                config=config,
-            )
-    except TimeoutError as exc:
-        raise AnalysisTimeoutError("Notes update timed out before completion.") from exc
-    except genai_errors.APIError as exc:
-        raise _map_api_error(exc) from exc
-
-    raw_json = _validate_response_completion(response)
+    raw_json = validate_response_completion(response)
     try:
         return BoardNotesResult.model_validate_json(raw_json)
     except ValidationError as exc:

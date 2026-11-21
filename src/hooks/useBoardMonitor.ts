@@ -493,7 +493,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
           : null
 
         const classifyIssueRegion = (issue: TrackedIssue): RegionStatus => {
-          if (!commitSample) return 'obscured'
+          if (response.incomplete || !commitSample) return 'obscured'
           const atDispatch = classifyRegion(
             issue.box_2d,
             issue.lastSeenSample,

@@ -225,7 +225,10 @@ export async function analyzeSnapshot(
     })
   }
 
-  return parsed.data
+  return {
+    ...parsed.data,
+    incomplete: response.headers.get('X-Chalkolate-Partial-Analysis') === '1',
+  }
 }
 
 export async function detectBoardCorners(

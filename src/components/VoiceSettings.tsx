@@ -23,13 +23,10 @@ export interface VoiceSettingsProps {
 
 const SEARCH_THRESHOLD = 6
 
-function SectionLabel({ children, aside }: { children: string; aside?: React.ReactNode }) {
+function SectionLabel({ children }: { children: string }) {
   return (
-    <div className="flex items-center justify-between">
-      <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-        {children}
-      </span>
-      {aside}
+    <div className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+      {children}
     </div>
   )
 }
@@ -139,26 +136,7 @@ export function VoiceSettings({
     <div className="space-y-4">
       {/* ---------- Voice ---------- */}
       <section className="space-y-2">
-        <SectionLabel
-          aside={
-            <span
-              className={`inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
-                elevenLabsConfigured
-                  ? 'bg-accent/10 text-accent'
-                  : 'bg-zinc-100 text-zinc-500'
-              }`}
-            >
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${
-                  elevenLabsConfigured ? 'bg-accent' : 'bg-zinc-300'
-                }`}
-              />
-              {elevenLabsConfigured ? 'ElevenLabs' : 'Browser voice'}
-            </span>
-          }
-        >
-          Voice
-        </SectionLabel>
+        <SectionLabel>Voice</SectionLabel>
 
         {!elevenLabsConfigured ? (
           <div className="flex items-start gap-3 rounded-lg border border-line bg-zinc-50 p-3">

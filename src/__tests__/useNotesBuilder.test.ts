@@ -33,6 +33,7 @@ describe('useNotesBuilder', () => {
   function setup(
     initial: GrayscaleSample,
     failWith?: () => Error,
+    waitForResponse?: Promise<void>,
   ) {
     let clock = 1_000_000
     let seq = 0
@@ -50,6 +51,7 @@ describe('useNotesBuilder', () => {
         requests.push(meta)
         blobSizes.push(b.size)
         if (failWith) throw failWith()
+        await waitForResponse
         return response(`s${requests.length}`, meta)
       },
       makeThumbnail: async () => null,
@@ -150,5 +152,34 @@ describe('useNotesBuilder', () => {
     expect(hook.result.current.notes.sections).toHaveLength(1)
     act(() => hook.result.current.clear())
     expect(hook.result.current.notes.sections).toHaveLength(0)
+  })
+
+  it('discards a retained frame on Pause and still allows an explicit snapshot', async () => {
+    const { hook, requests, advance, setFrame } = setup(frame(30))
+    await act(async () => hook.rerender({ enabled: true }))
+    await advance(6000)
+    const small = frame(30)
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 32; x++) small.data[y * 160 + x] = 200
+    setFrame(small)
+    await advance(4000)
+    await act(async () => hook.rerender({ enabled: false }))
+    await advance(6000)
+    expect(requests).toHaveLength(1)
+    await act(async () => hook.result.current.snapshotNow())
+    expect(requests).toHaveLength(2)
+    expect(hook.result.current.phase).toBe('idle')
+  })
+
+  it('does not queue a duplicate of a static frame while inference is pending', async () => {
+    let complete = () => {}
+    const response = new Promise<void>((resolve) => { complete = resolve })
+    const { hook, requests, advance } = setup(frame(30), undefined, response)
+    await act(async () => hook.rerender({ enabled: true }))
+    await advance(10_000)
+    expect(requests).toHaveLength(1)
+    await act(async () => complete())
+    await advance(5000)
+    expect(requests).toHaveLength(1)
+    expect(hook.result.current.notes.sections).toHaveLength(1)
   })
 })
