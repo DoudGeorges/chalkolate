@@ -2,6 +2,8 @@ import {
   AnalysisMetadataPayload,
   AnalysisResponse,
   AnalysisResponseSchema,
+  BoardDetectionResponse,
+  BoardDetectionResponseSchema,
   ErrorEnvelopeSchema,
   HealthResponse,
   HealthResponseSchema,
@@ -176,4 +178,93 @@ export async function analyzeSnapshot(
   }
 
   return parsed.data
+}
+
+export async function detectBoardCorners(
+  imageBlob: Blob,
+  signal?: AbortSignal,
+): Promise<BoardDetectionResponse> {
+  const formData = new FormData()
+  formData.append('image', imageBlob, 'frame.jpg')
+
+  let response: Response
+  try {
+    response = await fetch('/api/detect-board', {
+      method: 'POST',
+      body: formData,
+      signal,
+    })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw err
+    }
+    throw new ApiClientError('Network error while detecting board corners.', {
+      code: 'NETWORK_ERROR',
+      status: 0,
+    })
+  }
+
+  if (!response.ok) {
+    throw await parseErrorResponse(response)
+  }
+
+  let raw: unknown
+  try {
+    raw = await response.json()
+  } catch {
+    throw new ApiClientError('Board detection response was not valid JSON.', {
+      code: 'MALFORMED_RESPONSE',
+      status: response.status,
+    })
+  }
+
+  const parsed = BoardDetectionResponseSchema.safeParse(raw)
+  if (!parsed.success) {
+    throw new ApiClientError('Board detection response failed schema validation.', {
+      code: 'INVALID_RESPONSE_CONTRACT',
+      status: response.status,
+    })
+  }
+
+  return parsed.data
+}
+
+export async function requestSpeechStream(
+  text: string,
+  signal?: AbortSignal,
+): Promise<Response> {
+  let response: Response
+  try {
+    response = await fetch('/api/speech', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'audio/mpeg',
+      },
+      body: JSON.stringify({ text }),
+      signal,
+    })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw err
+    }
+    throw new ApiClientError('Network error while requesting speech audio.', {
+      code: 'NETWORK_ERROR',
+      status: 0,
+    })
+  }
+
+  if (!response.ok) {
+    throw await parseErrorResponse(response)
+  }
+
+  const contentType = (response.headers.get('Content-Type') ?? '').toLowerCase()
+  if (!contentType.startsWith('audio/')) {
+    throw new ApiClientError('Speech endpoint did not return audio content.', {
+      code: 'INVALID_SPEECH_RESPONSE',
+      status: response.status,
+    })
+  }
+
+  return response
 }

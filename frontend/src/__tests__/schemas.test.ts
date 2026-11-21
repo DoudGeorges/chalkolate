@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   AnalysisResponseSchema,
+  BoardDetectionResponseSchema,
   ErrorEnvelopeSchema,
   HealthResponseSchema,
 } from '../api/schemas'
@@ -10,11 +11,11 @@ describe('API Zod response schemas', () => {
     const health = HealthResponseSchema.parse({
       status: 'ok',
       analysis_configured: true,
-      deep_mode_configured: false,
+      speech_configured: true,
       credentials_verified: false,
     })
     expect(health.analysis_configured).toBe(true)
-    expect(health.deep_mode_configured).toBe(false)
+    expect(health.speech_configured).toBe(true)
 
     const analysis = AnalysisResponseSchema.parse({
       request_id: '11111111-2222-4333-8444-555555555555',
@@ -44,13 +45,54 @@ describe('API Zod response schemas', () => {
       request_id: '11111111-2222-4333-8444-555555555555',
     })
     expect(envelope.code).toBe('UPSTREAM_TIMEOUT')
+
+    const boardDetected = BoardDetectionResponseSchema.parse({
+      detected: true,
+      corners: [
+        [100, 120],
+        [900, 110],
+        [910, 880],
+        [90, 890],
+      ],
+      confidence: 0.87,
+    })
+    expect(boardDetected.detected).toBe(true)
+    expect(boardDetected.corners).toHaveLength(4)
+
+    const boardFallback = BoardDetectionResponseSchema.parse({
+      detected: false,
+      corners: null,
+      confidence: 0,
+    })
+    expect(boardFallback.detected).toBe(false)
   })
 
-  it('rejects malformed or out-of-contract backend payloads', () => {
+  it('rejects malformed, removed, or out-of-contract payloads', () => {
+    // Removed deep_mode_configured is rejected by strict HealthResponseSchema
+    expect(() =>
+      HealthResponseSchema.parse({
+        status: 'ok',
+        analysis_configured: true,
+        deep_mode_configured: false,
+        credentials_verified: false,
+      }),
+    ).toThrow()
+
     expect(() =>
       AnalysisResponseSchema.parse({
         request_id: 'not-a-uuid',
         board_summary: 'x',
+        errors: [],
+        image_width: 1280,
+        image_height: 720,
+        latency_ms: 10,
+      }),
+    ).toThrow()
+
+    expect(() =>
+      AnalysisResponseSchema.parse({
+        request_id: '11111111-2222-4333-8444-555555555555',
+        board_summary: 'x'.repeat(601),
         errors: [],
         image_width: 1280,
         image_height: 720,
@@ -70,7 +112,7 @@ describe('API Zod response schemas', () => {
             correction_latex: null,
             spoken_alert: 'One plus one is two.',
             explanation: 'Simple sum.',
-            box_2d: [300, 100, 200, 400], // ymin >= ymax invalid
+            box_2d: [300, 100, 200, 400],
             confidence: 0.95,
           },
         ],

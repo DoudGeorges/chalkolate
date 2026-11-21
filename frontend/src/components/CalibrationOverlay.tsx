@@ -1,3 +1,4 @@
+import { Loader2, Scan } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { CalibrationCorners, CornerPoint } from '../api/schemas'
 import {
@@ -9,10 +10,19 @@ import {
 
 const CORNER_LABELS = ['TL', 'TR', 'BR', 'BL'] as const
 
+export type CalibrationDetectStatus =
+  | 'idle'
+  | 'detecting'
+  | 'detected'
+  | 'fallback'
+  | 'error'
+
 export interface CalibrationOverlayProps {
   imageRect: ContainedImageRect
   draftCorners: CalibrationCorners
+  detectStatus: CalibrationDetectStatus
   onChangeDraft: (next: CalibrationCorners) => void
+  onAutoDetect: () => void
   onApply: () => void
   onResetCrop: () => void
   onCancel: () => void
@@ -21,7 +31,9 @@ export interface CalibrationOverlayProps {
 export function CalibrationOverlay({
   imageRect,
   draftCorners,
+  detectStatus,
   onChangeDraft,
+  onAutoDetect,
   onApply,
   onResetCrop,
   onCancel,
@@ -98,6 +110,26 @@ export function CalibrationOverlay({
   }
 
   const polygonPoints = draftCorners.map(([x, y]) => `${x},${y}`).join(' ')
+  const isDetecting = detectStatus === 'detecting'
+
+  let statusText = 'Drag corners to align with the board'
+  let statusTone = 'text-zinc-300'
+  if (!validation.valid) {
+    statusText = validation.reason ?? 'Adjust handles into a valid quadrilateral'
+    statusTone = 'text-rose-300'
+  } else if (detectStatus === 'detecting') {
+    statusText = 'Detecting board corners…'
+    statusTone = 'text-zinc-200'
+  } else if (detectStatus === 'detected') {
+    statusText = 'Board detected — drag handles to refine'
+    statusTone = 'text-emerald-300/90'
+  } else if (detectStatus === 'fallback') {
+    statusText = 'Could not detect board edges — drag handles manually'
+    statusTone = 'text-zinc-300'
+  } else if (detectStatus === 'error') {
+    statusText = 'Auto-detect unavailable — drag handles manually'
+    statusTone = 'text-amber-300/90'
+  }
 
   return (
     <div
@@ -127,14 +159,15 @@ export function CalibrationOverlay({
           y="0"
           width="1000"
           height="1000"
-          fill="rgba(2, 6, 23, 0.55)"
+          fill="rgba(11, 11, 13, 0.62)"
           mask="url(#chalkolate-cal-mask)"
         />
         <polygon
           points={polygonPoints}
-          fill="rgba(56, 189, 248, 0.08)"
-          stroke={validation.valid ? '#38bdf8' : '#f43f5e'}
+          fill="rgba(231, 178, 122, 0.06)"
+          stroke={validation.valid ? '#e7b27a' : '#f43f5e'}
           strokeWidth={2}
+          strokeDasharray={isDetecting ? '6 4' : undefined}
           vectorEffect="non-scaling-stroke"
         />
       </svg>
@@ -158,45 +191,60 @@ export function CalibrationOverlay({
               left: `${pxLeft}px`,
               top: `${pxTop}px`,
             }}
-            className={`absolute flex h-7 w-7 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full border-2 text-[10px] font-bold shadow-md transition active:cursor-grabbing focus-visible:outline-2 focus-visible:outline-amber-400 ${
-              validation.valid
-                ? 'border-sky-300 bg-slate-950/90 text-sky-100'
-                : 'border-rose-400 bg-rose-950/90 text-rose-100'
-            }`}
+            className="group absolute flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/80"
           >
-            {cornerName}
+            <span
+              className={`h-4 w-4 rounded-full border-2 bg-surface shadow-[0_0_0_2px_rgba(0,0,0,0.65)] transition duration-150 group-hover:scale-115 ${
+                draggingIndex === idx ? 'scale-120' : ''
+              } ${validation.valid ? 'border-accent' : 'border-rose-400'}`}
+            />
           </button>
         )
       })}
 
-      <div className="absolute bottom-3 left-1/2 flex w-max max-w-[94%] -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-lg border border-slate-700 bg-slate-950/95 px-3 py-2 text-xs shadow-xl">
-        <span className={validation.valid ? 'text-slate-300' : 'text-rose-300'}>
-          {validation.valid
-            ? 'Drag TL, TR, BR, BL handles to board corners (fixed camera assumed).'
-            : validation.reason}
+      {/* Polished calibration control bar */}
+      <div className="absolute bottom-4 left-1/2 flex w-max max-w-[94%] -translate-x-1/2 flex-wrap items-center justify-center gap-3 rounded-xl border border-line bg-panel/95 px-3.5 py-2 text-xs shadow-2xl backdrop-blur-xl">
+        <span className={`inline-flex items-center gap-1.5 ${statusTone}`}>
+          {isDetecting && (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" aria-hidden="true" />
+          )}
+          <span>{statusText}</span>
         </span>
+
+        <span className="hidden sm:inline-block h-4 w-px bg-white/10" aria-hidden="true" />
+
         <div className="flex items-center gap-1.5">
           <button
             type="button"
-            onClick={onApply}
-            disabled={!validation.valid}
-            className="rounded bg-sky-500 px-2.5 py-1 font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-2 focus-visible:outline-amber-400"
+            onClick={onAutoDetect}
+            disabled={isDetecting}
+            title="Re-run automatic corner detection"
+            className="inline-flex items-center gap-1 rounded-lg border border-line bg-white/[0.04] px-2.5 py-1.5 font-medium text-zinc-200 transition hover:bg-white/[0.1] disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           >
-            Apply
+            <Scan className="h-3.5 w-3.5 text-zinc-400" aria-hidden="true" />
+            <span>Auto-detect</span>
           </button>
           <button
             type="button"
             onClick={onResetCrop}
-            className="rounded border border-slate-700 bg-slate-800 px-2.5 py-1 font-medium text-slate-200 transition hover:bg-slate-700 focus-visible:outline-2 focus-visible:outline-amber-400"
+            className="rounded-lg border border-line bg-white/[0.04] px-2.5 py-1.5 font-medium text-zinc-200 transition hover:bg-white/[0.1] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           >
-            Reset Crop
+            Reset
           </button>
           <button
             type="button"
             onClick={onCancel}
-            className="rounded border border-slate-700 bg-slate-900 px-2.5 py-1 font-medium text-slate-300 transition hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-amber-400"
+            className="rounded-lg px-2.5 py-1.5 font-medium text-zinc-400 transition hover:bg-white/[0.06] hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
           >
             Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onApply}
+            disabled={!validation.valid || isDetecting}
+            className="rounded-lg bg-accent px-3 py-1.5 font-semibold text-zinc-950 transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+          >
+            Apply
           </button>
         </div>
       </div>

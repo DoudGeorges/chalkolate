@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { renderSampleBoardBlob } from '../lib/sampleBoard'
 
 export type MediaSourceKind = 'none' | 'camera' | 'screen' | 'image' | 'video'
 
@@ -26,6 +25,51 @@ export interface UseMediaSourceOptions {
   onVideoSeek: () => void
 }
 
+const EXCLUDED_VIRTUAL_CAMERA_RE = /\bobs\s+virtual\s+camera\b|\bobs[-\s]?virtualcam\b|\bobs-camera\b/i
+const INTEGRATED_WEBCAM_RE =
+  /integrated|built[\s-]?in|internal|facetime|front\s+camera|truevision|hd\s+user\s+facing|laptop/i
+const NON_OBS_VIRTUAL_CAMERA_RE = /virtual|snap\s*camera|manycam|epoccam|iriun|droidcam|ndi/i
+const INFRARED_SENSOR_RE = /\bir\b|infrared|depth/i
+
+export function isExcludedVirtualCamera(label: string): boolean {
+  return EXCLUDED_VIRTUAL_CAMERA_RE.test(label)
+}
+
+export function cameraDevicePriority(label: string): number {
+  if (INFRARED_SENSOR_RE.test(label)) return 3
+  if (INTEGRATED_WEBCAM_RE.test(label) && !NON_OBS_VIRTUAL_CAMERA_RE.test(label)) return 0
+  if (NON_OBS_VIRTUAL_CAMERA_RE.test(label)) return 2
+  return 1
+}
+
+export function filterAndSortVideoDevices(
+  devices: ReadonlyArray<Pick<MediaDeviceInfo, 'kind' | 'deviceId' | 'label'>>,
+): VideoDeviceOption[] {
+  const seen = new Set<string>()
+  const collected: Array<{ option: VideoDeviceOption; priority: number; index: number }> = []
+
+  for (const d of devices) {
+    if (d.kind !== 'videoinput') continue
+    const id = d.deviceId.trim()
+    // Exclude pre-permission browser placeholder entries lacking a real deviceId.
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+
+    const rawLabel = d.label.trim()
+    if (isExcludedVirtualCamera(rawLabel)) continue
+
+    const label = rawLabel || `Camera ${collected.length + 1}`
+    collected.push({
+      option: { deviceId: id, label },
+      priority: cameraDevicePriority(rawLabel),
+      index: collected.length,
+    })
+  }
+
+  collected.sort((a, b) => a.priority - b.priority || a.index - b.index)
+  return collected.map((entry) => entry.option)
+}
+
 function stopStreamTracks(stream: MediaStream | null): void {
   if (!stream) return
   for (const track of stream.getTracks()) {
@@ -33,27 +77,121 @@ function stopStreamTracks(stream: MediaStream | null): void {
   }
 }
 
+function hasLiveVideoTrack(stream: MediaStream | null): boolean {
+  if (!stream) return false
+  return stream.getVideoTracks().some((track) => track.readyState === 'live')
+}
+
 function formatCaptureError(err: unknown, mode: 'camera' | 'screen'): string {
   if (err instanceof DOMException) {
     if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
       return mode === 'camera'
-        ? 'Camera permission was denied. Allow camera access in browser site settings and retry.'
-        : 'Screen share permission was cancelled or denied.'
+        ? 'Camera permission denied. Allow camera access in browser settings and retry.'
+        : 'Screen share cancelled or denied.'
     }
     if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-      return 'No camera device was found. Connect a camera or use Screen Share / Demo Mode.'
+      return 'No camera found. Connect a camera or upload a video.'
     }
     if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-      return 'Camera is currently in use by another application or could not start.'
+      return 'Camera is in use by another app or failed to start. Close other apps using it and retry.'
     }
     if (err.name === 'OverconstrainedError') {
-      return 'Selected camera does not support the requested video constraints.'
+      return 'Selected camera does not support the requested video settings.'
+    }
+    if (err.name === 'NotSupportedError') {
+      return mode === 'screen'
+        ? 'Screen sharing is not supported in this browser.'
+        : 'Camera capture is not supported in this browser.'
     }
   }
   if (err instanceof Error && err.message) {
     return err.message
   }
   return mode === 'camera' ? 'Failed to start camera capture.' : 'Failed to start screen share.'
+}
+
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+async function openCameraStreamWithFallbacks(
+  deviceId: string | undefined,
+  isStale: () => boolean,
+): Promise<MediaStream> {
+  const exactDevice: MediaTrackConstraints = deviceId ? { deviceId: { exact: deviceId } } : {}
+  const preferredConstraints: MediaTrackConstraints = {
+    ...exactDevice,
+    width: { ideal: 1920 },
+    height: { ideal: 1080 },
+  }
+
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      video: preferredConstraints,
+      audio: false,
+    })
+  } catch (err) {
+    if (isStale()) throw err
+
+    if (
+      err instanceof DOMException &&
+      (err.name === 'NotReadableError' || err.name === 'AbortError')
+    ) {
+      // Give exclusive camera drivers time to release the prior handle before retrying.
+      await delayMs(350)
+      if (isStale()) throw err
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          video: deviceId ? exactDevice : true,
+          audio: false,
+        })
+      } catch (retryErr) {
+        if (isStale() || !deviceId) throw retryErr
+        if (retryErr instanceof DOMException && retryErr.name === 'OverconstrainedError') {
+          return navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { ideal: deviceId } },
+            audio: false,
+          })
+        }
+        throw retryErr
+      }
+    }
+
+    if (err instanceof DOMException && err.name === 'OverconstrainedError') {
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          video: deviceId ? exactDevice : true,
+          audio: false,
+        })
+      } catch (fallbackErr) {
+        if (isStale() || !deviceId) throw fallbackErr
+        if (
+          fallbackErr instanceof DOMException &&
+          (fallbackErr.name === 'OverconstrainedError' || fallbackErr.name === 'NotFoundError')
+        ) {
+          return navigator.mediaDevices.getUserMedia({
+            video: { deviceId: { ideal: deviceId } },
+            audio: false,
+          })
+        }
+        throw fallbackErr
+      }
+    }
+
+    if (
+      deviceId &&
+      err instanceof DOMException &&
+      (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError')
+    ) {
+      // Previously selected device may have disconnected; fall back to default available camera.
+      return navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false,
+      })
+    }
+
+    throw err
+  }
 }
 
 export function useMediaSource(options: UseMediaSourceOptions) {
@@ -75,61 +213,40 @@ export function useMediaSource(options: UseMediaSourceOptions) {
 
   const activeStreamRef = useRef<MediaStream | null>(null)
   const activeObjectUrlRef = useRef<string | null>(null)
+  const activeCameraDeviceIdRef = useRef<string>('')
+  const activeKindRef = useRef<MediaSourceKind>('none')
   const videoElRef = useRef<HTMLVideoElement | null>(null)
   const imageElRef = useRef<HTMLImageElement | null>(null)
   const requestSeqRef = useRef<number>(0)
+  const hasLoadedFrameRef = useRef<boolean>(false)
+
   const callbacksRef = useRef({ onSourceReset, onGeometryChange, onVideoSeek })
   callbacksRef.current = { onSourceReset, onGeometryChange, onVideoSeek }
 
+  activeKindRef.current = state.kind
+
   const cleanupCurrentMedia = useCallback(() => {
+    hasLoadedFrameRef.current = false
     stopStreamTracks(activeStreamRef.current)
     activeStreamRef.current = null
+    activeCameraDeviceIdRef.current = ''
     if (activeObjectUrlRef.current) {
       URL.revokeObjectURL(activeObjectUrlRef.current)
       activeObjectUrlRef.current = null
     }
     const videoEl = videoElRef.current
     if (videoEl) {
+      const hadSrcAttr = videoEl.hasAttribute('src')
+      videoEl.pause()
       videoEl.srcObject = null
-      videoEl.removeAttribute('src')
-      videoEl.load()
+      // Only invoke load() when clearing a file src URL; calling load() during srcObject
+      // swaps triggers asynchronous pipeline resets that can freeze live cameras.
+      if (hadSrcAttr) {
+        videoEl.removeAttribute('src')
+        videoEl.load()
+      }
     }
   }, [])
-
-  const refreshDevices = useCallback(async () => {
-    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {
-      return
-    }
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices()
-      const cams = devices
-        .filter((d) => d.kind === 'videoinput')
-        .map((d, idx) => ({
-          deviceId: d.deviceId,
-          label: d.label || `Camera ${idx + 1}`,
-        }))
-      setVideoDevices(cams)
-      setSelectedDeviceId((prev) => {
-        if (prev && cams.some((c) => c.deviceId === prev)) return prev
-        return cams[0]?.deviceId ?? ''
-      })
-    } catch {
-      // Ignore device enumeration errors prior to permission grant.
-    }
-  }, [])
-
-  useEffect(() => {
-    void refreshDevices()
-    const mediaDevices = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined
-    if (!mediaDevices?.addEventListener) return
-    const handleDeviceChange = () => {
-      void refreshDevices()
-    }
-    mediaDevices.addEventListener('devicechange', handleDeviceChange)
-    return () => {
-      mediaDevices.removeEventListener('devicechange', handleDeviceChange)
-    }
-  }, [refreshDevices])
 
   const clearSource = useCallback(
     (errorMessage: string | null = null) => {
@@ -151,15 +268,78 @@ export function useMediaSource(options: UseMediaSourceOptions) {
     [cleanupCurrentMedia],
   )
 
+  const refreshDevices = useCallback(async (): Promise<VideoDeviceOption[]> => {
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {
+      return []
+    }
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const cams = filterAndSortVideoDevices(devices)
+      setVideoDevices(cams)
+      setSelectedDeviceId((prev) => {
+        if (prev && cams.some((c) => c.deviceId === prev)) return prev
+        if (
+          activeCameraDeviceIdRef.current &&
+          cams.some((c) => c.deviceId === activeCameraDeviceIdRef.current)
+        ) {
+          return activeCameraDeviceIdRef.current
+        }
+        return cams[0]?.deviceId ?? ''
+      })
+
+      if (
+        activeKindRef.current === 'camera' &&
+        activeCameraDeviceIdRef.current &&
+        cams.length > 0 &&
+        !cams.some((c) => c.deviceId === activeCameraDeviceIdRef.current)
+      ) {
+        clearSource('Camera disconnected.')
+      }
+      return cams
+    } catch {
+      return []
+    }
+  }, [clearSource])
+
+  useEffect(() => {
+    void refreshDevices()
+    const mediaDevices = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined
+    if (!mediaDevices?.addEventListener) return
+    const handleDeviceChange = () => {
+      void refreshDevices()
+    }
+    mediaDevices.addEventListener('devicechange', handleDeviceChange)
+    return () => {
+      mediaDevices.removeEventListener('devicechange', handleDeviceChange)
+    }
+  }, [refreshDevices])
+
   const startLiveStream = useCallback(
     async (mode: 'camera' | 'screen', deviceIdOverride?: string) => {
+      let targetDeviceId =
+        mode === 'camera' ? (deviceIdOverride ?? (selectedDeviceId || undefined)) : undefined
+
+      if (mode === 'camera' && targetDeviceId === undefined) {
+        const currentCams = await refreshDevices()
+        targetDeviceId = currentCams[0]?.deviceId
+      }
+
+      // Avoid tearing down and reopening an already-live stream for the same camera device.
+      if (
+        mode === 'camera' &&
+        activeKindRef.current === 'camera' &&
+        hasLiveVideoTrack(activeStreamRef.current) &&
+        (!targetDeviceId || targetDeviceId === activeCameraDeviceIdRef.current)
+      ) {
+        return
+      }
+
       const seq = ++requestSeqRef.current
 
       if (typeof window !== 'undefined' && !window.isSecureContext) {
         setState((prev) => ({
           ...prev,
-          error:
-            'Camera and screen capture require a secure context (HTTPS or localhost).',
+          error: 'Camera and screen capture require a secure context (HTTPS or localhost).',
         }))
         return
       }
@@ -188,24 +368,36 @@ export function useMediaSource(options: UseMediaSourceOptions) {
         return
       }
 
+      // Release any currently open media stream BEFORE acquiring a new one so exclusive
+      // physical webcam drivers do not fail with NotReadableError.
+      cleanupCurrentMedia()
+
       let stream: MediaStream
       try {
         if (mode === 'camera') {
-          const targetDeviceId = deviceIdOverride ?? selectedDeviceId
-          const videoConstraints: MediaTrackConstraints = targetDeviceId
-            ? {
-                deviceId: { exact: targetDeviceId },
-                width: { ideal: 1920 },
-                height: { ideal: 1080 },
-              }
-            : {
-                width: { ideal: 1920 },
-                height: { ideal: 1080 },
-              }
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: videoConstraints,
-            audio: false,
-          })
+          stream = await openCameraStreamWithFallbacks(
+            targetDeviceId,
+            () => seq !== requestSeqRef.current,
+          )
+
+          // If Windows/browser defaulted to OBS Virtual Camera before device labels were unlocked,
+          // enumerate now-permitted devices, drop OBS, and seamlessly switch to the integrated webcam.
+          const firstTrackLabel = stream.getVideoTracks()[0]?.label ?? ''
+          if (!deviceIdOverride && isExcludedVirtualCamera(firstTrackLabel)) {
+            stopStreamTracks(stream)
+            const permittedCams = await refreshDevices()
+            const preferredCam = permittedCams[0]
+            if (!preferredCam) {
+              throw new Error(
+                'No supported camera found. Connect an integrated or external webcam or upload a video.',
+              )
+            }
+            targetDeviceId = preferredCam.deviceId
+            stream = await openCameraStreamWithFallbacks(
+              targetDeviceId,
+              () => seq !== requestSeqRef.current,
+            )
+          }
         } else {
           stream = await navigator.mediaDevices.getDisplayMedia({
             video: true,
@@ -215,22 +407,36 @@ export function useMediaSource(options: UseMediaSourceOptions) {
       } catch (err) {
         if (seq !== requestSeqRef.current) return
         setState((prev) => ({
-          ...prev,
+          kind: 'none',
+          label: 'No source selected',
+          stream: null,
+          objectUrl: null,
+          intrinsicWidth: 0,
+          intrinsicHeight: 0,
+          ready: false,
           error: formatCaptureError(err, mode),
+          sourceGeneration: prev.sourceGeneration + 1,
         }))
+        callbacksRef.current.onSourceReset()
         return
       }
 
-      // Discard stale late-arriving stream if another source transition occurred while awaiting.
       if (seq !== requestSeqRef.current) {
         stopStreamTracks(stream)
         return
       }
 
-      cleanupCurrentMedia()
       activeStreamRef.current = stream
-
       const videoTrack = stream.getVideoTracks()[0]
+      const actualDeviceId = videoTrack?.getSettings?.().deviceId ?? ''
+      if (mode === 'camera') {
+        const resolvedId = actualDeviceId || targetDeviceId || ''
+        if (resolvedId) {
+          activeCameraDeviceIdRef.current = resolvedId
+          setSelectedDeviceId(resolvedId)
+        }
+      }
+
       const label =
         videoTrack?.label || (mode === 'camera' ? 'Live Camera' : 'Shared Screen')
 
@@ -303,40 +509,19 @@ export function useMediaSource(options: UseMediaSourceOptions) {
       }
       setState((prev) => ({
         ...prev,
-        error: `Unsupported file type "${file.type || file.name}". Upload a browser-decodable image or video.`,
+        error: `Unsupported file "${file.type || file.name}". Upload a browser-decodable video or image.`,
       }))
     },
     [activateBlobSource],
   )
 
-  const loadSampleMistake = useCallback(async () => {
-    const seq = ++requestSeqRef.current
-    try {
-      const blob = await renderSampleBoardBlob()
-      if (seq !== requestSeqRef.current) return
-      activateBlobSource(blob, 'image', 'Sample Lecture Chalkboard')
-    } catch (err) {
-      if (seq !== requestSeqRef.current) return
-      setState((prev) => ({
-        ...prev,
-        error:
-          err instanceof Error
-            ? err.message
-            : 'Unable to generate synthetic sample chalkboard.',
-      }))
-    }
-  }, [activateBlobSource])
-
-  // Attach MediaStream / video URL and handle track-ended, decoded readiness, resize, seeked.
   useEffect(() => {
     const stream = state.stream
     if (!stream) return
     const tracks = stream.getVideoTracks()
     const handleEnded = () => {
       clearSource(
-        state.kind === 'screen'
-          ? 'Screen share ended.'
-          : 'Camera feed disconnected.',
+        state.kind === 'screen' ? 'Screen share ended.' : 'Camera disconnected.',
       )
     }
     for (const track of tracks) {
@@ -358,10 +543,12 @@ export function useMediaSource(options: UseMediaSourceOptions) {
     }
 
     let cancelled = false
+    let frameCallbackHandle: number | null = null
 
     const syncVideoReady = () => {
       if (cancelled) return
       if (videoEl.readyState >= 2 && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+        hasLoadedFrameRef.current = true
         setState((prev) => {
           const dimsChanged =
             prev.intrinsicWidth !== videoEl.videoWidth ||
@@ -387,11 +574,23 @@ export function useMediaSource(options: UseMediaSourceOptions) {
       }
     }
 
+    const ensureStreamPlaying = () => {
+      if (cancelled || !state.stream) return
+      if (videoEl.paused) {
+        void videoEl.play().catch(() => {
+          // Retry on subsequent loadedmetadata/canplay/unmute events.
+        })
+      }
+      syncVideoReady()
+    }
+
     const handleResize = () => {
       syncVideoReady()
     }
 
     const handleSeeked = () => {
+      // Ignore synthetic seeked events emitted during initial load() before first decoded frame.
+      if (!hasLoadedFrameRef.current) return
       callbacksRef.current.onVideoSeek()
     }
 
@@ -400,18 +599,45 @@ export function useMediaSource(options: UseMediaSourceOptions) {
       clearSource('Selected video could not be decoded by this browser.')
     }
 
+    videoEl.addEventListener('loadedmetadata', ensureStreamPlaying)
     videoEl.addEventListener('loadeddata', syncVideoReady)
-    videoEl.addEventListener('canplay', syncVideoReady)
+    videoEl.addEventListener('canplay', ensureStreamPlaying)
+    videoEl.addEventListener('playing', syncVideoReady)
     videoEl.addEventListener('resize', handleResize)
     videoEl.addEventListener('seeked', handleSeeked)
     videoEl.addEventListener('error', handleError)
 
+    const videoTracks = state.stream ? state.stream.getVideoTracks() : []
+    for (const track of videoTracks) {
+      track.addEventListener('unmute', ensureStreamPlaying)
+    }
+
     if (state.stream) {
-      videoEl.srcObject = state.stream
-      void videoEl.play().catch(() => {
-        // Autoplay should succeed because audio is disabled and video is muted.
-      })
+      if (videoEl.hasAttribute('src')) {
+        videoEl.removeAttribute('src')
+      }
+      videoEl.muted = true
+      videoEl.playsInline = true
+      if (videoEl.srcObject !== state.stream) {
+        videoEl.srcObject = state.stream
+      }
+      if (typeof videoEl.requestVideoFrameCallback === 'function') {
+        const onFrame = () => {
+          frameCallbackHandle = null
+          if (cancelled) return
+          syncVideoReady()
+          if (
+            (!hasLoadedFrameRef.current || videoEl.videoWidth === 0) &&
+            typeof videoEl.requestVideoFrameCallback === 'function'
+          ) {
+            frameCallbackHandle = videoEl.requestVideoFrameCallback(onFrame)
+          }
+        }
+        frameCallbackHandle = videoEl.requestVideoFrameCallback(onFrame)
+      }
+      ensureStreamPlaying()
     } else if (state.objectUrl) {
+      hasLoadedFrameRef.current = false
       videoEl.srcObject = null
       videoEl.src = state.objectUrl
       videoEl.load()
@@ -421,15 +647,25 @@ export function useMediaSource(options: UseMediaSourceOptions) {
 
     return () => {
       cancelled = true
+      if (
+        frameCallbackHandle !== null &&
+        typeof videoEl.cancelVideoFrameCallback === 'function'
+      ) {
+        videoEl.cancelVideoFrameCallback(frameCallbackHandle)
+      }
+      for (const track of videoTracks) {
+        track.removeEventListener('unmute', ensureStreamPlaying)
+      }
+      videoEl.removeEventListener('loadedmetadata', ensureStreamPlaying)
       videoEl.removeEventListener('loadeddata', syncVideoReady)
-      videoEl.removeEventListener('canplay', syncVideoReady)
+      videoEl.removeEventListener('canplay', ensureStreamPlaying)
+      videoEl.removeEventListener('playing', syncVideoReady)
       videoEl.removeEventListener('resize', handleResize)
       videoEl.removeEventListener('seeked', handleSeeked)
       videoEl.removeEventListener('error', handleError)
     }
   }, [clearSource, state.kind, state.objectUrl, state.stream])
 
-  // Attach image source decode verification
   useEffect(() => {
     const imgEl = imageElRef.current
     if (!imgEl || state.kind !== 'image' || !state.objectUrl) return
@@ -469,7 +705,6 @@ export function useMediaSource(options: UseMediaSourceOptions) {
     }
   }, [clearSource, state.kind, state.objectUrl])
 
-  // Cleanup all streams and object URLs on unmount
   useEffect(() => {
     return () => {
       requestSeqRef.current += 1
@@ -487,7 +722,6 @@ export function useMediaSource(options: UseMediaSourceOptions) {
     startCamera,
     startScreenShare,
     loadUploadedFile,
-    loadSampleMistake,
     clearSource,
   }
 }

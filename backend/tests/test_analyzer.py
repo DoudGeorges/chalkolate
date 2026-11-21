@@ -44,13 +44,11 @@ def _make_prepared() -> PreparedImage:
 def _make_settings() -> Settings:
     return Settings(
         gemini_api_key="test-secret-key",
-        gemini_model="gemini-4-hydrogen",
-        gemini_deep_model="gemini-4-carbon",
+        gemini_model="gemini-3.8-flash",
+        gemini_thinking_level="low",
         confidence_threshold=0.85,
         analysis_timeout_seconds=15.0,
-        analysis_deep_timeout_seconds=45.0,
         analysis_max_output_tokens=2048,
-        analysis_deep_max_output_tokens=4096,
     )
 
 
@@ -109,7 +107,7 @@ def _ok_response(payload: dict[str, object]) -> types.GenerateContentResponse:
     )
 
 
-async def test_analyze_normal_and_deep_mode_config_and_confidence_filtering() -> None:
+async def test_analyze_thinking_level_config_and_confidence_filtering() -> None:
     async def handler(**_kwargs: Any) -> types.GenerateContentResponse:
         return _ok_response(
             {
@@ -145,22 +143,19 @@ async def test_analyze_normal_and_deep_mode_config_and_confidence_filtering() ->
     settings = _make_settings()
     prepared = _make_prepared()
 
-    normal_meta = AnalysisMetadata(
+    meta = AnalysisMetadata(
         request_id=uuid4(),
         previous_board_summary="",
-        subject_hint="math",
         corners=None,
-        deep_mode=False,
-        enhance_chalkboard=False,
     )
-    normal_res = await analyze_board_image(client, prepared, normal_meta, settings)
-    assert normal_res.board_summary == "Derivative on chalkboard"
+    res = await analyze_board_image(client, prepared, meta, settings)
+    assert res.board_summary == "Derivative on chalkboard"
     # Confidence below 0.85 is filtered out
-    assert len(normal_res.errors) == 1
-    assert normal_res.errors[0].detected_text == "d/dx(x^3) = 2x^2"
+    assert len(res.errors) == 1
+    assert res.errors[0].detected_text == "d/dx(x^3) = 2x^2"
 
     call0 = client.aio.models.calls[0]
-    assert call0.model == "gemini-4-hydrogen"
+    assert call0.model == "gemini-3.8-flash"
     assert call0.config.response_mime_type == "application/json"
     assert call0.config.response_json_schema is not None
     assert call0.config.thinking_config is not None
@@ -168,7 +163,11 @@ async def test_analyze_normal_and_deep_mode_config_and_confidence_filtering() ->
     assert call0.config.temperature is None
     assert call0.config.top_p is None
     assert call0.config.top_k is None
+    assert call0.config.presence_penalty is None
+    assert call0.config.frequency_penalty is None
     assert call0.config.max_output_tokens == 2048
+    assert isinstance(call0.config.system_instruction, str)
+    assert "square-bracket" in call0.config.system_instruction
     assert call0.config.automatic_function_calling is not None
     assert call0.config.automatic_function_calling.disable is True
     assert call0.config.http_options is not None
@@ -177,23 +176,21 @@ async def test_analyze_normal_and_deep_mode_config_and_confidence_filtering() ->
     assert call0.config.http_options.retry_options.attempts == 2
     assert call0.config.http_options.retry_options.http_status_codes == [503]
 
-    # Deep mode selects deep model, MEDIUM thinking, and deeper timeout/budget
-    deep_meta = AnalysisMetadata(
-        request_id=uuid4(),
-        previous_board_summary="Previous",
-        subject_hint="physics",
-        corners=None,
-        deep_mode=True,
-        enhance_chalkboard=True,
+    # Verify GEMINI_THINKING_LEVEL=minimal maps to ThinkingLevel.MINIMAL
+    minimal_settings = Settings(
+        gemini_api_key="test-secret-key",
+        gemini_model="gemini-3.8-flash",
+        gemini_thinking_level="minimal",
+        analysis_timeout_seconds=12.0,
+        analysis_max_output_tokens=1024,
     )
-    await analyze_board_image(client, prepared, deep_meta, settings)
+    await analyze_board_image(client, prepared, meta, minimal_settings)
     call1 = client.aio.models.calls[1]
-    assert call1.model == "gemini-4-carbon"
     assert call1.config.thinking_config is not None
-    assert call1.config.thinking_config.thinking_level == types.ThinkingLevel.MEDIUM
-    assert call1.config.max_output_tokens == 4096
+    assert call1.config.thinking_config.thinking_level == types.ThinkingLevel.MINIMAL
+    assert call1.config.max_output_tokens == 1024
     assert call1.config.http_options is not None
-    assert call1.config.http_options.timeout == 45_000
+    assert call1.config.http_options.timeout == 12_000
 
 
 async def test_analyze_failure_modes_never_become_empty_success() -> None:

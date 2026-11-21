@@ -31,7 +31,7 @@ export function getMediaIntrinsicSize(
 export function sampleGrayscaleFrame(
   source: MediaFrameSource,
   canvas: HTMLCanvasElement,
-  targetLongEdge = 160,
+  targetLongEdge = 320,
 ): GrayscaleSample | null {
   const intrinsic = getMediaIntrinsicSize(source)
   if (!intrinsic) return null
@@ -63,40 +63,10 @@ export function sampleGrayscaleFrame(
   return { width, height, data: luma }
 }
 
-export function computeMaskedMad(
-  sampleA: GrayscaleSample,
-  sampleB: GrayscaleSample,
-  mask: Uint8Array | null,
-): number {
-  if (
-    sampleA.width !== sampleB.width ||
-    sampleA.height !== sampleB.height ||
-    sampleA.data.length !== sampleB.data.length
-  ) {
-    return 255
-  }
-
-  const len = sampleA.data.length
-  const useMask = mask !== null && mask.length === len
-
-  let sum = 0
-  let count = 0
-  for (let i = 0; i < len; i++) {
-    if (useMask && mask[i] === 0) continue
-    const a = sampleA.data[i] ?? 0
-    const b = sampleB.data[i] ?? 0
-    sum += Math.abs(a - b)
-    count++
-  }
-
-  if (count === 0) return 0
-  return sum / count
-}
-
 export async function captureJpegBlob(
   source: MediaFrameSource,
   canvas: HTMLCanvasElement,
-  maxLongEdge = 1280,
+  maxLongEdge = 1600,
 ): Promise<{ blob: Blob; width: number; height: number }> {
   const intrinsic = getMediaIntrinsicSize(source)
   if (!intrinsic) {
@@ -120,7 +90,7 @@ export async function captureJpegBlob(
   ctx.drawImage(source, 0, 0, width, height)
 
   const blob = await new Promise<Blob | null>((resolve) => {
-    canvas.toBlob((result) => resolve(result), 'image/jpeg', 0.88)
+    canvas.toBlob((result) => resolve(result), 'image/jpeg', 0.86)
   })
 
   if (!blob || blob.size === 0) {

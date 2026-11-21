@@ -4,36 +4,37 @@ import {
   AnalysisMetadataPayload,
   AnalysisResponse,
   CalibrationCorners,
-  SubjectHint,
 } from '../api/schemas'
+import {
+  DetectorState,
+  RegionStatus,
+  classifyRegion,
+  createDetectorState,
+  isRegionCalm,
+  updateDetector,
+} from '../lib/changeDetector'
 import {
   GrayscaleSample,
   MediaFrameSource,
   captureJpegBlob,
-  computeMaskedMad,
   sampleGrayscaleFrame,
 } from '../lib/frameCapture'
 import { buildNormalizedQuadMask } from '../lib/geometry'
 import {
   IssueTrackerState,
   TrackedIssue,
-  clearNoLongerDetected,
+  clearPendingVerification,
   createInitialTrackerState,
   dismissIssue,
+  getIssuesPendingRecheck,
   markIssueSpoken,
-  markIssueVerifying,
   reconcileAnalysis,
+  requestVerification,
   resetDismissed,
-  revertVerifyingOnFailure,
   undoLastDismissal,
 } from '../lib/issueTracker'
 
-export type MonitorPhase =
-  | 'PAUSED'
-  | 'WATCHING'
-  | 'WRITING'
-  | 'STABILIZING'
-  | 'ANALYZING'
+export type MonitorPhase = 'STOPPED' | 'WATCHING' | 'WRITING' | 'ANALYZING'
 
 export interface MonitorApiError {
   message: string
@@ -43,51 +44,51 @@ export interface MonitorApiError {
 
 export interface MonitorState {
   phase: MonitorPhase
-  isResultStale: boolean
+  tracker: IssueTrackerState
   boardSummary: string
   lastLatencyMs: number | null
   lastAnalyzedAt: number | null
   apiError: MonitorApiError | null
-  tracker: IssueTrackerState
-  hasAnalyzedCurrentSession: boolean
-  lastAcceptedSettingsSig: string | null
-  blockedFrameSignature: string | null
-  rateLimitUntilMs: number | null
+  hasAnalyzed: boolean
+  locationsUnverified: boolean
+  backoffUntilMs: number | null
+  consecutiveFailures: number
 }
 
 type MonitorAction =
   | { type: 'SET_PHASE'; phase: MonitorPhase }
-  | { type: 'MARK_STALE' }
-  | { type: 'RESET_SESSION' }
+  | { type: 'RESET_SESSION'; monitoring: boolean }
   | {
       type: 'COMMIT_ANALYSIS'
       response: AnalysisResponse
       nextTracker: IssueTrackerState
-      settingsSig: string
       nowMs: number
     }
-  | { type: 'FAIL_ANALYSIS'; error: MonitorApiError; frameSig: string; rateLimitUntilMs: number | null; fallbackPhase: MonitorPhase }
+  | {
+      type: 'FAIL_ANALYSIS'
+      error: MonitorApiError
+      backoffUntilMs: number
+      fallbackPhase: MonitorPhase
+    }
   | { type: 'CLEAR_API_ERROR' }
   | { type: 'DISMISS_ISSUE'; issueId: string }
   | { type: 'UNDO_DISMISSAL' }
   | { type: 'RESET_DISMISSED' }
-  | { type: 'MARK_VERIFYING'; issueId: string }
+  | { type: 'REQUEST_VERIFICATION'; issueId: string }
   | { type: 'MARK_SPOKEN'; issueId: string }
-  | { type: 'CLEAR_NO_LONGER_DETECTED'; issueId: string }
 
-function createInitialMonitorState(paused: boolean): MonitorState {
+function createInitialMonitorState(monitoring: boolean): MonitorState {
   return {
-    phase: paused ? 'PAUSED' : 'WATCHING',
-    isResultStale: false,
+    phase: monitoring ? 'WATCHING' : 'STOPPED',
+    tracker: createInitialTrackerState(),
     boardSummary: '',
     lastLatencyMs: null,
     lastAnalyzedAt: null,
     apiError: null,
-    tracker: createInitialTrackerState(),
-    hasAnalyzedCurrentSession: false,
-    lastAcceptedSettingsSig: null,
-    blockedFrameSignature: null,
-    rateLimitUntilMs: null,
+    hasAnalyzed: false,
+    locationsUnverified: false,
+    backoffUntilMs: null,
+    consecutiveFailures: 0,
   }
 }
 
@@ -97,50 +98,39 @@ function monitorReducer(state: MonitorState, action: MonitorAction): MonitorStat
       if (state.phase === action.phase) return state
       return { ...state, phase: action.phase }
 
-    case 'MARK_STALE':
-      if (state.isResultStale || (!state.hasAnalyzedCurrentSession && state.tracker.issues.length === 0)) {
-        return state
-      }
-      return { ...state, isResultStale: true }
-
     case 'RESET_SESSION':
-      return {
-        ...createInitialMonitorState(state.phase === 'PAUSED'),
-      }
+      return createInitialMonitorState(action.monitoring)
 
-    case 'COMMIT_ANALYSIS': {
+    case 'COMMIT_ANALYSIS':
       return {
         ...state,
-        phase: state.phase === 'PAUSED' ? 'PAUSED' : 'WATCHING',
-        isResultStale: false,
+        phase: state.phase === 'STOPPED' ? 'STOPPED' : 'WATCHING',
+        tracker: action.nextTracker,
         boardSummary: action.response.board_summary,
         lastLatencyMs: action.response.latency_ms,
         lastAnalyzedAt: action.nowMs,
         apiError: null,
-        tracker: action.nextTracker,
-        hasAnalyzedCurrentSession: true,
-        lastAcceptedSettingsSig: action.settingsSig,
-        blockedFrameSignature: null,
-        rateLimitUntilMs: null,
+        hasAnalyzed: true,
+        locationsUnverified: false,
+        backoffUntilMs: null,
+        consecutiveFailures: 0,
       }
-    }
 
     case 'FAIL_ANALYSIS':
       return {
         ...state,
-        phase: state.phase === 'PAUSED' ? 'PAUSED' : action.fallbackPhase,
-        isResultStale: state.hasAnalyzedCurrentSession ? true : state.isResultStale,
+        phase: state.phase === 'STOPPED' ? 'STOPPED' : action.fallbackPhase,
         apiError: action.error,
-        tracker: revertVerifyingOnFailure(state.tracker),
-        blockedFrameSignature: action.frameSig,
-        rateLimitUntilMs: action.rateLimitUntilMs,
+        tracker: clearPendingVerification(state.tracker),
+        backoffUntilMs: action.backoffUntilMs,
+        consecutiveFailures: state.consecutiveFailures + 1,
       }
 
     case 'CLEAR_API_ERROR':
       return {
         ...state,
         apiError: null,
-        blockedFrameSignature: null,
+        backoffUntilMs: null,
       }
 
     case 'DISMISS_ISSUE':
@@ -161,10 +151,10 @@ function monitorReducer(state: MonitorState, action: MonitorAction): MonitorStat
         tracker: resetDismissed(state.tracker),
       }
 
-    case 'MARK_VERIFYING':
+    case 'REQUEST_VERIFICATION':
       return {
         ...state,
-        tracker: markIssueVerifying(state.tracker, action.issueId),
+        tracker: requestVerification(state.tracker, action.issueId),
       }
 
     case 'MARK_SPOKEN':
@@ -172,22 +162,15 @@ function monitorReducer(state: MonitorState, action: MonitorAction): MonitorStat
         ...state,
         tracker: markIssueSpoken(state.tracker, action.issueId),
       }
-
-    case 'CLEAR_NO_LONGER_DETECTED':
-      return {
-        ...state,
-        tracker: clearNoLongerDetected(state.tracker, action.issueId),
-      }
   }
 }
 
-// Motion & sampling invariants
-export const SAMPLE_INTERVAL_MS = 400
-export const MOTION_ENTER_MAD = 4.5
-export const MOTION_EXIT_MAD = 2.8
-export const QUIET_DRIFT_MAD = 5.5
-export const CHANGE_THRESHOLD_MAD = 5.0
-export const MIN_AUTO_INTERVAL_MS = 2500
+export const SAMPLE_INTERVAL_MS = 160
+export const CALM_MOVING_FRACTION = 0.30
+export const MAX_CHANGE_WAIT_MS = 750
+export const MIN_DISPATCH_GAP_MS = 250
+export const VERIFY_RECHECK_DELAY_MS = 800
+export const MAX_FAILURE_BACKOFF_MS = 20_000
 
 export interface BoardMonitorDeps {
   sampleFrame: (source: MediaFrameSource, canvas: HTMLCanvasElement) => GrayscaleSample | null
@@ -205,8 +188,8 @@ export interface BoardMonitorDeps {
 }
 
 const DEFAULT_DEPS: BoardMonitorDeps = {
-  sampleFrame: (source, canvas) => sampleGrayscaleFrame(source, canvas, 160),
-  captureSnapshot: (source, canvas) => captureJpegBlob(source, canvas, 1280),
+  sampleFrame: (source, canvas) => sampleGrayscaleFrame(source, canvas, 320),
+  captureSnapshot: (source, canvas) => captureJpegBlob(source, canvas, 1600),
   analyzeRequest: (blob, metadata, signal) => analyzeSnapshot(blob, metadata, signal),
   now: () => Date.now(),
   createUuid: () =>
@@ -215,35 +198,23 @@ const DEFAULT_DEPS: BoardMonitorDeps = {
       : `00000000-0000-4000-8000-${Date.now().toString().padStart(12, '0').slice(-12)}`,
 }
 
+export interface VerificationResultSummary {
+  resolved: readonly TrackedIssue[]
+  stillPresent: readonly TrackedIssue[]
+}
+
 export interface UseBoardMonitorOptions {
   mediaSource: MediaFrameSource | null
   mediaReady: boolean
   sourceGeneration: number
-  paused: boolean
+  monitoring: boolean
   calibrationEditing: boolean
   committedCorners: CalibrationCorners | null
-  subjectHint: SubjectHint
-  deepMode: boolean
-  enhanceChalkboard: boolean
-  stabilizationMs: number
   clientDeadlineMs?: number
-  onAcceptedFindings?: (newlyActivated: readonly TrackedIssue[]) => void
+  onNewFindings?: (newlyOpened: readonly TrackedIssue[]) => void
   onInvalidateSpeech?: () => void
+  onVerificationResult?: (result: VerificationResultSummary) => void
   deps?: Partial<BoardMonitorDeps>
-}
-
-function buildSettingsSignature(opts: {
-  subjectHint: SubjectHint
-  deepMode: boolean
-  enhanceChalkboard: boolean
-  committedCorners: CalibrationCorners | null
-}): string {
-  return JSON.stringify([
-    opts.subjectHint,
-    opts.deepMode,
-    opts.enhanceChalkboard,
-    opts.committedCorners,
-  ])
 }
 
 export function useBoardMonitor(options: UseBoardMonitorOptions) {
@@ -251,16 +222,13 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     mediaSource,
     mediaReady,
     sourceGeneration,
-    paused,
+    monitoring,
     calibrationEditing,
     committedCorners,
-    subjectHint,
-    deepMode,
-    enhanceChalkboard,
-    stabilizationMs,
-    clientDeadlineMs = 65_000,
-    onAcceptedFindings,
+    clientDeadlineMs = 30_000,
+    onNewFindings,
     onInvalidateSpeech,
+    onVerificationResult,
     deps: partialDeps,
   } = options
 
@@ -271,75 +239,62 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
 
   const [state, dispatch] = useReducer(
     monitorReducer,
-    paused,
+    monitoring,
     createInitialMonitorState,
   )
   const stateRef = useRef(state)
   stateRef.current = state
 
   const settingsSig = useMemo(
-    () =>
-      buildSettingsSignature({
-        subjectHint,
-        deepMode,
-        enhanceChalkboard,
-        committedCorners,
-      }),
-    [subjectHint, deepMode, enhanceChalkboard, committedCorners],
+    () => JSON.stringify(committedCorners),
+    [committedCorners],
   )
 
   const runtimeRef = useRef({
     mediaSource,
     mediaReady,
     sourceGeneration,
-    paused,
+    monitoring,
     calibrationEditing,
     committedCorners,
-    subjectHint,
-    deepMode,
-    enhanceChalkboard,
-    stabilizationMs,
     clientDeadlineMs,
     settingsSig,
-    onAcceptedFindings,
+    onNewFindings,
     onInvalidateSpeech,
+    onVerificationResult,
     deps,
   })
   runtimeRef.current = {
     mediaSource,
     mediaReady,
     sourceGeneration,
-    paused,
+    monitoring,
     calibrationEditing,
     committedCorners,
-    subjectHint,
-    deepMode,
-    enhanceChalkboard,
-    stabilizationMs,
     clientDeadlineMs,
     settingsSig,
-    onAcceptedFindings,
+    onNewFindings,
     onInvalidateSpeech,
+    onVerificationResult,
     deps,
   }
 
-  // Ownership and media capture refs
-  const frameRevisionRef = useRef<number>(0)
+  const sessionGenRef = useRef<number>(0)
   const requestSeqRef = useRef<number>(0)
   const inFlightRef = useRef<{
     seq: number
     abortController: AbortController
-    settingsSig: string
-    sourceGeneration: number
   } | null>(null)
   const pendingIntentRef = useRef<'auto' | 'manual' | null>(null)
 
-  const prevSampleRef = useRef<GrayscaleSample | null>(null)
-  const lastAcceptedSampleRef = useRef<GrayscaleSample | null>(null)
-  const stableStartSampleRef = useRef<GrayscaleSample | null>(null)
-  const stableSinceMsRef = useRef<number | null>(null)
-  const isWritingRef = useRef<boolean>(false)
-  const lastAutoDispatchMsRef = useRef<number>(0)
+  const detectorStateRef = useRef<DetectorState>(createDetectorState())
+  const baselineRef = useRef<GrayscaleSample | null>(null)
+  const lastSampleRef = useRef<GrayscaleSample | null>(null)
+  const changeFirstSeenAtRef = useRef<number | null>(null)
+  const lastSettledAtRef = useRef<number>(0)
+  const backoffUntilMsRef = useRef<number | null>(null)
+  const lastMovingFractionRef = useRef<number>(0)
+  const lastPersistentCountRef = useRef<number>(0)
 
   const quadMaskRef = useRef<{
     cornersKey: string
@@ -350,16 +305,17 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
 
   const sampleCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const captureCanvasRef = useRef<HTMLCanvasElement | null>(null)
-  const dispatchAnalysisRef = useRef<((intentKind: 'auto' | 'manual') => Promise<void>) | null>(
-    null,
-  )
+  const dispatchAnalysisRef = useRef<(() => Promise<void>) | null>(null)
 
-  const getOrCreateCanvas = useCallback((ref: React.MutableRefObject<HTMLCanvasElement | null>) => {
-    if (!ref.current) {
-      ref.current = document.createElement('canvas')
-    }
-    return ref.current
-  }, [])
+  const getOrCreateCanvas = useCallback(
+    (ref: React.MutableRefObject<HTMLCanvasElement | null>) => {
+      if (!ref.current) {
+        ref.current = document.createElement('canvas')
+      }
+      return ref.current
+    },
+    [],
+  )
 
   const getMaskForSample = useCallback(
     (corners: CalibrationCorners | null, sample: GrayscaleSample): Uint8Array | null => {
@@ -395,23 +351,25 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     }
   }, [])
 
-  const resetSamplingBaselines = useCallback(() => {
-    prevSampleRef.current = null
-    lastAcceptedSampleRef.current = null
-    stableStartSampleRef.current = null
-    stableSinceMsRef.current = null
-    isWritingRef.current = false
+  const resetDetectionState = useCallback(() => {
+    detectorStateRef.current = createDetectorState()
+    baselineRef.current = null
+    lastSampleRef.current = null
+    changeFirstSeenAtRef.current = null
+    backoffUntilMsRef.current = null
+    lastMovingFractionRef.current = 0
+    lastPersistentCountRef.current = 0
   }, [])
 
   const resetSession = useCallback(() => {
-    frameRevisionRef.current += 1
+    sessionGenRef.current += 1
     abortInFlightAndClearPending()
-    resetSamplingBaselines()
+    resetDetectionState()
     runtimeRef.current.onInvalidateSpeech?.()
-    dispatch({ type: 'RESET_SESSION' })
-  }, [abortInFlightAndClearPending, resetSamplingBaselines])
+    dispatch({ type: 'RESET_SESSION', monitoring: runtimeRef.current.monitoring })
+  }, [abortInFlightAndClearPending, resetDetectionState])
 
-  // Reset session when source generation changes
+  // Source replacement resets the entire session cleanly.
   const prevSourceGenRef = useRef<number>(sourceGeneration)
   useEffect(() => {
     if (prevSourceGenRef.current !== sourceGeneration) {
@@ -420,7 +378,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     }
   }, [resetSession, sourceGeneration])
 
-  // Committed calibration change resets summaries, tracking, dismissals, and speech history.
+  // Committed calibration changes clear session tracking/summaries (old coordinates are invalid).
   const committedCornersKey = useMemo(
     () => JSON.stringify(committedCorners),
     [committedCorners],
@@ -433,74 +391,38 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     }
   }, [committedCornersKey, resetSession])
 
-  // Analysis-setting changes (subject, deep mode, chalkboard enhance) invalidate old result
-  // and replace pending intent with current settings without erasing dismissed history.
-  const analysisSettingsKey = useMemo(
-    () => JSON.stringify([subjectHint, deepMode, enhanceChalkboard]),
-    [subjectHint, deepMode, enhanceChalkboard],
-  )
-  const prevAnalysisSettingsKeyRef = useRef<string>(analysisSettingsKey)
+  // Stop/Start and calibration edit transitions.
   useEffect(() => {
-    if (prevAnalysisSettingsKeyRef.current !== analysisSettingsKey) {
-      prevAnalysisSettingsKeyRef.current = analysisSettingsKey
-      runtimeRef.current.onInvalidateSpeech?.()
-      dispatch({ type: 'MARK_STALE' })
-      dispatch({ type: 'CLEAR_API_ERROR' })
-      if (!runtimeRef.current.paused && !runtimeRef.current.calibrationEditing) {
-        pendingIntentRef.current =
-          pendingIntentRef.current === 'manual' ? 'manual' : 'auto'
-      }
-    }
-  }, [analysisSettingsKey])
-
-  // Pause or entering calibration edit aborts local work and clears pending intents.
-  useEffect(() => {
-    if (paused || calibrationEditing) {
+    if (!monitoring || calibrationEditing) {
       abortInFlightAndClearPending()
-      stableStartSampleRef.current = null
-      stableSinceMsRef.current = null
-      isWritingRef.current = false
-      if (paused) {
+      changeFirstSeenAtRef.current = null
+      if (!monitoring) {
         runtimeRef.current.onInvalidateSpeech?.()
-        dispatch({ type: 'SET_PHASE', phase: 'PAUSED' })
+        dispatch({ type: 'SET_PHASE', phase: 'STOPPED' })
       } else {
         dispatch({ type: 'SET_PHASE', phase: 'WATCHING' })
       }
-    } else if (stateRef.current.phase === 'PAUSED') {
+    } else {
       dispatch({ type: 'SET_PHASE', phase: 'WATCHING' })
     }
-  }, [abortInFlightAndClearPending, calibrationEditing, paused])
+  }, [abortInFlightAndClearPending, calibrationEditing, monitoring])
 
-  const dispatchAnalysis = useCallback(
-    async (intentKind: 'auto' | 'manual') => {
+  const dispatchAnalysis = useCallback(async () => {
       const rt = runtimeRef.current
       if (!rt.mediaSource || !rt.mediaReady) return
-      if (rt.paused || rt.calibrationEditing) return
+      if (!rt.monitoring || rt.calibrationEditing) return
       if (inFlightRef.current !== null) return
 
       const seq = ++requestSeqRef.current
       const snapshotSourceGen = rt.sourceGeneration
-      const snapshotFrameRev = frameRevisionRef.current
+      const snapshotSessionGen = sessionGenRef.current
       const snapshotSettingsSig = rt.settingsSig
       const snapshotCorners = rt.committedCorners
-      const snapshotSubject = rt.subjectHint
-      const snapshotDeepMode = rt.deepMode
-      const snapshotEnhance = rt.enhanceChalkboard
       const snapshotPrevSummary = stateRef.current.boardSummary
       const snapshotRequestId = rt.deps.createUuid()
-      const nowMs = rt.deps.now()
-
-      if (intentKind === 'auto') {
-        lastAutoDispatchMsRef.current = nowMs
-      }
 
       const abortController = new AbortController()
-      inFlightRef.current = {
-        seq,
-        abortController,
-        settingsSig: snapshotSettingsSig,
-        sourceGeneration: snapshotSourceGen,
-      }
+      inFlightRef.current = { seq, abortController }
       dispatch({ type: 'SET_PHASE', phase: 'ANALYZING' })
 
       const deadlineTimer = window.setTimeout(() => {
@@ -509,23 +431,26 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
         }
       }, rt.clientDeadlineMs)
 
+      // Motion during inference does NOT invalidate ownership; only stop, source/session reset,
+      // calibration edit, or settings change invalidates.
       const isStillOwner = (): boolean => {
         const latest = runtimeRef.current
         if (abortController.signal.aborted) return false
-        if (latest.paused || latest.calibrationEditing) return false
+        if (!latest.monitoring || latest.calibrationEditing) return false
         if (latest.sourceGeneration !== snapshotSourceGen) return false
+        if (sessionGenRef.current !== snapshotSessionGen) return false
         if (latest.settingsSig !== snapshotSettingsSig) return false
-        if (frameRevisionRef.current !== snapshotFrameRev) return false
         if (inFlightRef.current?.seq !== seq) return false
         return true
       }
 
       let settledPhaseHandled = false
       try {
-        // Capture the latest frame at dispatch time (not enqueue time).
         const sampleCanvas = getOrCreateCanvas(sampleCanvasRef)
         const captureCanvas = getOrCreateCanvas(captureCanvasRef)
-        const dispatchedSample = rt.deps.sampleFrame(rt.mediaSource, sampleCanvas)
+        const dispatchSample =
+          lastSampleRef.current ?? rt.deps.sampleFrame(rt.mediaSource, sampleCanvas)
+        const dispatchStillTicks = new Uint16Array(detectorStateRef.current.stillTicks)
         const captured = await rt.deps.captureSnapshot(rt.mediaSource, captureCanvas)
 
         if (!isStillOwner()) {
@@ -535,10 +460,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
         const metadata: AnalysisMetadataPayload = {
           request_id: snapshotRequestId,
           previous_board_summary: snapshotPrevSummary,
-          subject_hint: snapshotSubject,
           corners: snapshotCorners,
-          deep_mode: snapshotDeepMode,
-          enhance_chalkboard: snapshotEnhance,
         }
 
         const response = await rt.deps.analyzeRequest(
@@ -551,21 +473,76 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
           return
         }
 
-        if (dispatchedSample) {
-          lastAcceptedSampleRef.current = dispatchedSample
+        const commitSample =
+          dispatchSample ?? rt.deps.sampleFrame(rt.mediaSource, sampleCanvas)
+        if (commitSample) {
+          baselineRef.current = commitSample
         }
-        const commitNow = rt.deps.now()
-        const reconciled = reconcileAnalysis(stateRef.current.tracker, response.errors)
+        changeFirstSeenAtRef.current = null
+        backoffUntilMsRef.current = null
+        lastSettledAtRef.current = rt.deps.now()
+
+        const mask = commitSample
+          ? getMaskForSample(snapshotCorners, commitSample)
+          : null
+
+        const classifyIssueRegion = (issue: TrackedIssue): RegionStatus => {
+          if (!commitSample) return 'obscured'
+          const atDispatch = classifyRegion(
+            issue.box_2d,
+            issue.lastSeenSample,
+            commitSample,
+            dispatchStillTicks,
+            mask,
+          )
+          if (atDispatch !== 'obscured') {
+            return atDispatch
+          }
+          const latestSample = lastSampleRef.current
+          const latestTicks = detectorStateRef.current.stillTicks
+          if (
+            latestSample &&
+            classifyRegion(issue.box_2d, commitSample, latestSample, latestTicks, mask) ===
+              'unchanged'
+          ) {
+            return classifyRegion(
+              issue.box_2d,
+              issue.lastSeenSample,
+              commitSample,
+              latestTicks,
+              mask,
+            )
+          }
+          return 'obscured'
+        }
+
+        const reconciled = reconcileAnalysis(stateRef.current.tracker, response.errors, {
+          sample:
+            commitSample ??
+            ({ width: 1, height: 1, data: new Uint8Array(1) } as GrayscaleSample),
+          classify: classifyIssueRegion,
+          relaxSpatial: false,
+        })
+
         dispatch({
           type: 'COMMIT_ANALYSIS',
           response,
           nextTracker: reconciled.nextState,
-          settingsSig: snapshotSettingsSig,
-          nowMs: commitNow,
+          nowMs: lastSettledAtRef.current,
         })
         settledPhaseHandled = true
-        if (reconciled.newlyActivatedIssues.length > 0) {
-          rt.onAcceptedFindings?.(reconciled.newlyActivatedIssues)
+
+        if (reconciled.newlyOpened.length > 0) {
+          rt.onNewFindings?.(reconciled.newlyOpened)
+        }
+        if (
+          reconciled.verifiedResolved.length > 0 ||
+          reconciled.verifiedStillPresent.length > 0
+        ) {
+          rt.onVerificationResult?.({
+            resolved: reconciled.verifiedResolved,
+            stillPresent: reconciled.verifiedStillPresent,
+          })
         }
       } catch (err) {
         if (abortController.signal.aborted || !isStillOwner()) {
@@ -574,6 +551,8 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
 
         const latest = runtimeRef.current
         const failNow = latest.deps.now()
+        lastSettledAtRef.current = failNow
+
         let code = 'ANALYSIS_FAILED'
         let message = 'Snapshot analysis failed.'
         let retryAfterSeconds: number | null = null
@@ -586,41 +565,45 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
           message = err.message
         }
 
-        const rateLimitUntilMs =
-          retryAfterSeconds !== null ? failNow + retryAfterSeconds * 1000 : null
+        const nextFailureCount = stateRef.current.consecutiveFailures + 1
+        const backoffMs =
+          retryAfterSeconds !== null
+            ? retryAfterSeconds * 1000
+            : Math.min(MAX_FAILURE_BACKOFF_MS, 2000 * 2 ** (nextFailureCount - 1))
+        const backoffUntilMs = failNow + backoffMs
+        backoffUntilMsRef.current = backoffUntilMs
 
         dispatch({
           type: 'FAIL_ANALYSIS',
           error: { message, code, retryAfterSeconds },
-          frameSig: `${snapshotSourceGen}:${snapshotFrameRev}:${snapshotSettingsSig}`,
-          rateLimitUntilMs,
-          fallbackPhase: isWritingRef.current ? 'WRITING' : 'WATCHING',
+          backoffUntilMs,
+          fallbackPhase:
+            lastPersistentCountRef.current > 0 ||
+            lastMovingFractionRef.current >= CALM_MOVING_FRACTION
+              ? 'WRITING'
+              : 'WATCHING',
         })
         settledPhaseHandled = true
       } finally {
         window.clearTimeout(deadlineTimer)
-        // Release ONLY our own request slot; never erase a newer slot or newer pending intent.
         if (inFlightRef.current?.seq === seq) {
           inFlightRef.current = null
           if (
-            !runtimeRef.current.paused &&
+            runtimeRef.current.monitoring &&
             !runtimeRef.current.calibrationEditing &&
             pendingIntentRef.current === 'manual'
           ) {
             pendingIntentRef.current = null
             queueMicrotask(() => {
-              void dispatchAnalysisRef.current?.('manual')
+              void dispatchAnalysisRef.current?.()
             })
-          } else if (!settledPhaseHandled && !runtimeRef.current.paused) {
-            dispatch({
-              type: 'SET_PHASE',
-              phase: isWritingRef.current ? 'WRITING' : 'WATCHING',
-            })
+          } else if (!settledPhaseHandled && runtimeRef.current.monitoring) {
+            dispatch({ type: 'SET_PHASE', phase: 'WATCHING' })
           }
         }
       }
     },
-    [getOrCreateCanvas],
+    [getMaskForSample, getOrCreateCanvas],
   )
   dispatchAnalysisRef.current = dispatchAnalysis
 
@@ -629,10 +612,9 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     const curState = stateRef.current
     const nowMs = rt.deps.now()
 
-    if (rt.paused || rt.calibrationEditing) {
+    if (!rt.monitoring || rt.calibrationEditing) {
       return
     }
-
     if (!rt.mediaSource || !rt.mediaReady) {
       if (inFlightRef.current === null) {
         dispatch({ type: 'SET_PHASE', phase: 'WATCHING' })
@@ -640,124 +622,105 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
       return
     }
 
-    // 1. Sample low-res grayscale frame even while inference runs.
     const sampleCanvas = getOrCreateCanvas(sampleCanvasRef)
     const sample = rt.deps.sampleFrame(rt.mediaSource, sampleCanvas)
     if (!sample) return
+    lastSampleRef.current = sample
 
     const mask = getMaskForSample(rt.committedCorners, sample)
-    const prevSample = prevSampleRef.current
-    prevSampleRef.current = sample
+    const det = updateDetector(
+      detectorStateRef.current,
+      sample,
+      baselineRef.current,
+      mask,
+    )
+    detectorStateRef.current = det.state
+    lastMovingFractionRef.current = det.movingFraction
+    lastPersistentCountRef.current = det.persistentChangedTiles
 
-    const frameMad = prevSample ? computeMaskedMad(prevSample, sample, mask) : 0
-
-    // Motion hysteresis + quiet-window accumulated drift check
-    if (prevSample) {
-      if (isWritingRef.current) {
-        if (frameMad <= MOTION_EXIT_MAD) {
-          isWritingRef.current = false
-          stableStartSampleRef.current = sample
-          stableSinceMsRef.current = nowMs
-        } else {
-          frameRevisionRef.current += 1
-          stableStartSampleRef.current = null
-          stableSinceMsRef.current = null
-        }
-      } else if (frameMad > MOTION_ENTER_MAD) {
-        isWritingRef.current = true
-        frameRevisionRef.current += 1
-        stableStartSampleRef.current = null
-        stableSinceMsRef.current = null
-        rt.onInvalidateSpeech?.()
-        dispatch({ type: 'MARK_STALE' })
-      } else if (stableStartSampleRef.current && stableSinceMsRef.current !== null) {
-        const quietDrift = computeMaskedMad(stableStartSampleRef.current, sample, mask)
-        if (quietDrift > QUIET_DRIFT_MAD) {
-          isWritingRef.current = true
-          frameRevisionRef.current += 1
-          stableStartSampleRef.current = null
-          stableSinceMsRef.current = null
-          rt.onInvalidateSpeech?.()
-          dispatch({ type: 'MARK_STALE' })
-        }
-      } else {
-        stableStartSampleRef.current = sample
-        stableSinceMsRef.current = nowMs
-      }
-    } else {
-      isWritingRef.current = false
-      stableStartSampleRef.current = sample
-      stableSinceMsRef.current = nowMs
-    }
-
-    // If inference is active, keep phase ANALYZING; if motion occurred, mark stale and queue recheck.
     if (inFlightRef.current !== null) {
-      if (isWritingRef.current && pendingIntentRef.current !== 'manual') {
-        pendingIntentRef.current = 'auto'
-      }
       return
     }
 
-    // 2. Manual intent takes precedence and bypasses the quiet interval.
+    // Manual Check Now bypasses backoff and quiet waits.
     if (pendingIntentRef.current === 'manual') {
       pendingIntentRef.current = null
-      void dispatchAnalysis('manual')
+      void dispatchAnalysis()
       return
     }
 
-    // 3. Reflect writing vs stabilizing vs watching phases.
-    if (isWritingRef.current) {
+    const activeBackoffUntil = backoffUntilMsRef.current ?? curState.backoffUntilMs
+    const inBackoff = activeBackoffUntil !== null && nowMs < activeBackoffUntil
+    const gapElapsed = nowMs - lastSettledAtRef.current >= MIN_DISPATCH_GAP_MS
+
+    // No baseline yet (first start, reset, seek, calibration change) -> analyze promptly.
+    if (baselineRef.current === null) {
+      if (!inBackoff) {
+        pendingIntentRef.current = null
+        void dispatchAnalysis()
+      } else {
+        dispatch({ type: 'SET_PHASE', phase: 'WATCHING' })
+      }
+      return
+    }
+
+    const hasActiveChange =
+      det.activeChangedTiles > 0 ||
+      det.persistentChangedTiles > 0 ||
+      pendingIntentRef.current === 'auto'
+
+    if (hasActiveChange) {
+      if (changeFirstSeenAtRef.current === null) {
+        changeFirstSeenAtRef.current = nowMs
+      }
+      const hasPersistentChange =
+        det.persistentChangedTiles > 0 || pendingIntentRef.current === 'auto'
+
+      if (hasPersistentChange) {
+        const changeAgeMs = nowMs - changeFirstSeenAtRef.current
+        const calmEnough = det.movingFraction <= CALM_MOVING_FRACTION
+        const waitedMax = changeAgeMs >= MAX_CHANGE_WAIT_MS
+
+        if ((calmEnough || waitedMax) && gapElapsed && !inBackoff) {
+          pendingIntentRef.current = null
+          void dispatchAnalysis()
+          return
+        }
+      }
       dispatch({ type: 'SET_PHASE', phase: 'WRITING' })
       return
     }
 
-    const stableElapsed =
-      stableSinceMsRef.current !== null ? nowMs - stableSinceMsRef.current : 0
-    const settingsChanged = curState.lastAcceptedSettingsSig !== rt.settingsSig
-    const hasBaseline =
-      curState.hasAnalyzedCurrentSession && lastAcceptedSampleRef.current !== null
-    const cumulativeDelta =
-      hasBaseline && lastAcceptedSampleRef.current
-        ? computeMaskedMad(lastAcceptedSampleRef.current, sample, mask)
-        : 255
-    const needsAutoAnalysis =
-      !curState.hasAnalyzedCurrentSession ||
-      settingsChanged ||
-      cumulativeDelta >= CHANGE_THRESHOLD_MAD ||
-      pendingIntentRef.current === 'auto'
+    changeFirstSeenAtRef.current = null
 
-    if (!needsAutoAnalysis) {
-      dispatch({ type: 'SET_PHASE', phase: 'WATCHING' })
+    // Quiet verification recheck: if an open finding was absent on the previous check
+    // (either awaiting a second unchanged miss or previously obscured by motion), dispatch
+    // one follow-up verification once its region is calm so fixed errors resolve automatically.
+    const pendingRecheck = getIssuesPendingRecheck(curState.tracker)
+    if (
+      pendingRecheck.length > 0 &&
+      !inBackoff &&
+      nowMs - lastSettledAtRef.current >= VERIFY_RECHECK_DELAY_MS &&
+      pendingRecheck.some((issue) =>
+        isRegionCalm(issue.box_2d, sample.width, sample.height, det.stillTicks, mask),
+      )
+    ) {
+      void dispatchAnalysis()
       return
     }
 
-    if (stableElapsed < rt.stabilizationMs) {
-      dispatch({ type: 'SET_PHASE', phase: 'STABILIZING' })
-      return
-    }
-
-    const currentFrameSig = `${rt.sourceGeneration}:${frameRevisionRef.current}:${rt.settingsSig}`
-    if (curState.blockedFrameSignature === currentFrameSig) {
-      dispatch({ type: 'SET_PHASE', phase: 'WATCHING' })
-      return
-    }
-
-    if (curState.rateLimitUntilMs !== null && nowMs < curState.rateLimitUntilMs) {
-      dispatch({ type: 'SET_PHASE', phase: 'WATCHING' })
-      return
-    }
-
-    if (nowMs - lastAutoDispatchMsRef.current < MIN_AUTO_INTERVAL_MS) {
-      dispatch({ type: 'SET_PHASE', phase: 'STABILIZING' })
-      return
-    }
-
-    pendingIntentRef.current = null
-    void dispatchAnalysis('auto')
+    dispatch({
+      type: 'SET_PHASE',
+      phase: det.movingFraction > CALM_MOVING_FRACTION ? 'WRITING' : 'WATCHING',
+    })
   }, [dispatchAnalysis, getMaskForSample, getOrCreateCanvas])
 
-  // Single Strict-Mode-safe sampling loop
+  // Single Strict-Mode-safe loop running strictly while monitoring && mediaReady && !calibrationEditing.
   useEffect(() => {
+    if (!monitoring || !mediaReady || calibrationEditing) {
+      return
+    }
+
     let disposed = false
     const timer = window.setInterval(() => {
       if (!disposed) {
@@ -765,18 +728,14 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
       }
     }, SAMPLE_INTERVAL_MS)
 
-    // Perform an immediate initial tick once media becomes ready.
-    if (mediaReady && !paused && !calibrationEditing) {
-      tick()
-    }
+    tick()
 
     return () => {
       disposed = true
       window.clearInterval(timer)
     }
-  }, [calibrationEditing, mediaReady, paused, tick])
+  }, [calibrationEditing, mediaReady, monitoring, tick])
 
-  // Cleanup on unmount: abort any in-flight request
   useEffect(() => {
     return () => {
       abortInFlightAndClearPending()
@@ -784,42 +743,23 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
   }, [abortInFlightAndClearPending])
 
   const requestCheckNow = useCallback(() => {
-    if (runtimeRef.current.paused || runtimeRef.current.calibrationEditing) return
+    if (!runtimeRef.current.monitoring || runtimeRef.current.calibrationEditing) return
     if (!runtimeRef.current.mediaSource || !runtimeRef.current.mediaReady) return
 
+    lastSampleRef.current = null
+    backoffUntilMsRef.current = null
     dispatch({ type: 'CLEAR_API_ERROR' })
     if (inFlightRef.current !== null) {
-      // At most one coalesced pending intent; manual overrides auto.
       pendingIntentRef.current = 'manual'
       return
     }
     pendingIntentRef.current = null
-    void dispatchAnalysis('manual')
+    void dispatchAnalysis()
   }, [dispatchAnalysis])
 
   const handleVideoSeek = useCallback(() => {
-    frameRevisionRef.current += 1
-    stableStartSampleRef.current = null
-    stableSinceMsRef.current = null
-    prevSampleRef.current = null
-    isWritingRef.current = false
-    runtimeRef.current.onInvalidateSpeech?.()
-    dispatch({ type: 'MARK_STALE' })
-    dispatch({ type: 'CLEAR_API_ERROR' })
-    if (inFlightRef.current !== null) {
-      pendingIntentRef.current =
-        pendingIntentRef.current === 'manual' ? 'manual' : 'auto'
-    }
-  }, [])
-
-  const handleGeometryChange = useCallback(() => {
-    frameRevisionRef.current += 1
-    prevSampleRef.current = null
-    stableStartSampleRef.current = null
-    stableSinceMsRef.current = null
-    runtimeRef.current.onInvalidateSpeech?.()
-    dispatch({ type: 'MARK_STALE' })
-  }, [])
+    resetSession()
+  }, [resetSession])
 
   const dismiss = useCallback((issueId: string) => {
     dispatch({ type: 'DISMISS_ISSUE', issueId })
@@ -829,13 +769,13 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     dispatch({ type: 'UNDO_DISMISSAL' })
   }, [])
 
-  const clearAllDismissals = useCallback(() => {
+  const restoreDismissed = useCallback(() => {
     dispatch({ type: 'RESET_DISMISSED' })
   }, [])
 
   const markFixed = useCallback(
     (issueId: string) => {
-      dispatch({ type: 'MARK_VERIFYING', issueId })
+      dispatch({ type: 'REQUEST_VERIFICATION', issueId })
       requestCheckNow()
     },
     [requestCheckNow],
@@ -845,21 +785,15 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     dispatch({ type: 'MARK_SPOKEN', issueId })
   }, [])
 
-  const dismissNoLongerDetected = useCallback((issueId: string) => {
-    dispatch({ type: 'CLEAR_NO_LONGER_DETECTED', issueId })
-  }, [])
-
   return {
     state,
     requestCheckNow,
     resetSession,
     handleVideoSeek,
-    handleGeometryChange,
     dismiss,
     undoDismissal,
-    clearAllDismissals,
+    restoreDismissed,
     markFixed,
     markSpoken,
-    dismissNoLongerDetected,
   }
 }

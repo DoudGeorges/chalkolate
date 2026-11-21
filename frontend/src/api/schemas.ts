@@ -1,8 +1,5 @@
 import { z } from 'zod'
 
-export const SubjectHintSchema = z.enum(['auto', 'math', 'physics', 'general'])
-export type SubjectHint = z.infer<typeof SubjectHintSchema>
-
 export const ErrorCategorySchema = z.enum(['math', 'physics', 'spelling'])
 export type ErrorCategory = z.infer<typeof ErrorCategorySchema>
 
@@ -39,7 +36,7 @@ export const SourceSpaceErrorSchema = z
     correction_text: z.string().trim().min(1).max(300),
     correction_latex: z.string().max(300).nullable(),
     spoken_alert: z.string().trim().min(1).max(180),
-    explanation: z.string().trim().min(1).max(500),
+    explanation: z.string().trim().min(1).max(300),
     box_2d: Box2DSchema,
     confidence: z.number().finite().min(0).max(1),
   })
@@ -49,7 +46,7 @@ export type SourceSpaceDetectedError = z.infer<typeof SourceSpaceErrorSchema>
 export const AnalysisResponseSchema = z
   .object({
     request_id: z.string().uuid(),
-    board_summary: z.string().max(2000),
+    board_summary: z.string().max(600),
     errors: z.array(SourceSpaceErrorSchema).max(20),
     image_width: z.number().int().positive(),
     image_height: z.number().int().positive(),
@@ -62,7 +59,7 @@ export const HealthResponseSchema = z
   .object({
     status: z.literal('ok'),
     analysis_configured: z.boolean(),
-    deep_mode_configured: z.boolean(),
+    speech_configured: z.boolean().default(false),
     credentials_verified: z.literal(false),
   })
   .strict()
@@ -77,11 +74,17 @@ export const ErrorEnvelopeSchema = z
   .strict()
 export type ErrorEnvelope = z.infer<typeof ErrorEnvelopeSchema>
 
+export const BoardDetectionResponseSchema = z
+  .object({
+    detected: z.boolean(),
+    corners: CalibrationCornersSchema.nullable(),
+    confidence: z.number().finite().min(0).max(1),
+  })
+  .strict()
+export type BoardDetectionResponse = z.infer<typeof BoardDetectionResponseSchema>
+
 export interface AnalysisMetadataPayload {
   request_id: string
   previous_board_summary: string
-  subject_hint: SubjectHint
   corners: CalibrationCorners | null
-  deep_mode: boolean
-  enhance_chalkboard: boolean
 }

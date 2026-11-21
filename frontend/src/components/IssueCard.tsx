@@ -1,5 +1,5 @@
-import { CheckCircle2, EyeOff, Volume2 } from 'lucide-react'
-import { CATEGORY_COLORS } from '../lib/categoryColors'
+import { Check, EyeOff, Volume2 } from 'lucide-react'
+import { CATEGORY_COLORS, CATEGORY_LABELS } from '../lib/categoryColors'
 import { TrackedIssue } from '../lib/issueTracker'
 import { MathCorrection } from './MathCorrection'
 
@@ -7,7 +7,6 @@ export interface IssueCardProps {
   issue: TrackedIssue
   isSelected: boolean
   isHovered: boolean
-  isStale: boolean
   speechSupported: boolean
   onSelect: () => void
   onHover: (hovered: boolean) => void
@@ -16,17 +15,10 @@ export interface IssueCardProps {
   onDismiss: () => void
 }
 
-const CATEGORY_LABEL: Record<TrackedIssue['category'], string> = {
-  math: 'Math',
-  physics: 'Physics',
-  spelling: 'Spelling',
-}
-
 export function IssueCard({
   issue,
   isSelected,
   isHovered,
-  isStale,
   speechSupported,
   onSelect,
   onHover,
@@ -35,11 +27,11 @@ export function IssueCard({
   onDismiss,
 }: IssueCardProps) {
   const accent = CATEGORY_COLORS[issue.category]
-  const confidencePct = Math.round(issue.confidence * 100)
-  const isVerifying = issue.status === 'verifying'
+  const isChecking = issue.pendingVerification
 
   return (
     <article
+      id={`issue-card-${issue.id}`}
       tabIndex={0}
       onClick={onSelect}
       onMouseEnter={() => onHover(true)}
@@ -54,96 +46,73 @@ export function IssueCard({
           }
         }
       }}
-      style={{
-        borderLeftColor: accent,
-      }}
-      className={`rounded-lg border border-l-4 bg-slate-900/90 p-3 text-xs transition focus-visible:outline-2 focus-visible:outline-amber-400 ${
+      className={`rounded-xl border p-4 text-xs transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
         isSelected || isHovered
-          ? 'border-slate-500 ring-1 ring-white/20'
-          : 'border-slate-800 hover:border-slate-700'
+          ? 'border-white/25 bg-white/[0.06] shadow-lg'
+          : 'border-line bg-white/[0.025] hover:border-white/15'
       }`}
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5">
-          <span
-            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-semibold text-slate-950"
-            style={{ backgroundColor: accent }}
-          >
-            {CATEGORY_LABEL[issue.category]}
-          </span>
-          {isStale && (
-            <span className="rounded bg-amber-950/80 px-1.5 py-0.5 text-[10px] font-medium text-amber-200">
-              Stale
-            </span>
-          )}
-          {isVerifying && (
-            <span className="rounded bg-sky-950/80 px-1.5 py-0.5 text-[10px] font-medium text-sky-200">
-              Verification pending
-            </span>
-          )}
-        </div>
-        <span className="text-[11px] text-slate-400">
-          Model confidence: {confidencePct}%
+      <div className="flex items-center gap-2">
+        <span
+          className="h-1.5 w-1.5 shrink-0 rounded-full"
+          style={{ backgroundColor: accent }}
+          aria-hidden="true"
+        />
+        <span
+          className="text-[11px] font-semibold tracking-wide"
+          style={{ color: accent }}
+        >
+          {CATEGORY_LABELS[issue.category]}
         </span>
       </div>
 
-      <div className="mt-2 space-y-1.5">
-        <div className="rounded border border-slate-800 bg-slate-950/80 px-2 py-1">
-          <span className="text-[10px] uppercase tracking-wider text-slate-500">
-            Observed
-          </span>
-          <p className="mt-0.5 font-mono text-rose-200 line-through decoration-rose-400/70 break-words">
-            {issue.detected_text}
-          </p>
+      <div className="mt-2.5 space-y-2">
+        <p className="font-mono text-[12px] leading-snug text-zinc-400 line-through decoration-rose-400/65 break-words">
+          {issue.detected_text}
+        </p>
+
+        <div className="rounded-lg border border-white/[0.07] bg-white/[0.035] px-3 py-2 text-[13.5px] font-medium leading-snug text-zinc-50">
+          <MathCorrection
+            correctionText={issue.correction_text}
+            correctionLatex={issue.correction_latex}
+          />
         </div>
 
-        <div className="rounded border border-emerald-900/50 bg-emerald-950/25 px-2 py-1.5">
-          <span className="text-[10px] uppercase tracking-wider text-emerald-400/80">
-            Suggested Correction
-          </span>
-          <div className="mt-0.5 text-sm">
-            <MathCorrection
-              correctionText={issue.correction_text}
-              correctionLatex={issue.correction_latex}
-            />
-          </div>
-        </div>
-
-        <p className="text-slate-300 leading-relaxed">{issue.explanation}</p>
+        <p className="text-xs leading-relaxed text-zinc-400">{issue.explanation}</p>
       </div>
 
       <div
-        className="mt-2.5 flex flex-wrap items-center gap-1.5"
+        className="mt-3.5 flex items-center gap-1 border-t border-white/[0.06] pt-2.5"
         onClick={(e) => e.stopPropagation()}
       >
         <button
           type="button"
           onClick={onSpeak}
           disabled={!speechSupported}
-          title={speechSupported ? 'Speak alert aloud' : 'Speech synthesis unavailable in this browser'}
-          className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-800 px-2 py-1 text-[11px] font-medium text-slate-200 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-2 focus-visible:outline-amber-400"
+          title={speechSupported ? 'Speak alert aloud' : 'Speech unavailable'}
+          className="inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-medium text-zinc-300 transition hover:bg-white/10 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
         >
-          <Volume2 className="h-3 w-3" aria-hidden="true" />
-          Speak
+          <Volume2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>Speak</span>
         </button>
 
         <button
           type="button"
           onClick={onMarkFixed}
-          disabled={isVerifying}
-          className="inline-flex items-center gap-1 rounded border border-emerald-700/70 bg-emerald-950/50 px-2 py-1 text-[11px] font-medium text-emerald-200 transition hover:bg-emerald-900/60 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-amber-400"
+          disabled={isChecking}
+          className="inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-medium text-zinc-300 transition hover:bg-white/10 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
         >
-          <CheckCircle2 className="h-3 w-3" aria-hidden="true" />
-          {isVerifying ? 'Verifying...' : 'Mark Fixed'}
+          <Check className="h-3.5 w-3.5 shrink-0 text-emerald-400" aria-hidden="true" />
+          <span>{isChecking ? 'Checking…' : 'Mark fixed'}</span>
         </button>
 
         <button
           type="button"
           onClick={onDismiss}
-          className="ml-auto inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[11px] font-medium text-slate-300 transition hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-amber-400"
+          className="ml-auto inline-flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[11px] font-medium text-zinc-400 transition hover:bg-white/10 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
         >
-          <EyeOff className="h-3 w-3" aria-hidden="true" />
-          Dismiss
+          <EyeOff className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>Dismiss</span>
         </button>
       </div>
     </article>

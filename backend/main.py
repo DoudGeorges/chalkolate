@@ -11,10 +11,11 @@ from contextlib import asynccontextmanager
 from typing import Annotated, cast
 from uuid import UUID
 
+import httpx
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from google import genai
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -36,9 +37,23 @@ from config import Settings, load_settings
 from schemas import (
     AnalysisMetadata,
     AnalysisResponse,
+    BoardDetectionResponse,
     ErrorEnvelope,
     HealthResponse,
     SourceSpaceDetectedError,
+    SpeechRequest,
+)
+from speech import (
+    SlidingWindowRateLimiter,
+    SpeechAuthError,
+    SpeechConfigError,
+    SpeechPlanError,
+    SpeechProviderError,
+    SpeechQuotaError,
+    SpeechRateLimitError,
+    SpeechTimeoutError,
+    SpeechUnavailableError,
+    open_elevenlabs_speech_stream,
 )
 from vision import (
     CorruptImageError,
@@ -47,11 +62,14 @@ from vision import (
     InvalidCalibrationError,
     ProjectionError,
     UnsupportedImageFormatError,
+    detect_board_corners,
     prepare_image,
     project_finding_to_source,
 )
 
 logger = logging.getLogger("chalkolate.api")
+
+MAX_SPEECH_BODY_BYTES = 4096
 
 
 class ConcurrencyGate:
@@ -81,20 +99,19 @@ class _StreamedBodyLimitExceeded(BaseException):
 
 
 class RequestBodyLimitMiddleware:
-    """Enforce upload byte limits on /api/analyze before multipart parsing."""
+    """Enforce per-route request body limits before FastAPI/multipart parsing."""
 
-    def __init__(self, app: ASGIApp, *, max_body_bytes: int) -> None:
+    def __init__(self, app: ASGIApp, *, path_limits: Mapping[str, int]) -> None:
         self.app = app
-        # Allow small multipart boundary + metadata overhead on top of image byte budget.
-        self.max_body_bytes = max_body_bytes
+        self.path_limits = dict(path_limits)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        is_analyze = (
-            scope["type"] == "http"
-            and scope.get("method") == "POST"
-            and scope.get("path") == "/api/analyze"
+        max_body_bytes = (
+            self.path_limits.get(scope.get("path", ""))
+            if scope["type"] == "http" and scope.get("method") == "POST"
+            else None
         )
-        if not is_analyze:
+        if max_body_bytes is None:
             await self.app(scope, receive, send)
             return
 
@@ -111,12 +128,12 @@ class RequestBodyLimitMiddleware:
                     message="Malformed Content-Length header.",
                 )
                 return
-            if content_length > self.max_body_bytes:
+            if content_length > max_body_bytes:
                 await _send_error_json(
                     send,
                     status_code=413,
                     code="PAYLOAD_TOO_LARGE",
-                    message="Uploaded snapshot exceeds maximum allowed size.",
+                    message="Request payload exceeds maximum allowed size.",
                 )
                 return
 
@@ -130,7 +147,7 @@ class RequestBodyLimitMiddleware:
                 chunk = message.get("body", b"")
                 if isinstance(chunk, (bytes, bytearray)):
                     total_received += len(chunk)
-                    if total_received > self.max_body_bytes:
+                    if total_received > max_body_bytes:
                         raise _StreamedBodyLimitExceeded()
             return message
 
@@ -148,7 +165,7 @@ class RequestBodyLimitMiddleware:
                     send,
                     status_code=413,
                     code="PAYLOAD_TOO_LARGE",
-                    message="Uploaded snapshot exceeds maximum allowed size.",
+                    message="Request payload exceeds maximum allowed size.",
                 )
 
 
@@ -211,26 +228,43 @@ def _default_client_factory(settings: Settings) -> AsyncGenAIClient:
     return cast(AsyncGenAIClient, genai.Client(api_key=settings.gemini_api_key))
 
 
+def _default_speech_client_factory(_settings: Settings) -> httpx.AsyncClient:
+    return httpx.AsyncClient()
+
+
 def create_app(
     settings: Settings | None = None,
     client_factory: Callable[[Settings], AsyncGenAIClient] | None = None,
+    speech_client_factory: Callable[[Settings], httpx.AsyncClient] | None = None,
 ) -> FastAPI:
     """Create the Chalkolate FastAPI application with explicit lifespan and dependencies."""
     resolved_settings = settings or load_settings()
     resolved_factory = client_factory or _default_client_factory
+    resolved_speech_factory = speech_client_factory or _default_speech_client_factory
     logging.basicConfig(level=getattr(logging, resolved_settings.log_level, logging.INFO))
 
     gate = ConcurrencyGate(resolved_settings.analysis_max_concurrency)
+    speech_gate = ConcurrencyGate(resolved_settings.speech_max_concurrency)
+    speech_rate_limiter = SlidingWindowRateLimiter(
+        resolved_settings.speech_rate_limit_per_minute,
+        60.0,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         client: AsyncGenAIClient | None = None
         if resolved_settings.analysis_configured:
             client = resolved_factory(resolved_settings)
+        speech_client: httpx.AsyncClient | None = None
+        if resolved_settings.speech_configured:
+            speech_client = resolved_speech_factory(resolved_settings)
         app.state.genai_client = client
+        app.state.speech_client = speech_client
         try:
             yield
         finally:
+            if speech_client is not None:
+                await speech_client.aclose()
             if client is not None:
                 try:
                     await client.aio.aclose()
@@ -244,6 +278,7 @@ def create_app(
     )
     app.state.settings = resolved_settings
     app.state.concurrency_gate = gate
+    app.state.speech_concurrency_gate = speech_gate
 
     if resolved_settings.cors_allowed_origins:
         app.add_middleware(
@@ -254,9 +289,14 @@ def create_app(
         )
 
     multipart_overhead = resolved_settings.max_metadata_bytes + 64 * 1024
+    upload_limit = resolved_settings.max_upload_bytes + multipart_overhead
     app.add_middleware(
         RequestBodyLimitMiddleware,
-        max_body_bytes=resolved_settings.max_upload_bytes + multipart_overhead,
+        path_limits={
+            "/api/analyze": upload_limit,
+            "/api/detect-board": upload_limit,
+            "/api/speech": MAX_SPEECH_BODY_BYTES,
+        },
     )
 
     @app.exception_handler(RequestValidationError)
@@ -267,7 +307,7 @@ def create_app(
         return _error_response(
             status_code=422,
             code="INVALID_REQUEST",
-            message="Request must contain multipart 'image' file and 'metadata' JSON form fields.",
+            message="Request payload is invalid or missing required fields.",
         )
 
     @app.exception_handler(StarletteHTTPException)
@@ -296,8 +336,171 @@ def create_app(
         return HealthResponse(
             status="ok",
             analysis_configured=resolved_settings.analysis_configured,
-            deep_mode_configured=resolved_settings.deep_mode_configured,
+            speech_configured=resolved_settings.speech_configured,
             credentials_verified=False,
+        )
+
+    @app.post("/api/detect-board", response_model=BoardDetectionResponse)
+    async def post_detect_board(
+        image: Annotated[UploadFile, File(...)],
+    ) -> BoardDetectionResponse | JSONResponse:
+        try:
+            raw_bytes = await image.read(resolved_settings.max_upload_bytes + 1)
+            if len(raw_bytes) > resolved_settings.max_upload_bytes:
+                return _error_response(
+                    status_code=413,
+                    code="PAYLOAD_TOO_LARGE",
+                    message="Uploaded image exceeds maximum allowed byte size.",
+                )
+            if not raw_bytes:
+                return _error_response(
+                    status_code=422,
+                    code="EMPTY_IMAGE",
+                    message="Uploaded image is empty.",
+                )
+        finally:
+            await image.close()
+
+        try:
+            detected = await asyncio.to_thread(
+                detect_board_corners,
+                raw_bytes,
+                max_image_pixels=resolved_settings.max_image_pixels,
+            )
+        except UnsupportedImageFormatError as exc:
+            return _error_response(
+                status_code=415,
+                code="UNSUPPORTED_IMAGE_FORMAT",
+                message=str(exc),
+            )
+        except ImagePixelLimitError as exc:
+            return _error_response(
+                status_code=413,
+                code="IMAGE_PIXELS_EXCEEDED",
+                message=str(exc),
+            )
+        except CorruptImageError as exc:
+            return _error_response(
+                status_code=422,
+                code="CORRUPT_IMAGE",
+                message=str(exc),
+            )
+
+        return BoardDetectionResponse(
+            detected=detected.detected,
+            corners=detected.corners,
+            confidence=detected.confidence,
+        )
+
+    @app.post("/api/speech", response_model=None)
+    async def post_speech(
+        request: Request,
+        payload: SpeechRequest,
+    ) -> StreamingResponse | JSONResponse:
+        client_key = request.client.host if request.client else "unknown"
+        allowed, retry_after = speech_rate_limiter.try_acquire(client_key)
+        if not allowed:
+            return _error_response(
+                status_code=429,
+                code="SPEECH_RATE_LIMITED",
+                message="Too many speech synthesis requests; slow down briefly.",
+                headers={"Retry-After": str(retry_after)},
+            )
+
+        speech_client = cast(
+            httpx.AsyncClient | None,
+            getattr(request.app.state, "speech_client", None),
+        )
+        if not resolved_settings.speech_configured or speech_client is None:
+            return _error_response(
+                status_code=503,
+                code="SPEECH_NOT_CONFIGURED",
+                message="ElevenLabs text-to-speech is not configured on the backend.",
+            )
+
+        if not speech_gate.try_acquire():
+            return _error_response(
+                status_code=503,
+                code="CAPACITY_EXCEEDED",
+                message="Speech synthesis service is busy; try again shortly.",
+                headers={"Retry-After": "2"},
+            )
+
+        released = False
+
+        def release_once() -> None:
+            nonlocal released
+            if not released:
+                released = True
+                speech_gate.release()
+
+        try:
+            opened = await open_elevenlabs_speech_stream(
+                speech_client,
+                payload.text,
+                resolved_settings,
+            )
+        except SpeechConfigError as exc:
+            release_once()
+            return _error_response(status_code=503, code="SPEECH_NOT_CONFIGURED", message=str(exc))
+        except SpeechAuthError as exc:
+            release_once()
+            return _error_response(status_code=502, code="SPEECH_AUTH_ERROR", message=str(exc))
+        except SpeechQuotaError as exc:
+            release_once()
+            return _error_response(
+                status_code=503,
+                code="SPEECH_QUOTA_EXCEEDED",
+                message=str(exc),
+                headers={"Retry-After": str(exc.retry_after_s or 60)},
+            )
+        except SpeechPlanError as exc:
+            release_once()
+            return _error_response(
+                status_code=503,
+                code="SPEECH_VOICE_PLAN_REQUIRED",
+                message=str(exc),
+            )
+        except SpeechRateLimitError as exc:
+            release_once()
+            return _error_response(
+                status_code=429,
+                code="SPEECH_RATE_LIMITED",
+                message=str(exc),
+                headers={"Retry-After": str(exc.retry_after_s or 10)},
+            )
+        except SpeechTimeoutError as exc:
+            release_once()
+            return _error_response(status_code=504, code="SPEECH_TIMEOUT", message=str(exc))
+        except SpeechUnavailableError as exc:
+            release_once()
+            return _error_response(
+                status_code=503,
+                code="SPEECH_UNAVAILABLE",
+                message=str(exc),
+                headers={"Retry-After": str(exc.retry_after_s or 5)},
+            )
+        except SpeechProviderError as exc:
+            release_once()
+            return _error_response(status_code=502, code="SPEECH_PROVIDER_ERROR", message=str(exc))
+        except BaseException:
+            release_once()
+            raise
+
+        async def body_iter() -> AsyncIterator[bytes]:
+            try:
+                async for chunk in opened.iter_chunks():
+                    yield chunk
+            finally:
+                try:
+                    await opened.aclose()
+                finally:
+                    release_once()
+
+        return StreamingResponse(
+            body_iter(),
+            media_type=opened.media_type,
+            headers={"Cache-Control": "no-store"},
         )
 
     @app.post("/api/analyze", response_model=AnalysisResponse)
@@ -335,14 +538,6 @@ def create_app(
                     status_code=503,
                     code="ANALYSIS_NOT_CONFIGURED",
                     message="Backend GEMINI_API_KEY or model is not configured.",
-                    request_id=request_id_str,
-                )
-
-            if parsed_metadata.deep_mode and not resolved_settings.deep_mode_configured:
-                return _error_response(
-                    status_code=400,
-                    code="DEEP_MODE_DISABLED",
-                    message="Deep Mode is disabled because GEMINI_DEEP_MODEL is empty.",
                     request_id=request_id_str,
                 )
 
@@ -388,7 +583,6 @@ def create_app(
                     prepare_image,
                     raw_bytes,
                     corners=parsed_metadata.corners,
-                    enhance_chalkboard=parsed_metadata.enhance_chalkboard,
                     max_image_pixels=resolved_settings.max_image_pixels,
                     max_long_edge=resolved_settings.max_model_long_edge,
                 )
