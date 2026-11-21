@@ -3,7 +3,10 @@ import {
   STILL_TICKS_FOR_PERSISTENCE,
   classifyRegion,
   createDetectorState,
+<<<<<<< HEAD
   hasSettledChangesFromBaseline,
+=======
+>>>>>>> origin/main
   updateDetector,
 } from '../lib/changeDetector'
 import { GrayscaleSample } from '../lib/frameCapture'
@@ -149,6 +152,7 @@ describe('Tile-based persistent changeDetector', () => {
     const rEdit = updateDetector(sEdit, edited, lastSeen, null)
     expect(classifyRegion(box, lastSeen, edited, rEdit.stillTicks, null)).toBe('changed')
   })
+<<<<<<< HEAD
 
   it('tracks active adjacent writing via writingInChangedZone and validates settled baseline deltas', () => {
     const baseline = makeSample(160, 96, 30)
@@ -186,4 +190,6 @@ describe('Tile-based persistent changeDetector', () => {
       hasSettledChangesFromBaseline(withDistantMotion, baseline, distantMove.stillTicks, null),
     ).toBe(true)
   })
+=======
+>>>>>>> origin/main
 })

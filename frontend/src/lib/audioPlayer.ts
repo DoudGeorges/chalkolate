@@ -292,10 +292,19 @@ async function playWithMediaSourceOrFallbackBlob(
 
     const sourceBuffer = mediaSource.addSourceBuffer('audio/mpeg')
     reader = body.getReader()
+<<<<<<< HEAD
     const mseChunks: Uint8Array[] = []
     let totalLen = 0
 
     while (true) {
+=======
+    let playStarted = false
+    let completionPromise: Promise<void> | null = null
+    let playError: Error | null = null
+
+    while (true) {
+      if (playError) throw playError
+>>>>>>> origin/main
       if (signal.aborted) {
         throw createAbortError()
       }
@@ -306,6 +315,7 @@ async function playWithMediaSourceOrFallbackBlob(
       const chunkCopy = new Uint8Array(value.byteLength)
       chunkCopy.set(value)
       collectedChunks.push(chunkCopy)
+<<<<<<< HEAD
       mseChunks.push(chunkCopy)
       totalLen += chunkCopy.byteLength
     }
@@ -334,6 +344,29 @@ async function playWithMediaSourceOrFallbackBlob(
     sourceBuffer.appendBuffer(fullBytes)
     await waitForEvent(sourceBuffer, 'updateend', signal)
 
+=======
+
+      if (sourceBuffer.updating) {
+        await waitForEvent(sourceBuffer, 'updateend', signal)
+      }
+      if (signal.aborted) {
+        throw createAbortError()
+      }
+
+      sourceBuffer.appendBuffer(chunkCopy)
+      await waitForEvent(sourceBuffer, 'updateend', signal)
+
+      if (!playStarted) {
+        playStarted = true
+        completionPromise = waitForAudioCompletion(audio, signal, notifyStartedOnce)
+        completionPromise.catch((err: unknown) => {
+          playError = err instanceof Error ? err : new Error('Audio playback failed.')
+        })
+      }
+    }
+
+    if (playError) throw playError
+>>>>>>> origin/main
     if (signal.aborted) {
       throw createAbortError()
     }
@@ -345,7 +378,17 @@ async function playWithMediaSourceOrFallbackBlob(
       mediaSource.endOfStream()
     }
 
+<<<<<<< HEAD
     await waitForAudioCompletion(audio, signal, notifyStartedOnce)
+=======
+    if (completionPromise) {
+      await completionPromise
+    } else if (audio.buffered.length > 0) {
+      await waitForAudioCompletion(audio, signal, notifyStartedOnce)
+    } else {
+      throw new Error('Received empty audio stream.')
+    }
+>>>>>>> origin/main
   } catch (err) {
     if (signal.aborted || isAbortError(err)) {
       throw createAbortError()

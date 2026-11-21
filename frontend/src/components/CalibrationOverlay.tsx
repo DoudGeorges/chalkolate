@@ -15,8 +15,11 @@ export type CalibrationDetectStatus =
   | 'detecting'
   | 'detected'
   | 'fallback'
+<<<<<<< HEAD
   | 'moved'
   | 'moved_uncertain'
+=======
+>>>>>>> origin/main
   | 'error'
 
 export interface CalibrationOverlayProps {
@@ -123,6 +126,7 @@ export function CalibrationOverlay({
     statusText = 'Detecting board corners…'
     statusTone = 'text-zinc-200'
   } else if (detectStatus === 'detected') {
+<<<<<<< HEAD
     statusText = 'Board detected — drag corners to refine'
     statusTone = 'text-emerald-300/90'
   } else if (detectStatus === 'moved') {
@@ -133,6 +137,12 @@ export function CalibrationOverlay({
     statusTone = 'text-amber-300/90'
   } else if (detectStatus === 'fallback') {
     statusText = "Couldn't detect board edges — drag corners or Apply full frame"
+=======
+    statusText = 'Board detected — drag handles to refine'
+    statusTone = 'text-emerald-300/90'
+  } else if (detectStatus === 'fallback') {
+    statusText = 'Could not detect board edges — drag handles manually'
+>>>>>>> origin/main
     statusTone = 'text-zinc-300'
   } else if (detectStatus === 'error') {
     statusText = 'Auto-detect unavailable — drag handles manually'

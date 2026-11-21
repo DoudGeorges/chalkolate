@@ -234,6 +234,10 @@ frontend/dist/
 .next/
 out/
 next-env.d.ts
+<<<<<<< HEAD
+=======
+.vercel/
+>>>>>>> origin/main
 .vite/
 *.tsbuildinfo
 coverage/

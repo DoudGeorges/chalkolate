@@ -482,6 +482,7 @@ describe('useBoardMonitor near-real-time pipeline', () => {
 
     unmount()
   })
+<<<<<<< HEAD
 
   it('dispatches follow-up analysis quickly when new board writing settles while a request is in flight', async () => {
     let clock = 40_000
@@ -541,4 +542,6 @@ describe('useBoardMonitor near-real-time pipeline', () => {
     })
     expect(pending).toHaveLength(2)
   })
+=======
+>>>>>>> origin/main
 })

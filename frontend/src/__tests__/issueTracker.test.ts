@@ -14,7 +14,10 @@ import {
   deduplicateFindings,
   dismissIssue,
   getIssuesPendingRecheck,
+<<<<<<< HEAD
   markIssueSpoken,
+=======
+>>>>>>> origin/main
   normalizeDetectedText,
   reconcileAnalysis,
   requestVerification,
@@ -444,6 +447,7 @@ describe('Persistent session issue tracker', () => {
     )
     expect(originalIssue?.box_2d).toEqual([200, 100, 260, 260])
   })
+<<<<<<< HEAD
 
   it('treats re-occurring mistakes after an edit resolution as fresh unspoken issues while preserving spoken state across unchanged flicker', () => {
     const baseState = reconcileAnalysis(
@@ -503,4 +507,6 @@ describe('Persistent session issue tracker', () => {
     expect(sameIssue?.status).toBe('open')
     expect(sameIssue?.spoken).toBe(true)
   })
+=======
+>>>>>>> origin/main
 })
