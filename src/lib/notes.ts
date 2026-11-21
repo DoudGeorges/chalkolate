@@ -40,17 +40,25 @@ export function buildNotesContext(
   maxBytes = MAX_CONTEXT_BYTES,
 ): NotesContextSection[] {
   const recent = sections.slice(-MAX_CONTEXT_SECTIONS)
-  const out: NotesContextSection[] = []
-  let used = 0
+  const context: NotesContextSection[] = []
+  let used = 2 // Array brackets.
   for (let i = recent.length - 1; i >= 0; i--) {
     const s = recent[i]!
-    const headingCost = byteLength(s.heading) + s.id.length + 48
-    const bodyCost = byteLength(s.body_markdown)
-    const full = used + headingCost + bodyCost <= maxBytes
-    used += headingCost + (full ? bodyCost : 0)
-    out.push({ id: s.id, heading: s.heading, body_markdown: full ? s.body_markdown : '' })
+    const headingOnly = { id: s.id, heading: s.heading, body_markdown: '' }
+    const headingCost = byteLength(JSON.stringify(headingOnly)) + Number(context.length > 0)
+    if (used + headingCost > maxBytes) break
+    used += headingCost
+    context.push(headingOnly)
   }
-  return out.reverse()
+  for (const [index, section] of context.entries()) {
+    const s = recent[recent.length - 1 - index]!
+    const bodyCost = byteLength(JSON.stringify(s.body_markdown)) - 2
+    if (used + bodyCost <= maxBytes) {
+      used += bodyCost
+      section.body_markdown = s.body_markdown
+    }
+  }
+  return context.reverse()
 }
 
 /** Pixel crop rect for a source-space [ymin, xmin, ymax, xmax] 0..1000 box (whole frame if null). */
@@ -118,7 +126,9 @@ const StoredNotesSchema = z.object({
         id: z.string().min(1).max(40),
         heading: z.string().max(120),
         body_markdown: z.string().max(3000),
-        figure: z.string().nullable(),
+        figure: z.string().nullable().transform((value) =>
+          value && /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(value) ? value : null,
+        ),
         updatedAt: z.number(),
       }),
     )
@@ -201,6 +211,8 @@ function renderMath(tex: string, display: boolean): string {
       displayMode: display,
       throwOnError: true,
       trust: false,
+      maxExpand: 250,
+      maxSize: 20,
       output: 'mathml',
     })
   } catch {
@@ -222,7 +234,7 @@ function renderInline(text: string): string {
 export function renderNotesBodyHtml(markdown: string): string {
   const math: string[] = []
   const stash = (html: string) => `\u0000${math.push(html) - 1}\u0000`
-  const withMath = markdown
+  const withMath = markdown.split('\u0000').join('')
     .replace(/\$\$([\s\S]+?)\$\$/g, (_m, tex: string) => stash(renderMath(tex.trim(), true)))
     .replace(/(?<![\\$])\$([^$\n]+?)\$(?!\$)/g, (_m, tex: string) =>
       stash(renderMath(tex.trim(), false)),
