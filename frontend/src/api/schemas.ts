@@ -1,0 +1,87 @@
+import { z } from 'zod'
+
+export const SubjectHintSchema = z.enum(['auto', 'math', 'physics', 'general'])
+export type SubjectHint = z.infer<typeof SubjectHintSchema>
+
+export const ErrorCategorySchema = z.enum(['math', 'physics', 'spelling'])
+export type ErrorCategory = z.infer<typeof ErrorCategorySchema>
+
+export const CornerPointSchema = z.tuple([
+  z.number().finite().min(0).max(1000),
+  z.number().finite().min(0).max(1000),
+])
+export type CornerPoint = z.infer<typeof CornerPointSchema>
+
+export const CalibrationCornersSchema = z.tuple([
+  CornerPointSchema,
+  CornerPointSchema,
+  CornerPointSchema,
+  CornerPointSchema,
+])
+export type CalibrationCorners = z.infer<typeof CalibrationCornersSchema>
+
+export const Box2DSchema = z
+  .tuple([
+    z.number().int().min(0).max(1000),
+    z.number().int().min(0).max(1000),
+    z.number().int().min(0).max(1000),
+    z.number().int().min(0).max(1000),
+  ])
+  .refine(([ymin, xmin, ymax, xmax]) => ymin < ymax && xmin < xmax, {
+    message: 'box_2d must satisfy ymin < ymax and xmin < xmax',
+  })
+export type Box2D = z.infer<typeof Box2DSchema>
+
+export const SourceSpaceErrorSchema = z
+  .object({
+    category: ErrorCategorySchema,
+    detected_text: z.string().trim().min(1).max(300),
+    correction_text: z.string().trim().min(1).max(300),
+    correction_latex: z.string().max(300).nullable(),
+    spoken_alert: z.string().trim().min(1).max(180),
+    explanation: z.string().trim().min(1).max(500),
+    box_2d: Box2DSchema,
+    confidence: z.number().finite().min(0).max(1),
+  })
+  .strict()
+export type SourceSpaceDetectedError = z.infer<typeof SourceSpaceErrorSchema>
+
+export const AnalysisResponseSchema = z
+  .object({
+    request_id: z.string().uuid(),
+    board_summary: z.string().max(2000),
+    errors: z.array(SourceSpaceErrorSchema).max(20),
+    image_width: z.number().int().positive(),
+    image_height: z.number().int().positive(),
+    latency_ms: z.number().int().nonnegative(),
+  })
+  .strict()
+export type AnalysisResponse = z.infer<typeof AnalysisResponseSchema>
+
+export const HealthResponseSchema = z
+  .object({
+    status: z.literal('ok'),
+    analysis_configured: z.boolean(),
+    deep_mode_configured: z.boolean(),
+    credentials_verified: z.literal(false),
+  })
+  .strict()
+export type HealthResponse = z.infer<typeof HealthResponseSchema>
+
+export const ErrorEnvelopeSchema = z
+  .object({
+    code: z.string().min(1),
+    message: z.string().min(1),
+    request_id: z.string().nullable().optional(),
+  })
+  .strict()
+export type ErrorEnvelope = z.infer<typeof ErrorEnvelopeSchema>
+
+export interface AnalysisMetadataPayload {
+  request_id: string
+  previous_board_summary: string
+  subject_hint: SubjectHint
+  corners: CalibrationCorners | null
+  deep_mode: boolean
+  enhance_chalkboard: boolean
+}

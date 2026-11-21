@@ -221,3 +221,17 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Environment files (keep .env.example tracked)
+.env.*
+!.env.example
+
+# Frontend / Node / Vite
+!frontend/src/lib/
+!frontend/src/lib/**
+node_modules/
+frontend/dist/
+.vite/
+*.tsbuildinfo
+coverage/
+
