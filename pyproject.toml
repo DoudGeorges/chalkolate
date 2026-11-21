@@ -30,12 +30,15 @@ package = false
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+src = ["server", "api"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.mypy]
 python_version = "3.12"
+mypy_path = "server"
+files = ["server", "api"]
 strict = true
 warn_unreachable = true
 warn_redundant_casts = true
@@ -49,6 +52,6 @@ init_typed = true
 warn_required_dynamic_aliases = true
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
-testpaths = ["tests"]
+pythonpath = ["server"]
+testpaths = ["server/tests"]
 asyncio_mode = "auto"

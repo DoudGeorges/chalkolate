@@ -16,20 +16,20 @@ Chalkolate continuously watches the lecture board, identifies newly written cont
 
 ## Architecture & Privacy Notice
 
-- **Stateless backend (`backend/`)**: Accepts ordinary HTTP `multipart/form-data` snapshot uploads on `POST /api/analyze` (plus lightweight OpenCV corner detection on `POST /api/detect-board`), rectifies and auto-enhances low-contrast frames in memory, forwards the processed JPEG to Gemini (`gemini-3.8-flash`) via the official `google-genai` SDK, and projects findings back into canonical uploaded-image coordinates. When configured, `POST /api/speech` streams synthesized voice alerts from ElevenLabs (`eleven_v4_turbo`) over HTTPS without exposing keys to the browser.
-- **Browser-owned session (`frontend/`)**: Holds the active media stream or video playback, tile-based change detection, deduplicated persistent issue tracking with automatic resolution, dismissals, and sequential spoken alert playback (preferring ElevenLabs v4 Turbo streaming when configured, automatically falling back to `window.speechSynthesis`) without a database, WebSockets, or authentication.
+- **Stateless backend (`server/`, served by `api/index.py`)**: Accepts ordinary HTTP `multipart/form-data` snapshot uploads on `POST /api/analyze` (plus lightweight OpenCV corner detection on `POST /api/detect-board`), rectifies and auto-enhances low-contrast frames in memory, forwards the processed JPEG to Gemini (`gemini-3.8-flash`) via the official `google-genai` SDK, and projects findings back into canonical uploaded-image coordinates. When configured, `POST /api/speech` streams synthesized voice alerts from ElevenLabs (`eleven_v4_turbo`) over HTTPS without exposing keys to the browser.
+- **Browser-owned session (`src/`, Next.js)**: Holds the active media stream or video playback, tile-based change detection, deduplicated persistent issue tracking with automatic resolution, dismissals, and sequential spoken alert playback (preferring ElevenLabs v4 Turbo streaming when configured, automatically falling back to `window.speechSynthesis`) without a database, WebSockets, or authentication.
 - **External data disclosure**: Analyzed board snapshots (plus the optional `previous_board_summary` text) are sent to the Google Gemini API for inference, and spoken alert text is sent to ElevenLabs when ElevenLabs TTS is configured. Do not point Chalkolate at confidential or restricted material without appropriate approval.
 
 ## Prerequisites & Supported Versions
 
-- **Python**: `>= 3.12, < 3.14` (managed via `uv`; `backend/.python-version` pins `3.12`)
+- **Python**: `>= 3.12, < 3.14` (managed via `uv`; `.python-version` pins `3.12`)
 - **Node.js**: `>= 22.0.0` with `npm`
 - **Gemini API key** (optional for preview/calibration/tests; required on the backend for live `POST /api/analyze` inference)
 - **ElevenLabs API key & Voice ID** (optional; enables natural ElevenLabs v4 Turbo speech synthesis with automatic fallback to browser `window.speechSynthesis`. Note: Voice Library voices require a paid ElevenLabs plan; free-tier accounts can use any premade ElevenLabs voice ID.)
 
 ## Configuration
 
-Copy `.env.example` to `.env` at the repository root (or inside `backend/`):
+Copy `.env.example` to `.env` at the repository root (or inside `server/`):
 
 ```bash
 cp .env.example .env
@@ -48,28 +48,23 @@ Key settings (process environment variables and `.env` values override defaults)
 
 ## Installation & Development
 
-All backend commands must be run from `backend/`, and all frontend commands from `frontend/` unless noted otherwise.
+Everything runs from the repository root: the Next.js app lives at the root (`src/`), the Python modules in `server/`, and the Vercel entrypoint in `api/index.py`.
 
 ### 1. Install dependencies
 
-From `backend/`:
 ```bash
 uv sync
-```
-
-From `frontend/`:
-```bash
 npm install
 ```
 
 ### 2. Run locally in development
 
-Terminal 1 (from the repository root):
+Terminal 1:
 ```bash
-uv --directory backend run uvicorn main:app --host 127.0.0.1 --port 8000 --env-file ../.env
+uv run uvicorn index:app --app-dir api --host 127.0.0.1 --port 8000 --env-file .env
 ```
 
-Terminal 2 (from `frontend/`):
+Terminal 2:
 ```bash
 npm run dev
 ```
@@ -78,9 +73,11 @@ Open `http://localhost:5173`. Next.js rewrites `/api/*` requests to `http://127.
 
 ### Deploying to Vercel
 
-The repository deploys as a single Vercel project using [Services](https://vercel.com/docs/services): the root `vercel.json` serves `frontend/` (Next.js) and `backend/` (FastAPI, `main:app`) and routes `/api/*` to the Python service, so the browser stays same-origin and the API keys never leave the server.
+The repository deploys as a single Vercel project: Next.js at the repo root plus one Python function, `api/index.py`, which imports the FastAPI app from `server/`. The root `vercel.json` rewrites `/api/*` to that function, so the browser stays same-origin and the API keys never leave the server. Only `api/index.py` lives in `api/` because Vercel turns every `.py` file there into its own function.
 
-1. Import the repo in Vercel (leave the project's Root Directory empty; `vercel.json` defines each service's root).
+> **Untested on Vercel.** Vercel's docs don't spell out a Next.js app at the root alongside a root `api/` Python function (they show [Services](https://vercel.com/docs/services) with subdirectories instead). If the first deploy misroutes `/api/*` or picks the wrong framework preset, the fallback is the Services layout from commit `8ba24f7`.
+
+1. Import the repo in Vercel (Root Directory empty).
 2. Add `GEMINI_API_KEY`, `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` (and any other names from `.env.example`) as project environment variables. Set `MAX_UPLOAD_BYTES=4194304`, because Vercel Functions reject request bodies over about 4.5 MB.
 3. The first request after an idle period pays a Python cold start (OpenCV and NumPy imports); the app's page-load `/api/health` call warms the function. Check the bundle size with `VERCEL_ANALYZE_BUILD_OUTPUT=1` if a deploy fails on size (Python limit: 500 MB uncompressed).
 4. The in-memory speech rate limiter and concurrency gates are per function instance, so on serverless they are best-effort. Add a Vercel WAF rate-limit rule for real abuse protection.
@@ -96,16 +93,16 @@ The repository deploys as a single Vercel project using [Services](https://verce
 
 ## Build, Lint, Type-Check, and Test Commands
 
-### Backend (working directory: `backend/`)
+### Backend (working directory: repository root)
 
 ```bash
 uv run ruff check .
 uv run ruff format --check .
-uv run mypy .
+uv run mypy
 uv run pytest -v
 ```
 
-### Frontend (working directory: `frontend/`)
+### Frontend (working directory: repository root)
 
 ```bash
 npm run lint
