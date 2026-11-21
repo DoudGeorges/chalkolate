@@ -234,6 +234,7 @@ frontend/dist/
 .next/
 out/
 next-env.d.ts
+.vercel/
 .vite/
 *.tsbuildinfo
 coverage/
