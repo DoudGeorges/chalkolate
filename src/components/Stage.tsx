@@ -294,7 +294,7 @@ export function Stage({
       )}
 
       {/* Bottom-right crop control */}
-      {mediaState.ready && !calibrationEditing && (
+      {mediaState.ready && mediaState.kind !== 'screen' && !calibrationEditing && (
         <button
           type="button"
           onClick={onToggleCalibration}
