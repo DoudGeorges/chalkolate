@@ -131,7 +131,9 @@ export async function analyzeSnapshot(
 
   let response: Response
   try {
-    response = await fetch('/api/analyze', {
+    // Calibrated analysis (warp + box projection) still runs on the legacy Python backend until it is
+    // ported to the browser; uncalibrated frames use the Next.js route.
+    response = await fetch(metadata.corners ? '/api/legacy/analyze' : '/api/analyze', {
       method: 'POST',
       body: formData,
       signal,
@@ -189,7 +191,7 @@ export async function detectBoardCorners(
 
   let response: Response
   try {
-    response = await fetch('/api/detect-board', {
+    response = await fetch('/api/legacy/detect-board', {
       method: 'POST',
       body: formData,
       signal,
