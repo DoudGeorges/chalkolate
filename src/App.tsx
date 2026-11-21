@@ -467,13 +467,6 @@ export function App() {
   const dismissedCount = monitor.state.tracker.dismissalHistoryIds.length
   const showVisualFindings = alertMode !== 'voice_only'
   const activeSidebarTab: SidePanelTab = showVisualFindings ? sidebarTab : 'settings'
-  const settingsOpen = panelOpen && activeSidebarTab === 'settings'
-
-  const handleToggleSettings = () => {
-    if (settingsOpen) setPanelOpen(false)
-    else openSettings()
-  }
-
   const handleSelectOverlayIssue = (issueId: string) => {
     setSelectedIssueId(issueId)
     if (showVisualFindings) {
@@ -551,8 +544,6 @@ export function App() {
         mediaReady={media.state.ready}
         monitoring={monitoring}
         onToggleMonitoring={handleToggleMonitoring}
-        settingsOpen={settingsOpen}
-        onToggleSettings={handleToggleSettings}
         onboarding={onboarding}
         onGoHome={handleGoHome}
       />
