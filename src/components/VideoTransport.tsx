@@ -86,13 +86,13 @@ export function VideoTransport({
   return (
     <div
       aria-label="Video playback controls"
-      className="flex items-center gap-2.5 rounded-full border border-line bg-panel px-3.5 py-1.5 text-xs shadow-xl backdrop-blur-xl"
+      className="flex items-center gap-2.5 rounded-full border border-line bg-white px-3.5 py-1.5 text-xs shadow-md"
     >
       <button
         type="button"
         onClick={togglePlay}
         aria-label={playing ? 'Pause video' : 'Play video'}
-        className="flex h-6 w-6 items-center justify-center rounded-full bg-white/10 text-zinc-100 transition hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+        className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 transition hover:bg-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
       >
         {playing ? (
           <Pause className="h-3 w-3" aria-hidden="true" />
@@ -106,7 +106,7 @@ export function VideoTransport({
         onClick={handleRestart}
         aria-label="Restart video"
         title="Restart video"
-        className="flex h-6 w-6 items-center justify-center rounded-full text-zinc-400 transition hover:bg-white/10 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+        className="flex h-6 w-6 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
       >
         <RotateCcw className="h-3 w-3" aria-hidden="true" />
       </button>
@@ -122,7 +122,7 @@ export function VideoTransport({
         className="w-36 sm:w-56 accent-accent cursor-pointer"
       />
 
-      <span className="tabular-nums text-[11px] text-zinc-400 whitespace-nowrap">
+      <span className="tabular-nums text-[11px] text-zinc-500 whitespace-nowrap">
         {formatTime(currentTime)} / {formatTime(duration)}
       </span>
     </div>

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
 import re
 import time
 from collections import deque
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 
 import httpx
@@ -21,6 +22,11 @@ ELEVENLABS_BASE_URL = "https://api.elevenlabs.io/v1"
 ELEVENLABS_OUTPUT_FORMAT = "mp3_44100_128"
 MAX_PREPARED_SPEECH_CHARS = 300
 VOICE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
+
+DEFAULT_VOICE_KEY = "default"
+VOICE_CATALOG_TTL_SECONDS = 600.0
+MAX_CATALOG_VOICES = 200
+MAX_VOICE_LABEL_CHARS = 80
 
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
 _BRACKETS_RE = re.compile(r"[\[\]]")
@@ -79,6 +85,13 @@ class SpeechUnavailableError(SpeechError):
 
 class SpeechProviderError(SpeechError):
     """Raised for unexpected non-success responses from ElevenLabs."""
+
+
+def resolve_voice_id(settings: Settings, voice: str = DEFAULT_VOICE_KEY) -> str:
+    """Map 'default' to ELEVENLABS_VOICE_ID, otherwise validate the requested voice ID."""
+    if voice == DEFAULT_VOICE_KEY:
+        return validate_voice_id(settings.elevenlabs_voice_id)
+    return validate_voice_id(voice)
 
 
 def validate_voice_id(voice_id: str) -> str:
@@ -206,16 +219,189 @@ def _extract_error_tags(body_bytes: bytes) -> tuple[str | None, str | None]:
     return None, None
 
 
+async def _raise_upstream_error(response: httpx.Response, operation: str) -> None:
+    """Close a failed ElevenLabs response and raise a typed error without leaking its body."""
+    status_code = response.status_code
+    retry_after_s = _parse_retry_after(response.headers)
+    detail_code: str | None = None
+    detail_status: str | None = None
+    try:
+        body_bytes = await response.aread()
+        detail_code, detail_status = _extract_error_tags(body_bytes[:4096])
+    finally:
+        await response.aclose()
+
+    logger.warning(
+        "ElevenLabs %s upstream failure status=%s code=%s tag=%s",
+        operation,
+        status_code,
+        detail_code or "unknown",
+        detail_status or "unknown",
+    )
+
+    if status_code in (401, 403):
+        raise SpeechAuthError("ElevenLabs credentials or voice permissions were rejected.")
+    if detail_code == "quota_exceeded" or detail_status == "quota_exceeded":
+        raise SpeechQuotaError(
+            "ElevenLabs character quota exceeded; falling back to browser voice.",
+            retry_after_s=retry_after_s or 60,
+        )
+    if status_code == 402 or detail_code == "paid_plan_required":
+        raise SpeechPlanError(
+            "Selected ElevenLabs voice requires a paid plan; pick another voice or upgrade."
+        )
+    if status_code == 429:
+        raise SpeechRateLimitError(
+            "ElevenLabs speech rate limit reached.",
+            retry_after_s=retry_after_s or 10,
+        )
+    if status_code in (408, 504):
+        raise SpeechTimeoutError("ElevenLabs request timed out upstream.")
+    if status_code == 503:
+        raise SpeechUnavailableError(
+            "ElevenLabs speech service is temporarily unavailable.",
+            retry_after_s=retry_after_s or 5,
+        )
+    raise SpeechProviderError("Speech provider returned an unexpected error.")
+
+
+@dataclass(frozen=True)
+class ElevenLabsVoice:
+    """One voice available to the configured ElevenLabs account."""
+
+    voice_id: str
+    label: str
+
+
+def _voice_label(raw: Mapping[str, object]) -> str:
+    name = raw.get("name")
+    base = name.strip() if isinstance(name, str) and name.strip() else "Unnamed voice"
+    details: list[str] = []
+    labels = raw.get("labels")
+    if isinstance(labels, Mapping):
+        for key in ("description", "descriptive", "accent", "gender"):
+            value = labels.get(key)
+            if isinstance(value, str) and value.strip() and value.strip() not in details:
+                details.append(value.strip().replace("_", " "))
+            if len(details) >= 2:
+                break
+    label = f"{base} ({', '.join(details)})" if details else base
+    label = _WS_RE.sub(" ", _CONTROL_CHARS_RE.sub(" ", label)).strip()
+    return label[:MAX_VOICE_LABEL_CHARS]
+
+
+def parse_voice_catalog(payload: object) -> list[ElevenLabsVoice]:
+    """Extract valid voice IDs and display labels from an ElevenLabs /v1/voices payload."""
+    if not isinstance(payload, Mapping):
+        raise SpeechProviderError("ElevenLabs returned an unexpected voice list.")
+    raw_voices = payload.get("voices")
+    if not isinstance(raw_voices, list):
+        raise SpeechProviderError("ElevenLabs returned an unexpected voice list.")
+    voices: list[ElevenLabsVoice] = []
+    seen: set[str] = set()
+    for raw in raw_voices:
+        if not isinstance(raw, Mapping):
+            continue
+        voice_id = raw.get("voice_id")
+        if not isinstance(voice_id, str) or not VOICE_ID_PATTERN.fullmatch(voice_id):
+            continue
+        if voice_id in seen:
+            continue
+        seen.add(voice_id)
+        voices.append(ElevenLabsVoice(voice_id=voice_id, label=_voice_label(raw)))
+        if len(voices) >= MAX_CATALOG_VOICES:
+            break
+    voices.sort(key=lambda v: v.label.lower())
+    return voices
+
+
+async def fetch_elevenlabs_voices(
+    client: httpx.AsyncClient,
+    settings: Settings,
+) -> list[ElevenLabsVoice]:
+    """List the voices available to the configured ElevenLabs account."""
+    if not settings.speech_configured:
+        raise SpeechConfigError("ElevenLabs speech synthesis is not configured.")
+    request = client.build_request(
+        "GET",
+        f"{ELEVENLABS_BASE_URL}/voices",
+        headers={
+            "xi-api-key": settings.elevenlabs_api_key.strip(),
+            "Accept": "application/json",
+        },
+        timeout=httpx.Timeout(
+            connect=5.0, read=settings.speech_timeout_seconds, write=5.0, pool=5.0
+        ),
+    )
+    try:
+        response = await client.send(request, stream=True)
+    except httpx.TimeoutException as exc:
+        raise SpeechTimeoutError("ElevenLabs voice list request timed out.") from exc
+    except httpx.HTTPError as exc:
+        raise SpeechUnavailableError("Speech provider connection failed.") from exc
+
+    if response.status_code != 200:
+        await _raise_upstream_error(response, "voices")
+    try:
+        body = await response.aread()
+    finally:
+        await response.aclose()
+    try:
+        payload = json.loads(body.decode("utf-8", errors="ignore"))
+    except json.JSONDecodeError as exc:
+        raise SpeechProviderError("ElevenLabs returned an unexpected voice list.") from exc
+    return parse_voice_catalog(payload)
+
+
+class VoiceCatalog:
+    """Short-lived cache of account voices; also the allowlist for client voice choices."""
+
+    def __init__(
+        self,
+        ttl_seconds: float = VOICE_CATALOG_TTL_SECONDS,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._clock = clock
+        self._voices: list[ElevenLabsVoice] | None = None
+        self._fetched_at = 0.0
+        self._lock = asyncio.Lock()
+
+    async def get(
+        self,
+        client: httpx.AsyncClient,
+        settings: Settings,
+    ) -> list[ElevenLabsVoice]:
+        async with self._lock:
+            now = self._clock()
+            if self._voices is not None and now - self._fetched_at < self._ttl_seconds:
+                return self._voices
+            self._voices = await fetch_elevenlabs_voices(client, settings)
+            self._fetched_at = now
+            return self._voices
+
+    async def contains(
+        self,
+        client: httpx.AsyncClient,
+        settings: Settings,
+        voice_id: str,
+    ) -> bool:
+        voices = await self.get(client, settings)
+        return any(v.voice_id == voice_id for v in voices)
+
+
 async def open_elevenlabs_speech_stream(
     client: httpx.AsyncClient,
     text: str,
     settings: Settings,
+    *,
+    voice: str = DEFAULT_VOICE_KEY,
 ) -> OpenedSpeechStream:
     """Open a streaming MP3 request to ElevenLabs v4 Turbo without logging secrets or text."""
     if not settings.speech_configured:
         raise SpeechConfigError("ElevenLabs speech synthesis is not configured.")
 
-    voice_id = validate_voice_id(settings.elevenlabs_voice_id)
+    voice_id = resolve_voice_id(settings, voice)
     try:
         prepared_text = prepare_spoken_text(text)
     except ValueError as exc:
@@ -260,46 +446,6 @@ async def open_elevenlabs_speech_stream(
         raise SpeechUnavailableError("Speech provider connection failed.") from exc
 
     if response.status_code != 200:
-        status_code = response.status_code
-        retry_after_s = _parse_retry_after(response.headers)
-        detail_code: str | None = None
-        detail_status: str | None = None
-        try:
-            body_bytes = await response.aread()
-            detail_code, detail_status = _extract_error_tags(body_bytes[:4096])
-        finally:
-            await response.aclose()
-
-        logger.warning(
-            "ElevenLabs TTS upstream failure status=%s code=%s tag=%s",
-            status_code,
-            detail_code or "unknown",
-            detail_status or "unknown",
-        )
-
-        if status_code in (401, 403):
-            raise SpeechAuthError("ElevenLabs credentials or voice permissions were rejected.")
-        if detail_code == "quota_exceeded" or detail_status == "quota_exceeded":
-            raise SpeechQuotaError(
-                "ElevenLabs character quota exceeded; falling back to browser voice.",
-                retry_after_s=retry_after_s or 60,
-            )
-        if status_code == 402 or detail_code == "paid_plan_required":
-            raise SpeechPlanError(
-                "Configured ElevenLabs voice requires a paid plan; use a premade voice or upgrade."
-            )
-        if status_code == 429:
-            raise SpeechRateLimitError(
-                "ElevenLabs speech rate limit reached.",
-                retry_after_s=retry_after_s or 10,
-            )
-        if status_code in (408, 504):
-            raise SpeechTimeoutError("Speech synthesis request timed out upstream.")
-        if status_code == 503:
-            raise SpeechUnavailableError(
-                "ElevenLabs speech service is temporarily unavailable.",
-                retry_after_s=retry_after_s or 5,
-            )
-        raise SpeechProviderError("Speech synthesis provider returned an unexpected error.")
+        await _raise_upstream_error(response, "TTS")
 
     return OpenedSpeechStream(response=response, media_type="audio/mpeg")

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
+import time
 from typing import Protocol
 
 from google.genai import errors as genai_errors
@@ -12,7 +14,12 @@ from google.genai import types
 from pydantic import ValidationError
 
 from config import Settings, ThinkingLevelName
-from schemas import AnalysisMetadata, BoardAnalysisResult
+from schemas import (
+    MAX_FINDINGS,
+    AnalysisMetadata,
+    BoardAnalysisResult,
+    DetectedError,
+)
 from vision import PreparedImage
 
 logger = logging.getLogger("chalkolate.analyzer")
@@ -84,6 +91,9 @@ _BLOCKED_FINISH_REASONS = frozenset(
         types.FinishReason.IMAGE_RECITATION,
     }
 )
+
+_RETRY_ATTEMPTS = 2
+_RETRY_MAX_DELAY_S = 2.0
 
 _RETRY_AFTER_PATTERN = re.compile(r"retry\s*(?:in|after)?\s*(\d+(?:\.\d+)?)\s*s", re.IGNORECASE)
 
@@ -252,6 +262,44 @@ def _validate_response_completion(response: types.GenerateContentResponse) -> st
     return raw_text
 
 
+def _parse_tolerant(raw_json: str) -> tuple[BoardAnalysisResult, int]:
+    """Parse model JSON, dropping individually invalid findings instead of failing the call.
+
+    Returns the result and the number of dropped findings. Output is still rejected when the
+    envelope is malformed, the summary is invalid, or every returned finding was invalid (an
+    all-invalid response must never masquerade as an empty, successful analysis).
+    """
+    try:
+        data = json.loads(raw_json)
+    except ValueError as exc:
+        raise UnusableModelOutputError("Model returned malformed JSON.") from exc
+    if not isinstance(data, dict):
+        raise UnusableModelOutputError("Model returned JSON that failed schema validation.")
+    raw_errors = data.get("errors", [])
+    if not isinstance(raw_errors, list):
+        raise UnusableModelOutputError("Model returned JSON that failed schema validation.")
+
+    valid: list[DetectedError] = []
+    dropped = 0
+    for item in raw_errors:
+        try:
+            valid.append(DetectedError.model_validate(item))
+        except ValidationError:
+            dropped += 1
+    if dropped and not valid:
+        raise UnusableModelOutputError("Model returned JSON that failed schema validation.")
+    if len(valid) > MAX_FINDINGS:
+        dropped += len(valid) - MAX_FINDINGS
+        valid = valid[:MAX_FINDINGS]
+    try:
+        result = BoardAnalysisResult(board_summary=data.get("board_summary", ""), errors=valid)
+    except ValidationError as exc:
+        raise UnusableModelOutputError(
+            "Model returned JSON that failed schema validation."
+        ) from exc
+    return result, dropped
+
+
 async def analyze_board_image(
     client: AsyncGenAIClient,
     prepared: PreparedImage,
@@ -274,9 +322,9 @@ async def analyze_board_image(
         http_options=types.HttpOptions(
             timeout=max(1000, round(timeout_seconds * 1000)),
             retry_options=types.HttpRetryOptions(
-                attempts=2,
+                attempts=_RETRY_ATTEMPTS,
                 initial_delay=1.0,
-                max_delay=2.0,
+                max_delay=_RETRY_MAX_DELAY_S,
                 http_status_codes=[503],
             ),
         ),
@@ -285,33 +333,74 @@ async def analyze_board_image(
     image_part = types.Part.from_bytes(data=prepared.jpeg_bytes, mime_type="image/jpeg")
     user_prompt = build_user_prompt(metadata)
 
+    # The SDK timeout applies per attempt, so the outer deadline must cover every attempt plus
+    # the inter-attempt delay; otherwise a 503 retry is cut off by this guard.
+    total_budget = timeout_seconds * _RETRY_ATTEMPTS + _RETRY_MAX_DELAY_S
+
+    started = time.perf_counter()
+    outcome = "ok"
+    finish_reason: str | None = None
+    tokens: tuple[int | None, int | None, int | None] = (None, None, None)
+    raw_count = kept_count = dropped_count = 0
     try:
-        async with asyncio.timeout(timeout_seconds):
-            response = await client.aio.models.generate_content(
-                model=model_name,
-                contents=[image_part, user_prompt],
-                config=config,
+        try:
+            async with asyncio.timeout(total_budget):
+                response = await client.aio.models.generate_content(
+                    model=model_name,
+                    contents=[image_part, user_prompt],
+                    config=config,
+                )
+        except TimeoutError as exc:
+            raise AnalysisTimeoutError("Board analysis timed out before completion.") from exc
+        except genai_errors.APIError as exc:
+            raise _map_api_error(exc) from exc
+
+        if response.candidates:
+            reason = response.candidates[0].finish_reason
+            finish_reason = reason.name if reason is not None else None
+        usage = response.usage_metadata
+        if usage is not None:
+            tokens = (
+                usage.prompt_token_count,
+                usage.candidates_token_count,
+                usage.thoughts_token_count,
             )
-    except TimeoutError as exc:
-        raise AnalysisTimeoutError("Board analysis timed out before completion.") from exc
-    except genai_errors.APIError as exc:
-        raise _map_api_error(exc) from exc
 
-    raw_json = _validate_response_completion(response)
+        raw_json = _validate_response_completion(response)
+        parsed, dropped_count = _parse_tolerant(raw_json)
+        raw_count = len(parsed.errors)
 
-    try:
-        parsed = BoardAnalysisResult.model_validate_json(raw_json)
-    except ValidationError as exc:
-        raise UnusableModelOutputError(
-            "Model returned JSON that failed schema validation."
-        ) from exc
-
-    # Confidence threshold (default 0.85) is a product heuristic to limit false alarms,
-    # not a calibrated probability or correctness guarantee.
-    filtered_errors = [
-        finding for finding in parsed.errors if finding.confidence >= settings.confidence_threshold
-    ]
-    return BoardAnalysisResult(
-        board_summary=parsed.board_summary,
-        errors=filtered_errors,
-    )
+        # Confidence threshold (default 0.85) is a product heuristic to limit false alarms,
+        # not a calibrated probability or correctness guarantee.
+        filtered_errors = [
+            finding
+            for finding in parsed.errors
+            if finding.confidence >= settings.confidence_threshold
+        ]
+        kept_count = len(filtered_errors)
+        return BoardAnalysisResult(
+            board_summary=parsed.board_summary,
+            errors=filtered_errors,
+        )
+    except AnalyzerError as exc:
+        outcome = type(exc).__name__
+        raise
+    finally:
+        # Content-free: no image, board text, summary, or raw model output is logged.
+        logger.info(
+            "analysis request_id=%s outcome=%s model_ms=%d finish=%s "
+            "tokens_in=%s tokens_out=%s tokens_thought=%s "
+            "findings_raw=%d findings_kept=%d findings_dropped_invalid=%d "
+            "jpeg_bytes=%d model_wh=%dx%d",
+            metadata.request_id,
+            outcome,
+            round((time.perf_counter() - started) * 1000),
+            finish_reason,
+            *tokens,
+            raw_count,
+            kept_count,
+            dropped_count,
+            len(prepared.jpeg_bytes),
+            prepared.model_width,
+            prepared.model_height,
+        )

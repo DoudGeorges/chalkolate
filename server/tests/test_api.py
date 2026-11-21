@@ -113,6 +113,57 @@ async def test_health_endpoint_with_and_without_credentials() -> None:
     }
 
 
+async def test_voices_endpoint_lists_account_voices_and_gates_speech_voice() -> None:
+    synth_urls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/voices":
+            return httpx.Response(
+                200,
+                json={
+                    "voices": [
+                        {"voice_id": "voice1", "name": "George", "labels": {"accent": "british"}},
+                        {"voice_id": "voice2", "name": "Alice", "labels": {}},
+                    ]
+                },
+            )
+        synth_urls.append(request.url.path)
+        return httpx.Response(200, headers={"content-type": "audio/mpeg"}, content=b"ID3")
+
+    app_no_speech = create_app(Settings(elevenlabs_api_key=""))
+    async with app_no_speech.router.lifespan_context(app_no_speech):
+        transport = httpx.ASGITransport(app=app_no_speech)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/voices")
+    assert resp.status_code == 503
+    assert resp.json()["code"] == "SPEECH_NOT_CONFIGURED"
+
+    app = create_app(
+        Settings(elevenlabs_api_key="el-key", elevenlabs_voice_id="voice1"),
+        speech_client_factory=lambda _s: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/api/voices")
+            assert resp.status_code == 200
+            assert resp.json() == {
+                "voices": [
+                    {"id": "default", "label": "Default: George (british)"},
+                    {"id": "voice2", "label": "Alice"},
+                ]
+            }
+
+            ok = await client.post("/api/speech", json={"text": "Hi.", "voice": "voice2"})
+            assert ok.status_code == 200
+            assert synth_urls == ["/v1/text-to-speech/voice2/stream"]
+
+            missing = await client.post("/api/speech", json={"text": "Hi.", "voice": "nothere"})
+            assert missing.status_code == 422
+            assert missing.json()["code"] == "SPEECH_VOICE_UNAVAILABLE"
+            assert app.state.speech_concurrency_gate.active == 0
+
+
 async def test_analyze_configuration_errors_and_metadata_validation() -> None:
     req_id = str(uuid4())
     img_bytes = _png_bytes()
@@ -455,6 +506,13 @@ async def test_speech_endpoint_streaming_validation_limits_and_concurrency() -> 
 
             bad_extra = await client.post("/api/speech", json={"text": "hi", "voice_id": "x"})
             assert bad_extra.status_code == 422
+
+            bad_voice = await client.post("/api/speech", json={"text": "hi", "voice": "../x"})
+            assert bad_voice.status_code == 422
+
+            # Speed is not supported (eleven_v4_turbo ignores it); unknown keys are rejected.
+            bad_speed = await client.post("/api/speech", json={"text": "hi", "speed": 1.1})
+            assert bad_speed.status_code == 422
 
             huge_body = await client.post("/api/speech", json={"text": "a" * 5000})
             assert huge_body.status_code == 413

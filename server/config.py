@@ -37,7 +37,7 @@ class Settings:
     speech_rate_limit_per_minute: int = 30
     confidence_threshold: float = 0.85
     analysis_max_concurrency: int = 2
-    analysis_timeout_seconds: float = 20.0
+    analysis_timeout_seconds: float = 12.0
     analysis_max_output_tokens: int = 4096
     notes_max_concurrency: int = 1
     notes_timeout_seconds: float = 40.0
@@ -186,7 +186,7 @@ def load_settings(
         speech_rate_limit_per_minute=_get_int(env, "SPEECH_RATE_LIMIT_PER_MINUTE", 30),
         confidence_threshold=_get_float(env, "ANALYSIS_CONFIDENCE_THRESHOLD", 0.85),
         analysis_max_concurrency=_get_int(env, "ANALYSIS_MAX_CONCURRENCY", 2),
-        analysis_timeout_seconds=_get_float(env, "ANALYSIS_TIMEOUT_SECONDS", 20.0),
+        analysis_timeout_seconds=_get_float(env, "ANALYSIS_TIMEOUT_SECONDS", 12.0),
         analysis_max_output_tokens=_get_int(env, "ANALYSIS_MAX_OUTPUT_TOKENS", 4096),
         notes_max_concurrency=_get_int(env, "NOTES_MAX_CONCURRENCY", 1),
         notes_timeout_seconds=_get_float(env, "NOTES_TIMEOUT_SECONDS", 40.0),

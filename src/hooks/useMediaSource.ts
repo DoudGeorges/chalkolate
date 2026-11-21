@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  DisplaySurface,
+  SELF_CAPTURE_MESSAGE,
+  buildDisplayMediaOptions,
+  isLikelySelfCapture,
+} from '../lib/displayCapture'
 
 export type MediaSourceKind = 'none' | 'camera' | 'screen' | 'image' | 'video'
 
@@ -399,10 +405,16 @@ export function useMediaSource(options: UseMediaSourceOptions) {
             )
           }
         } else {
-          stream = await navigator.mediaDevices.getDisplayMedia({
-            video: true,
-            audio: false,
-          })
+          stream = await navigator.mediaDevices.getDisplayMedia(buildDisplayMediaOptions())
+          // Browsers ignoring selfBrowserSurface may still hand back this very tab/window,
+          // which would render the app recursively. Refuse it before it reaches the preview.
+          const track = stream.getVideoTracks()[0]
+          const surface = (track?.getSettings?.() as { displaySurface?: string } | undefined)
+            ?.displaySurface as DisplaySurface
+          if (track && isLikelySelfCapture(track.label, surface, document.title)) {
+            stopStreamTracks(stream)
+            throw new Error(SELF_CAPTURE_MESSAGE)
+          }
         }
       } catch (err) {
         if (seq !== requestSeqRef.current) return

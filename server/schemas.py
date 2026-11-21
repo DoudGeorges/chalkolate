@@ -20,6 +20,7 @@ MAX_CORRECTION_LATEX_LENGTH = 300
 MAX_SPOKEN_ALERT_LENGTH = 180
 MAX_EXPLANATION_LENGTH = 300
 MAX_SPEECH_TEXT_LENGTH = 240
+VOICE_KEY_PATTERN = r"^[A-Za-z0-9_-]{1,128}$"
 
 MAX_NOTES_CONTEXT_SECTIONS = 120
 MAX_NOTES_UPDATES = 8
@@ -349,6 +350,15 @@ class SpeechRequest(StrictModel):
         description="Plain-language spoken alert sentence to synthesize.",
     )
 
+    voice: str = Field(
+        default="default",
+        pattern=VOICE_KEY_PATTERN,
+        description=(
+            "'default' for the backend-configured voice, or an ElevenLabs voice ID listed by "
+            "/api/voices for this account."
+        ),
+    )
+
     @field_validator("text")
     @classmethod
     def _validate_text(cls, value: str) -> str:
@@ -492,6 +502,17 @@ class NotesResponse(StrictModel):
     lecture_title: str = Field(max_length=MAX_NOTES_TITLE_LENGTH)
     updates: list[NoteSectionUpdate] = Field(max_length=MAX_NOTES_UPDATES)
     latency_ms: int = Field(ge=0)
+class SpeechVoiceOption(StrictModel):
+    """Selectable ElevenLabs voice advertised to the client settings UI."""
+
+    id: str = Field(pattern=VOICE_KEY_PATTERN)
+    label: str = Field(min_length=1, max_length=80)
+
+
+class VoicesResponse(StrictModel):
+    """Voices available to the configured ElevenLabs account; 'default' is always first."""
+
+    voices: list[SpeechVoiceOption]
 
 
 class HealthResponse(StrictModel):
