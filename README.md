@@ -64,15 +64,9 @@ npm install
 
 ### 2. Run locally in development
 
-<<<<<<< HEAD
-Terminal 1 (from the repository root or `backend/`):
-```bash
-./backend/.venv/Scripts/python.exe -m uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8000 --env-file .env
-=======
 Terminal 1 (from the repository root):
 ```bash
 uv --directory backend run uvicorn main:app --host 127.0.0.1 --port 8000 --env-file ../.env
->>>>>>> origin/main
 ```
 
 Terminal 2 (from `frontend/`):
@@ -82,8 +76,6 @@ npm run dev
 
 Open `http://localhost:5173`. Next.js rewrites `/api/*` requests to `http://127.0.0.1:8000` (override target via `CHALKOLATE_API_PROXY_TARGET`).
 
-<<<<<<< HEAD
-=======
 ### Deploying to Vercel
 
 The repository deploys as a single Vercel project using [Services](https://vercel.com/docs/services): the root `vercel.json` serves `frontend/` (Next.js) and `backend/` (FastAPI, `main:app`) and routes `/api/*` to the Python service, so the browser stays same-origin and the API keys never leave the server.
@@ -93,7 +85,6 @@ The repository deploys as a single Vercel project using [Services](https://verce
 3. The first request after an idle period pays a Python cold start (OpenCV and NumPy imports); the app's page-load `/api/health` call warms the function. Check the bundle size with `VERCEL_ANALYZE_BUILD_OUTPUT=1` if a deploy fails on size (Python limit: 500 MB uncompressed).
 4. The in-memory speech rate limiter and concurrency gates are per function instance, so on serverless they are best-effort. Add a Vercel WAF rate-limit rule for real abuse protection.
 
->>>>>>> origin/main
 ### 3. Using Chalkolate
 
 1. Select a source in the top bar: **Camera** (choose integrated webcam, external camera, or virtual camera), **Screen**, or **Upload** (lecture video or image).

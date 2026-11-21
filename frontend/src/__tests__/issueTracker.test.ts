@@ -14,10 +14,6 @@ import {
   deduplicateFindings,
   dismissIssue,
   getIssuesPendingRecheck,
-<<<<<<< HEAD
-  markIssueSpoken,
-=======
->>>>>>> origin/main
   normalizeDetectedText,
   reconcileAnalysis,
   requestVerification,
@@ -447,66 +443,4 @@ describe('Persistent session issue tracker', () => {
     )
     expect(originalIssue?.box_2d).toEqual([200, 100, 260, 260])
   })
-<<<<<<< HEAD
-
-  it('treats re-occurring mistakes after an edit resolution as fresh unspoken issues while preserving spoken state across unchanged flicker', () => {
-    const baseState = reconcileAnalysis(
-      createInitialTrackerState(),
-      [makeFinding({ detected_text: 'x^2 + 5 = 0', box_2d: [200, 200, 320, 460] })],
-      { sample: DUMMY_SAMPLE, classify: () => 'unchanged', relaxSpatial: false },
-    )
-    const firstId = baseState.newlyOpened[0]!.id
-    const spokenState = markIssueSpoken(baseState.nextState, firstId)
-
-    // Resolved by an actual board edit (changed region miss)
-    const resolvedByEdit = reconcileAnalysis(spokenState, [], {
-      sample: DUMMY_SAMPLE,
-      classify: () => 'changed',
-      relaxSpatial: false,
-    })
-    expect(resolvedByEdit.nextState.issues.find((i) => i.id === firstId)?.resolvedByEdit).toBe(true)
-
-    // Same mistake re-written later emits a brand-new ID with spoken=false in newlyOpened
-    const rewrittenLater = reconcileAnalysis(
-      resolvedByEdit.nextState,
-      [makeFinding({ detected_text: 'x^2 + 5 = 0', box_2d: [200, 200, 320, 460] })],
-      { sample: DUMMY_SAMPLE, classify: () => 'changed', relaxSpatial: false },
-    )
-    expect(rewrittenLater.newlyOpened).toHaveLength(1)
-    expect(rewrittenLater.newlyOpened[0]!.id).not.toBe(firstId)
-    expect(rewrittenLater.newlyOpened[0]!.spoken).toBe(false)
-
-    // Contrast: resolved silently after 2 unchanged misses -> re-appearing keeps ID & spoken=true
-    const unchangedBase = reconcileAnalysis(
-      createInitialTrackerState(),
-      [makeFinding({ detected_text: 'F = ma^2', box_2d: [500, 200, 620, 460] })],
-      { sample: DUMMY_SAMPLE, classify: () => 'unchanged', relaxSpatial: false },
-    )
-    const unchangedId = unchangedBase.newlyOpened[0]!.id
-    const spokenUnchanged = markIssueSpoken(unchangedBase.nextState, unchangedId)
-    const miss1 = reconcileAnalysis(spokenUnchanged, [], {
-      sample: DUMMY_SAMPLE,
-      classify: () => 'unchanged',
-      relaxSpatial: false,
-    })
-    const miss2 = reconcileAnalysis(miss1.nextState, [], {
-      sample: DUMMY_SAMPLE,
-      classify: () => 'unchanged',
-      relaxSpatial: false,
-    })
-    expect(miss2.nextState.issues.find((i) => i.id === unchangedId)?.status).toBe('resolved')
-    expect(miss2.nextState.issues.find((i) => i.id === unchangedId)?.resolvedByEdit).toBe(false)
-
-    const reappeared = reconcileAnalysis(
-      miss2.nextState,
-      [makeFinding({ detected_text: 'F = ma^2', box_2d: [500, 200, 620, 460] })],
-      { sample: DUMMY_SAMPLE, classify: () => 'unchanged', relaxSpatial: false },
-    )
-    expect(reappeared.newlyOpened).toHaveLength(0)
-    const sameIssue = reappeared.nextState.issues.find((i) => i.id === unchangedId)
-    expect(sameIssue?.status).toBe('open')
-    expect(sameIssue?.spoken).toBe(true)
-  })
-=======
->>>>>>> origin/main
 })

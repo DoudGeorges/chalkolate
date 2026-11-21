@@ -1,21 +1,6 @@
 import { z } from 'zod'
 
-<<<<<<< HEAD
-export const ErrorCategorySchema = z.enum([
-  'math',
-  'physics',
-  'chemistry',
-  'engineering',
-  'code',
-  'logic',
-  'concept',
-  'notation',
-  'grammar',
-  'spelling',
-])
-=======
 export const ErrorCategorySchema = z.enum(['math', 'physics', 'spelling'])
->>>>>>> origin/main
 export type ErrorCategory = z.infer<typeof ErrorCategorySchema>
 
 export const CornerPointSchema = z.tuple([

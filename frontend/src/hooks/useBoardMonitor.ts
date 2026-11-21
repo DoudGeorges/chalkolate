@@ -10,10 +10,6 @@ import {
   RegionStatus,
   classifyRegion,
   createDetectorState,
-<<<<<<< HEAD
-  hasSettledChangesFromBaseline,
-=======
->>>>>>> origin/main
   isRegionCalm,
   updateDetector,
 } from '../lib/changeDetector'
@@ -294,21 +290,11 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
   const detectorStateRef = useRef<DetectorState>(createDetectorState())
   const baselineRef = useRef<GrayscaleSample | null>(null)
   const lastSampleRef = useRef<GrayscaleSample | null>(null)
-<<<<<<< HEAD
-  const prevActiveChangedTilesRef = useRef<number>(0)
-  const lastChangeGrowthAtRef = useRef<number>(0)
-=======
->>>>>>> origin/main
   const changeFirstSeenAtRef = useRef<number | null>(null)
   const lastSettledAtRef = useRef<number>(0)
   const backoffUntilMsRef = useRef<number | null>(null)
   const lastMovingFractionRef = useRef<number>(0)
   const lastPersistentCountRef = useRef<number>(0)
-<<<<<<< HEAD
-  const autoFollowUpTimerRef = useRef<number | null>(null)
-  const relaxSpatialOnNextCommitRef = useRef<boolean>(false)
-=======
->>>>>>> origin/main
 
   const quadMaskRef = useRef<{
     cornersKey: string
@@ -358,13 +344,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
 
   const abortInFlightAndClearPending = useCallback(() => {
     pendingIntentRef.current = null
-<<<<<<< HEAD
-    if (autoFollowUpTimerRef.current !== null) {
-      window.clearTimeout(autoFollowUpTimerRef.current)
-      autoFollowUpTimerRef.current = null
-    }
-=======
->>>>>>> origin/main
     const active = inFlightRef.current
     if (active) {
       inFlightRef.current = null
@@ -376,11 +355,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     detectorStateRef.current = createDetectorState()
     baselineRef.current = null
     lastSampleRef.current = null
-<<<<<<< HEAD
-    prevActiveChangedTilesRef.current = 0
-    lastChangeGrowthAtRef.current = 0
-=======
->>>>>>> origin/main
     changeFirstSeenAtRef.current = null
     backoffUntilMsRef.current = null
     lastMovingFractionRef.current = 0
@@ -389,10 +363,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
 
   const resetSession = useCallback(() => {
     sessionGenRef.current += 1
-<<<<<<< HEAD
-    relaxSpatialOnNextCommitRef.current = false
-=======
->>>>>>> origin/main
     abortInFlightAndClearPending()
     resetDetectionState()
     runtimeRef.current.onInvalidateSpeech?.()
@@ -408,12 +378,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     }
   }, [resetSession, sourceGeneration])
 
-<<<<<<< HEAD
-  // Committed calibration changes re-anchor detection and relax spatial matching once
-  // so active findings smoothly re-project without resetting spoken state or session history.
-=======
   // Committed calibration changes clear session tracking/summaries (old coordinates are invalid).
->>>>>>> origin/main
   const committedCornersKey = useMemo(
     () => JSON.stringify(committedCorners),
     [committedCorners],
@@ -422,17 +387,9 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
   useEffect(() => {
     if (prevCornersKeyRef.current !== committedCornersKey) {
       prevCornersKeyRef.current = committedCornersKey
-<<<<<<< HEAD
-      abortInFlightAndClearPending()
-      resetDetectionState()
-      relaxSpatialOnNextCommitRef.current = true
-    }
-  }, [abortInFlightAndClearPending, committedCornersKey, resetDetectionState])
-=======
       resetSession()
     }
   }, [committedCornersKey, resetSession])
->>>>>>> origin/main
 
   // Stop/Start and calibration edit transitions.
   useEffect(() => {
@@ -464,14 +421,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
       const snapshotPrevSummary = stateRef.current.boardSummary
       const snapshotRequestId = rt.deps.createUuid()
 
-<<<<<<< HEAD
-      if (autoFollowUpTimerRef.current !== null) {
-        window.clearTimeout(autoFollowUpTimerRef.current)
-        autoFollowUpTimerRef.current = null
-      }
-
-=======
->>>>>>> origin/main
       const abortController = new AbortController()
       inFlightRef.current = { seq, abortController }
       dispatch({ type: 'SET_PHASE', phase: 'ANALYZING' })
@@ -524,25 +473,12 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
           return
         }
 
-<<<<<<< HEAD
-        if (autoFollowUpTimerRef.current !== null) {
-          window.clearTimeout(autoFollowUpTimerRef.current)
-          autoFollowUpTimerRef.current = null
-        }
-
-=======
->>>>>>> origin/main
         const commitSample =
           dispatchSample ?? rt.deps.sampleFrame(rt.mediaSource, sampleCanvas)
         if (commitSample) {
           baselineRef.current = commitSample
-<<<<<<< HEAD
-          prevActiveChangedTilesRef.current = 0
-        }
-=======
         }
         changeFirstSeenAtRef.current = null
->>>>>>> origin/main
         backoffUntilMsRef.current = null
         lastSettledAtRef.current = rt.deps.now()
 
@@ -550,28 +486,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
           ? getMaskForSample(snapshotCorners, commitSample)
           : null
 
-<<<<<<< HEAD
-        const latestSample = lastSampleRef.current
-        const hasSettledFollowUp =
-          latestSample !== null &&
-          commitSample !== null &&
-          latestSample !== commitSample &&
-          hasSettledChangesFromBaseline(
-            latestSample,
-            commitSample,
-            detectorStateRef.current.stillTicks,
-            mask,
-          )
-        if (hasSettledFollowUp) {
-          if (pendingIntentRef.current === null) {
-            pendingIntentRef.current = 'auto'
-          }
-        } else {
-          changeFirstSeenAtRef.current = null
-        }
-
-=======
->>>>>>> origin/main
         const classifyIssueRegion = (issue: TrackedIssue): RegionStatus => {
           if (!commitSample) return 'obscured'
           const atDispatch = classifyRegion(
@@ -602,21 +516,12 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
           return 'obscured'
         }
 
-<<<<<<< HEAD
-        const relaxSpatial = relaxSpatialOnNextCommitRef.current
-        relaxSpatialOnNextCommitRef.current = false
-=======
->>>>>>> origin/main
         const reconciled = reconcileAnalysis(stateRef.current.tracker, response.errors, {
           sample:
             commitSample ??
             ({ width: 1, height: 1, data: new Uint8Array(1) } as GrayscaleSample),
           classify: classifyIssueRegion,
-<<<<<<< HEAD
-          relaxSpatial,
-=======
           relaxSpatial: false,
->>>>>>> origin/main
         })
 
         dispatch({
@@ -683,31 +588,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
         window.clearTimeout(deadlineTimer)
         if (inFlightRef.current?.seq === seq) {
           inFlightRef.current = null
-<<<<<<< HEAD
-          const rtLatest = runtimeRef.current
-          if (rtLatest.monitoring && !rtLatest.calibrationEditing) {
-            if (pendingIntentRef.current === 'manual') {
-              pendingIntentRef.current = null
-              queueMicrotask(() => {
-                void dispatchAnalysisRef.current?.()
-              })
-            } else if (
-              pendingIntentRef.current === 'auto' &&
-              backoffUntilMsRef.current === null
-            ) {
-              pendingIntentRef.current = null
-              if (autoFollowUpTimerRef.current !== null) {
-                window.clearTimeout(autoFollowUpTimerRef.current)
-              }
-              autoFollowUpTimerRef.current = window.setTimeout(() => {
-                autoFollowUpTimerRef.current = null
-                void dispatchAnalysisRef.current?.()
-              }, 60)
-            } else if (!settledPhaseHandled) {
-              dispatch({ type: 'SET_PHASE', phase: 'WATCHING' })
-            }
-          } else if (!settledPhaseHandled && rtLatest.monitoring) {
-=======
           if (
             runtimeRef.current.monitoring &&
             !runtimeRef.current.calibrationEditing &&
@@ -718,7 +598,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
               void dispatchAnalysisRef.current?.()
             })
           } else if (!settledPhaseHandled && runtimeRef.current.monitoring) {
->>>>>>> origin/main
             dispatch({ type: 'SET_PHASE', phase: 'WATCHING' })
           }
         }
@@ -759,27 +638,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     lastMovingFractionRef.current = det.movingFraction
     lastPersistentCountRef.current = det.persistentChangedTiles
 
-<<<<<<< HEAD
-    if (det.activeChangedTiles > prevActiveChangedTilesRef.current) {
-      lastChangeGrowthAtRef.current = nowMs
-    }
-    prevActiveChangedTilesRef.current = det.activeChangedTiles
-
-    const hasActiveChange =
-      det.activeChangedTiles > 0 ||
-      det.persistentChangedTiles > 0 ||
-      pendingIntentRef.current === 'auto'
-
-    if (hasActiveChange) {
-      if (changeFirstSeenAtRef.current === null) {
-        changeFirstSeenAtRef.current = nowMs
-      }
-    } else if (inFlightRef.current === null) {
-      changeFirstSeenAtRef.current = null
-    }
-
-=======
->>>>>>> origin/main
     if (inFlightRef.current !== null) {
       return
     }
@@ -806,9 +664,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
       return
     }
 
-<<<<<<< HEAD
-    if (hasActiveChange) {
-=======
     const hasActiveChange =
       det.activeChangedTiles > 0 ||
       det.persistentChangedTiles > 0 ||
@@ -818,25 +673,13 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
       if (changeFirstSeenAtRef.current === null) {
         changeFirstSeenAtRef.current = nowMs
       }
->>>>>>> origin/main
       const hasPersistentChange =
         det.persistentChangedTiles > 0 || pendingIntentRef.current === 'auto'
 
       if (hasPersistentChange) {
-<<<<<<< HEAD
-        const changeAgeMs =
-          changeFirstSeenAtRef.current !== null ? nowMs - changeFirstSeenAtRef.current : 0
-        const calmEnough =
-          !det.writingInChangedZone && det.movingFraction <= CALM_MOVING_FRACTION
-        const growthPaused = nowMs - lastChangeGrowthAtRef.current >= SAMPLE_INTERVAL_MS
-        const waitedMax =
-          changeAgeMs >= MAX_CHANGE_WAIT_MS &&
-          (growthPaused || det.movingFraction <= CALM_MOVING_FRACTION)
-=======
         const changeAgeMs = nowMs - changeFirstSeenAtRef.current
         const calmEnough = det.movingFraction <= CALM_MOVING_FRACTION
         const waitedMax = changeAgeMs >= MAX_CHANGE_WAIT_MS
->>>>>>> origin/main
 
         if ((calmEnough || waitedMax) && gapElapsed && !inBackoff) {
           pendingIntentRef.current = null
@@ -848,11 +691,8 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
       return
     }
 
-<<<<<<< HEAD
-=======
     changeFirstSeenAtRef.current = null
 
->>>>>>> origin/main
     // Quiet verification recheck: if an open finding was absent on the previous check
     // (either awaiting a second unchanged miss or previously obscured by motion), dispatch
     // one follow-up verification once its region is calm so fixed errors resolve automatically.

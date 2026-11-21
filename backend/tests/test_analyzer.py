@@ -126,25 +126,6 @@ async def test_analyze_thinking_level_config_and_confidence_filtering() -> None:
                         "confidence": 0.92,
                     },
                     {
-<<<<<<< HEAD
-                        "category": "concept",
-                        "detected_text": "Entropy decreases in isolated systems",
-                        "correction_text": "Entropy never decreases in isolated systems",
-                        "correction_latex": None,
-                        "spoken_alert": (
-                            "In the thermodynamic note, entropy cannot decrease in an isolated "
-                            "system."
-                        ),
-                        "explanation": (
-                            "In the note, state that entropy stays constant or increases in "
-                            "isolated systems."
-                        ),
-                        "box_2d": [210, 100, 290, 600],
-                        "confidence": 0.78,
-                    },
-                    {
-=======
->>>>>>> origin/main
                         "category": "spelling",
                         "detected_text": "Derivitive",
                         "correction_text": "Derivative",
@@ -169,17 +150,9 @@ async def test_analyze_thinking_level_config_and_confidence_filtering() -> None:
     )
     res = await analyze_board_image(client, prepared, meta, settings)
     assert res.board_summary == "Derivative on chalkboard"
-<<<<<<< HEAD
-    # Substantive errors use relaxed cutoff (0.85 - 0.12 = 0.73), while spelling/grammar
-    # keep full 0.85 threshold (so 0.84 spelling is filtered out while 0.78 concept stays).
-    assert len(res.errors) == 2
-    assert res.errors[0].detected_text == "d/dx(x^3) = 2x^2"
-    assert res.errors[1].category == "concept"
-=======
     # Confidence below 0.85 is filtered out
     assert len(res.errors) == 1
     assert res.errors[0].detected_text == "d/dx(x^3) = 2x^2"
->>>>>>> origin/main
 
     call0 = client.aio.models.calls[0]
     assert call0.model == "gemini-3.8-flash"

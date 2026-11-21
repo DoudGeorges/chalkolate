@@ -300,11 +300,7 @@ describe('useSpeechAlerts', () => {
     vi.useRealTimers()
   })
 
-<<<<<<< HEAD
-  it('cancels unstarted or explicitly canceled speech while letting already-started speech finish cleanly', async () => {
-=======
   it('cancels queued and active speech immediately when an issue is resolved via syncActiveIssueIds', async () => {
->>>>>>> origin/main
     makeFakeBrowserSpeech()
     const signals: AbortSignal[] = []
     let rejectedCount = 0
@@ -316,13 +312,7 @@ describe('useSpeechAlerts', () => {
           requestSpeech: async () => new Response('audio', { status: 200 }),
           playAudio: (_res, { signal, onStart }) => {
             signals.push(signal)
-<<<<<<< HEAD
-            if (signals.length >= 2) {
-              onStart()
-            }
-=======
             onStart()
->>>>>>> origin/main
             return new Promise<void>((_resolve, reject) => {
               signal.addEventListener('abort', () => {
                 rejectedCount += 1
@@ -334,30 +324,18 @@ describe('useSpeechAlerts', () => {
       }),
     )
 
-<<<<<<< HEAD
-    // Queue issue X (still buffering / unstarted) and issue Y, Z (waiting in queue)
-=======
     // Queue issue X (becomes active) and issue Y (waiting in queue)
->>>>>>> origin/main
     await act(async () => {
       result.current.enqueueAutoAlerts([
         { id: 'X', spoken_alert: 'First alert.' },
         { id: 'Y', spoken_alert: 'Second alert.' },
-<<<<<<< HEAD
-        { id: 'Z', spoken_alert: 'Third alert.' },
-=======
->>>>>>> origin/main
       ])
       await Promise.resolve()
     })
     expect(signals).toHaveLength(1)
     expect(signals[0]?.aborted).toBe(false)
 
-<<<<<<< HEAD
-    // Unstarted X resolves and Z resolves while Y stays open -> X aborts, Z pruned, Y starts & fires onStart
-=======
     // Issue X resolves (syncActiveIssueIds only contains Y) -> X is cancelled, queue advances to Y
->>>>>>> origin/main
     await act(async () => {
       result.current.syncActiveIssueIds(new Set(['Y']))
       await Promise.resolve()
@@ -368,148 +346,14 @@ describe('useSpeechAlerts', () => {
     expect(signals).toHaveLength(2)
     expect(signals[1]?.aborted).toBe(false)
 
-<<<<<<< HEAD
-    // Already-started Y is NOT cut off mid-sentence by syncActiveIssueIds
-=======
->>>>>>> origin/main
     await act(async () => {
       result.current.syncActiveIssueIds(new Set())
       await Promise.resolve()
     })
-<<<<<<< HEAD
-    expect(signals[1]?.aborted).toBe(false)
-
-    // Explicit cancelIssue('Y') immediately aborts already-started Y
-    await act(async () => {
-      result.current.cancelIssue('Y')
-      await Promise.resolve()
-    })
-=======
->>>>>>> origin/main
     expect(signals[1]?.aborted).toBe(true)
     expect(result.current.isSpeaking).toBe(false)
   })
 
-<<<<<<< HEAD
-  it('recovers mid-utterance ElevenLabs errors via browser fallback and only marks spoken on completion', async () => {
-    const { spokenQueue } = makeFakeBrowserSpeech()
-    const startedIds: string[] = []
-    const completedIds: string[] = []
-
-    const { result } = renderHook(() =>
-      useSpeechAlerts({
-        elevenLabsConfigured: true,
-        onUtteranceStarted: (id) => startedIds.push(id),
-        onUtteranceCompleted: (id) => completedIds.push(id),
-        deps: {
-          requestSpeech: async () => new Response('audio', { status: 200 }),
-          playAudio: async (_res, { onStart }) => {
-            onStart()
-            throw new Error('Mid-stream MSE decode error')
-          },
-        },
-      }),
-    )
-
-    await act(async () => {
-      result.current.enqueueAutoAlerts([{ id: 'A', spoken_alert: 'Check derivative.' }])
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-
-    // ElevenLabs invoked onStart then failed -> not completed yet, browser fallback speaks
-    expect(startedIds).toEqual(['A'])
-    expect(completedIds).toEqual([])
-    expect(spokenQueue).toHaveLength(1)
-
-    // Interrupting browser fallback before onend leaves A eligible on next enqueue
-    act(() => {
-      spokenQueue[0]?.onstart?.()
-      result.current.cancelAll()
-    })
-    expect(completedIds).toEqual([])
-
-    act(() => {
-      result.current.enqueueAutoAlerts([{ id: 'A', spoken_alert: 'Check derivative.' }])
-    })
-    expect(spokenQueue).toHaveLength(2)
-
-    act(() => {
-      spokenQueue[1]?.onstart?.()
-      spokenQueue[1]?.onend?.()
-    })
-    expect(completedIds).toEqual(['A'])
-
-    // Once completed cleanly, auto-alerts do not repeat A
-    act(() => {
-      result.current.enqueueAutoAlerts([{ id: 'A', spoken_alert: 'Check derivative.' }])
-    })
-    expect(spokenQueue).toHaveLength(2)
-  })
-
-  it('cancelIssue cancels only the dismissed card without halting queued peers', async () => {
-    makeFakeBrowserSpeech()
-    const completedIds: string[] = []
-    const abortedFor: string[] = []
-    let activeId = ''
-    let resolveCurrent: (() => void) | null = null
-
-    const { result } = renderHook(() =>
-      useSpeechAlerts({
-        elevenLabsConfigured: true,
-        onUtteranceCompleted: (id) => completedIds.push(id),
-        deps: {
-          requestSpeech: async () => new Response('audio', { status: 200 }),
-          playAudio: (_res, { signal, onStart }) => {
-            const capturedId = activeId
-            onStart()
-            return new Promise<void>((resolve, reject) => {
-              resolveCurrent = resolve
-              signal.addEventListener('abort', () => {
-                abortedFor.push(capturedId)
-                reject(new DOMException('Aborted', 'AbortError'))
-              })
-            })
-          },
-        },
-      }),
-    )
-
-    activeId = 'A'
-    await act(async () => {
-      result.current.enqueueAutoAlerts([
-        { id: 'A', spoken_alert: 'First alert.' },
-        { id: 'B', spoken_alert: 'Second alert.' },
-        { id: 'C', spoken_alert: 'Third alert.' },
-      ])
-      await Promise.resolve()
-    })
-
-    // Dismiss queued B -> A continues speaking untouched
-    act(() => {
-      result.current.cancelIssue('B')
-    })
-    expect(abortedFor).toEqual([])
-
-    // Finish A cleanly -> skips B and advances directly to C
-    activeId = 'C'
-    await act(async () => {
-      resolveCurrent?.()
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(completedIds).toEqual(['A'])
-
-    await act(async () => {
-      resolveCurrent?.()
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(completedIds).toEqual(['A', 'C'])
-  })
-
-=======
->>>>>>> origin/main
   it('retains browser-only cancellation, error, and unmount cleanup guarantees', () => {
     const { spokenQueue, cancelMock } = makeFakeBrowserSpeech()
     const startedIds: string[] = []
