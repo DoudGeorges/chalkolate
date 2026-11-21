@@ -5,15 +5,18 @@ import { NotesDocument, renderNotesBodyHtml } from '../lib/notes'
 
 export interface NotesPanelProps {
   open: boolean
-  recording: boolean
+  /** Notes are being built automatically right now (source live and not paused). */
+  active: boolean
+  paused: boolean
   mediaReady: boolean
   phase: NotesPhase
   error: string | null
   notes: NotesDocument
   onToggleOpen: () => void
-  onToggleRecording: () => void
+  onTogglePaused: () => void
   onSnapshotNow: () => void
   onExportMarkdown: () => void
+  onExportLatex: () => void
   onExportPrint: () => void
   onClear: () => void
 }
@@ -31,15 +34,17 @@ function NoteBody({ markdown }: { markdown: string }) {
 
 export function NotesPanel({
   open,
-  recording,
+  active,
+  paused,
   mediaReady,
   phase,
   error,
   notes,
   onToggleOpen,
-  onToggleRecording,
+  onTogglePaused,
   onSnapshotNow,
   onExportMarkdown,
+  onExportLatex,
   onExportPrint,
   onClear,
 }: NotesPanelProps) {
@@ -47,9 +52,11 @@ export function NotesPanel({
   const status =
     phase === 'building'
       ? 'Updating notes…'
-      : recording
-        ? 'Recording — notes update when the board settles'
-        : 'Not recording'
+      : paused
+        ? 'Paused'
+        : active
+          ? 'Automatic — notes update as the board settles'
+          : 'Waiting for a camera, screen, or video'
 
   return (
     <>
@@ -62,7 +69,7 @@ export function NotesPanel({
       >
         <FileText className="h-3.5 w-3.5" aria-hidden />
         Notes{count > 0 ? ` (${count})` : ''}
-        {recording && <span className="h-1.5 w-1.5 rounded-full bg-rose-500" aria-hidden />}
+        {active && <span className="h-1.5 w-1.5 rounded-full bg-rose-500" aria-hidden />}
       </button>
 
       {open && (
@@ -87,11 +94,10 @@ export function NotesPanel({
           <div className="flex flex-wrap items-center gap-2 border-b border-zinc-800 px-3 py-2 text-xs">
             <button
               type="button"
-              onClick={onToggleRecording}
-              disabled={!mediaReady && !recording}
+              onClick={onTogglePaused}
               className="rounded border border-zinc-700 px-2 py-1 text-zinc-100 hover:bg-zinc-800 disabled:opacity-40"
             >
-              {recording ? 'Stop notes' : 'Record notes'}
+              {paused ? 'Resume notes' : 'Pause notes'}
             </button>
             <button
               type="button"
@@ -115,8 +121,8 @@ export function NotesPanel({
           <div className="flex-1 space-y-5 overflow-y-auto px-3 py-3">
             {count === 0 ? (
               <p className="text-sm text-zinc-500">
-                No notes yet. Start recording and the board will be turned into shareable notes
-                as you write.
+                No notes yet. Notes build automatically once a camera, screen, or video is
+                live.
               </p>
             ) : (
               notes.sections.map((section) => (
@@ -143,6 +149,14 @@ export function NotesPanel({
               className="flex items-center gap-1 rounded border border-zinc-700 px-2 py-1 text-zinc-100 hover:bg-zinc-800 disabled:opacity-40"
             >
               <Download className="h-3 w-3" aria-hidden /> Export Markdown
+            </button>
+            <button
+              type="button"
+              onClick={onExportLatex}
+              disabled={count === 0}
+              className="flex items-center gap-1 rounded border border-zinc-700 px-2 py-1 text-zinc-100 hover:bg-zinc-800 disabled:opacity-40"
+            >
+              <Download className="h-3 w-3" aria-hidden /> LaTeX
             </button>
             <button
               type="button"

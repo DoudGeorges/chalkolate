@@ -14,6 +14,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { MediaSourceKind, VideoDeviceOption } from '../hooks/useMediaSource'
+import { AnswerFormat } from '../api/schemas'
 import { AlertMode } from '../lib/categoryColors'
 
 export interface TopBarProps {
@@ -28,7 +29,15 @@ export interface TopBarProps {
   onToggleMonitoring: () => void
   alertMode: AlertMode
   onChangeAlertMode: (mode: AlertMode) => void
+  answerFormat?: AnswerFormat
+  onChangeAnswerFormat?: (format: AnswerFormat) => void
 }
+
+const ANSWER_FORMAT_OPTIONS: ReadonlyArray<{ id: AnswerFormat; label: string; example: string }> = [
+  { id: 'exact', label: 'Exact', example: '√2/2' },
+  { id: 'fraction', label: 'Fractions', example: '3/8' },
+  { id: 'decimal3', label: '3 decimals', example: '0.375' },
+]
 
 const ALERT_MODE_OPTIONS: ReadonlyArray<{
   id: AlertMode
@@ -68,6 +77,8 @@ export function TopBar({
   onToggleMonitoring,
   alertMode,
   onChangeAlertMode,
+  answerFormat = 'exact',
+  onChangeAnswerFormat,
 }: TopBarProps) {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const cameraMenuRef = useRef<HTMLDivElement | null>(null)
@@ -369,6 +380,35 @@ export function TopBar({
                     )
                   })}
                 </div>
+
+                <span className="block pt-1.5 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+                  Answer format
+                </span>
+                <div role="radiogroup" aria-label="Answer format" className="grid grid-cols-3 gap-1.5">
+                  {ANSWER_FORMAT_OPTIONS.map((option) => {
+                    const selected = answerFormat === option.id
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={selected}
+                        onClick={() => onChangeAnswerFormat?.(option.id)}
+                        className={`rounded-lg border px-2 py-2 text-center transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
+                          selected
+                            ? 'border-accent/50 bg-accent/[0.08] text-zinc-100'
+                            : 'border-transparent bg-white/[0.02] text-zinc-300 hover:border-line hover:bg-white/[0.05]'
+                        }`}
+                      >
+                        <span className="block text-xs font-medium">{option.label}</span>
+                        <span className="block text-[11px] text-zinc-400">{option.example}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+                <p className="text-[11px] leading-snug text-zinc-500">
+                  How numbers are written in corrections. Lecture notes copy the board as written.
+                </p>
               </div>
             </div>
           )}

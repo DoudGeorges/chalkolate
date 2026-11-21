@@ -83,8 +83,12 @@ export const BoardDetectionResponseSchema = z
   .strict()
 export type BoardDetectionResponse = z.infer<typeof BoardDetectionResponseSchema>
 
+export const AnswerFormatSchema = z.enum(['exact', 'fraction', 'decimal3'])
+export type AnswerFormat = z.infer<typeof AnswerFormatSchema>
+
 export interface AnalysisMetadataPayload {
   request_id: string
+  answer_format: AnswerFormat
   previous_board_summary: string
   corners: CalibrationCorners | null
 }

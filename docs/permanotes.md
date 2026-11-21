@@ -9,8 +9,10 @@ Separate everything: `POST /api/notes` (own concurrency gate `notes_concurrency_
 timeout/token settings `NOTES_*`), own client hook `useNotesBuilder` (own 500 ms sampling loop,
 own detector state, own in-flight request). It reads the media element but shares no state,
 reducer, or request with `useBoardMonitor`, so a slow or failing notes call can never delay,
-abort, or alter a mistake check. Recording is its own opt-in toggle (off by default, like
-monitoring) so no frames are uploaded without a user action.
+abort, or alter a mistake check. Notes are **automatic and effortless**: they build as soon as a camera/screen/video source is
+live and the backend is configured, with no start step for the professor (unlike mistake
+monitoring, which is opt-in). A small Pause button is the only control; nothing calls
+`getUserMedia` on its own.
 
 ## When to snapshot (`src/lib/notesTrigger.ts`, pure and unit-tested)
 Not every frame. The board must be *calm* (≈1.5 s without motion) and then:
@@ -19,7 +21,7 @@ Not every frame. The board must be *calm* (≈1.5 s without motion) and then:
 - 1.5–4% differ (or too soon) → retain a **stable candidate** frame (refreshed ≤ every 5 s);
 - ≥12% of tiles differ from the stable candidate (erasure / scene change), ≥5 s since last
   send → **flush the candidate first**, so content is captured before it disappears;
-- on Stop, any unsent stable candidate is flushed. "Add board now" forces a snapshot.
+- on Pause, any unsent stable candidate is flushed. "Add board now" forces a snapshot.
 
 ## Incremental building (`server/notes.py`)
 Request: image (+ optional calibration corners) and JSON metadata holding the notes so far
@@ -43,7 +45,8 @@ if the box is null.
 Client-side `localStorage` (`chalkolate.permanotes.v1`, zod-validated on load; figures dropped
 first if quota is hit). Notes survive source changes and reloads; "Clear" empties them.
 Export: **Markdown** (self-contained, figures embedded as data URLs, math left as `$…$`) and
-**print HTML** (standalone, math as MathML via KaTeX so no CSS/fonts are needed; open and
+**LaTeX** (`.tex` article for Overleaf/pdflatex: math verbatim, text escaped, figures omitted
+since there are no external files), and **print HTML** (standalone, math as MathML via KaTeX so no CSS/fonts are needed; open and
 use the browser's Print → Save as PDF).
 
 ## Deliberately left out (v1)

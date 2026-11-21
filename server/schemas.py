@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ErrorCategory = Literal["math", "physics", "spelling"]
+AnswerFormat = Literal["exact", "fraction", "decimal3"]
 
 MAX_PREV_SUMMARY_LENGTH = 2000
 MAX_BOARD_SUMMARY_LENGTH = 600
@@ -85,6 +86,13 @@ class AnalysisMetadata(StrictModel):
         max_length=MAX_PREV_SUMMARY_LENGTH,
         description=(
             "Optional brief summary of the previous analyzed board state, up to 2,000 characters."
+        ),
+    )
+    answer_format: AnswerFormat = Field(
+        default="exact",
+        description=(
+            "How numeric values in corrections are written: exact (symbolic, e.g. sqrt(2)/2), "
+            "fraction (reduced fractions), or decimal3 (decimals rounded to 3 places)."
         ),
     )
     corners: list[tuple[float, float]] | None = Field(
