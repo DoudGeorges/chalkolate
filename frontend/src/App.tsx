@@ -10,6 +10,7 @@ import { VerificationResultSummary, useBoardMonitor } from './hooks/useBoardMoni
 import { useMediaSource } from './hooks/useMediaSource'
 import { useSpeechAlerts } from './hooks/useSpeechAlerts'
 import { AlertMode } from './lib/categoryColors'
+<<<<<<< HEAD
 import {
   CameraShiftState,
   createCameraShiftState,
@@ -17,6 +18,9 @@ import {
   isSignificantCornerShift,
 } from './lib/cameraShiftDetector'
 import { captureJpegBlob, sampleGrayscaleFrame } from './lib/frameCapture'
+=======
+import { captureJpegBlob } from './lib/frameCapture'
+>>>>>>> origin/main
 import { DEFAULT_CALIBRATION_CORNERS, validateCalibrationQuad } from './lib/geometry'
 import { TrackedIssue } from './lib/issueTracker'
 
@@ -37,6 +41,7 @@ export function App() {
   )
   const detectAbortRef = useRef<AbortController | null>(null)
   const userEditedDraftRef = useRef(false)
+<<<<<<< HEAD
   const [userEditedDraft, setUserEditedDraft] = useState(false)
   const calibrationCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const shiftCanvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -48,6 +53,9 @@ export function App() {
   committedCornersRef.current = committedCorners
   const calibrationEditingRef = useRef(false)
   calibrationEditingRef.current = calibrationEditing
+=======
+  const calibrationCanvasRef = useRef<HTMLCanvasElement | null>(null)
+>>>>>>> origin/main
 
   const [panelOpen, setPanelOpen] = useState(false)
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null)
@@ -63,6 +71,7 @@ export function App() {
     }
   }, [])
 
+<<<<<<< HEAD
   const abortShiftProbe = useCallback(() => {
     if (shiftProbeAbortRef.current) {
       shiftProbeAbortRef.current.abort()
@@ -71,6 +80,8 @@ export function App() {
     shiftProbeInFlightRef.current = false
   }, [])
 
+=======
+>>>>>>> origin/main
   const pushToast = useCallback(
     (toast: Omit<ToastItem, 'id'>, autoDismissMs = 4000) => {
       const id = `toast-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`
@@ -99,13 +110,20 @@ export function App() {
     const timers = toastTimersRef.current
     return () => {
       abortBoardDetection()
+<<<<<<< HEAD
       abortShiftProbe()
+=======
+>>>>>>> origin/main
       for (const timer of timers.values()) {
         window.clearTimeout(timer)
       }
       timers.clear()
     }
+<<<<<<< HEAD
   }, [abortBoardDetection, abortShiftProbe])
+=======
+  }, [abortBoardDetection])
+>>>>>>> origin/main
 
   useEffect(() => {
     const controller = new AbortController()
@@ -125,14 +143,22 @@ export function App() {
   const fallbackNoticeShownRef = useRef(false)
   const speech = useSpeechAlerts({
     elevenLabsConfigured: health?.speech_configured ?? false,
+<<<<<<< HEAD
     onUtteranceCompleted: (id) => markSpokenRef.current(id),
+=======
+    onUtteranceStarted: (id) => markSpokenRef.current(id),
+>>>>>>> origin/main
     onProviderFallback: (reason) => {
       if (fallbackNoticeShownRef.current) return
       fallbackNoticeShownRef.current = true
       pushToast({ message: `${reason} Using browser voice.`, tone: 'info' }, 6000)
     },
   })
+<<<<<<< HEAD
   const { enqueueAutoAlerts, syncActiveIssueIds } = speech
+=======
+  const { syncActiveIssueIds } = speech
+>>>>>>> origin/main
 
   const speechUnavailableNotifiedRef = useRef(false)
   useEffect(() => {
@@ -160,10 +186,13 @@ export function App() {
 
   const handleResetAllOnSourceChange = useCallback(() => {
     abortBoardDetection()
+<<<<<<< HEAD
     abortShiftProbe()
     cameraShiftStateRef.current = createCameraShiftState()
     userEditedDraftRef.current = false
     setUserEditedDraft(false)
+=======
+>>>>>>> origin/main
     setMonitoring(false)
     setCalibrationEditing(false)
     setCalibrationDetectStatus('idle')
@@ -172,16 +201,23 @@ export function App() {
     setSelectedIssueId(null)
     setHoveredIssueId(null)
     speech.resetHistory()
+<<<<<<< HEAD
   }, [abortBoardDetection, abortShiftProbe, speech])
+=======
+  }, [abortBoardDetection, speech])
+>>>>>>> origin/main
 
   const media = useMediaSource({
     onSourceReset: handleResetAllOnSourceChange,
     onGeometryChange: () => {
       abortBoardDetection()
+<<<<<<< HEAD
       abortShiftProbe()
       cameraShiftStateRef.current = createCameraShiftState()
       userEditedDraftRef.current = false
       setUserEditedDraft(false)
+=======
+>>>>>>> origin/main
       setCalibrationEditing(false)
       setCalibrationDetectStatus('idle')
       setCommittedCorners(null)
@@ -240,6 +276,7 @@ export function App() {
     [pushToast],
   )
 
+<<<<<<< HEAD
   // Keep active board monitoring running while a non-intrusive recalibration suggestion
   // sits on screen until the user begins dragging handles or commits the new crop.
   const monitorPausedForCalibration =
@@ -247,12 +284,18 @@ export function App() {
     (userEditedDraft ||
       (calibrationDetectStatus !== 'moved' && calibrationDetectStatus !== 'moved_uncertain'))
 
+=======
+>>>>>>> origin/main
   const monitor = useBoardMonitor({
     mediaSource: activeMediaElement,
     mediaReady: media.state.ready,
     sourceGeneration: media.state.sourceGeneration,
     monitoring,
+<<<<<<< HEAD
     calibrationEditing: monitorPausedForCalibration,
+=======
+    calibrationEditing,
+>>>>>>> origin/main
     committedCorners,
     onNewFindings: handleNewFindings,
     onInvalidateSpeech: speech.cancelAll,
@@ -287,6 +330,7 @@ export function App() {
     )
   }, [monitor.state.apiError, pushToast])
 
+<<<<<<< HEAD
   const resetCameraShiftAnchor = useCallback(
     (preserveCooldown = false) => {
       abortShiftProbe()
@@ -306,6 +350,8 @@ export function App() {
     [abortShiftProbe, media.state.kind, media.state.ready, media.videoElRef],
   )
 
+=======
+>>>>>>> origin/main
   const runAutomaticBoardDetection = useCallback(async () => {
     const mediaEl =
       media.state.kind === 'image' ? media.imageElRef.current : media.videoElRef.current
@@ -318,7 +364,10 @@ export function App() {
     const controller = new AbortController()
     detectAbortRef.current = controller
     userEditedDraftRef.current = false
+<<<<<<< HEAD
     setUserEditedDraft(false)
+=======
+>>>>>>> origin/main
     setCalibrationDetectStatus('detecting')
 
     try {
@@ -350,6 +399,7 @@ export function App() {
     }
   }, [abortBoardDetection, media.imageElRef, media.state.kind, media.state.ready, media.videoElRef])
 
+<<<<<<< HEAD
   // Auto-detect and present suggested board calibration once when a live camera becomes ready.
   useEffect(() => {
     if (
@@ -471,6 +521,8 @@ export function App() {
     media.videoElRef,
   ])
 
+=======
+>>>>>>> origin/main
   const handleToggleMonitoring = () => {
     if (!media.state.ready) return
     if (!monitoring) {
@@ -504,6 +556,7 @@ export function App() {
     syncActiveIssueIds(new Set(openIssues.map((item) => item.id)))
   }, [openIssues, syncActiveIssueIds])
 
+<<<<<<< HEAD
   // Ensure every valid open finding on screen that has not completed playback remains
   // eligible for speech (e.g., after interrupted audio or alert mode changes).
   useEffect(() => {
@@ -514,6 +567,8 @@ export function App() {
     }
   }, [alertMode, enqueueAutoAlerts, monitoring, openIssues])
 
+=======
+>>>>>>> origin/main
   const dismissedCount = monitor.state.tracker.dismissalHistoryIds.length
   const showVisualFindings = alertMode !== 'voice_only'
 
@@ -530,12 +585,17 @@ export function App() {
       abortBoardDetection()
       setCalibrationEditing(false)
       setCalibrationDetectStatus('idle')
+<<<<<<< HEAD
       userEditedDraftRef.current = false
       setUserEditedDraft(false)
       resetCameraShiftAnchor(true)
     } else {
       userEditedDraftRef.current = false
       setUserEditedDraft(false)
+=======
+    } else {
+      userEditedDraftRef.current = false
+>>>>>>> origin/main
       setDraftCorners(committedCorners ?? DEFAULT_CALIBRATION_CORNERS)
       setCalibrationEditing(true)
       if (!committedCorners) {
@@ -548,35 +608,53 @@ export function App() {
 
   const handleChangeDraftCorners = (next: CalibrationCorners) => {
     userEditedDraftRef.current = true
+<<<<<<< HEAD
     setUserEditedDraft(true)
+=======
+>>>>>>> origin/main
     setDraftCorners(next)
   }
 
   const handleApplyCalibration = () => {
     abortBoardDetection()
+<<<<<<< HEAD
     setCommittedCorners(draftCorners)
     setCalibrationEditing(false)
     setCalibrationDetectStatus('idle')
     userEditedDraftRef.current = false
     setUserEditedDraft(false)
     resetCameraShiftAnchor()
+=======
+    speech.resetHistory()
+    setCommittedCorners(draftCorners)
+    setCalibrationEditing(false)
+    setCalibrationDetectStatus('idle')
+>>>>>>> origin/main
   }
 
   const handleResetCrop = () => {
     abortBoardDetection()
+<<<<<<< HEAD
+=======
+    speech.resetHistory()
+>>>>>>> origin/main
     setCommittedCorners(null)
     setDraftCorners(DEFAULT_CALIBRATION_CORNERS)
     setCalibrationEditing(false)
     setCalibrationDetectStatus('idle')
+<<<<<<< HEAD
     userEditedDraftRef.current = false
     setUserEditedDraft(false)
     resetCameraShiftAnchor()
+=======
+>>>>>>> origin/main
   }
 
   const handleCancelCalibration = () => {
     abortBoardDetection()
     setCalibrationEditing(false)
     setCalibrationDetectStatus('idle')
+<<<<<<< HEAD
     userEditedDraftRef.current = false
     setUserEditedDraft(false)
     resetCameraShiftAnchor(true)
@@ -584,6 +662,12 @@ export function App() {
 
   const handleDismissIssue = (issueId: string) => {
     speech.cancelIssue(issueId)
+=======
+  }
+
+  const handleDismissIssue = (issueId: string) => {
+    speech.cancelAll()
+>>>>>>> origin/main
     if (selectedIssueId === issueId) {
       setSelectedIssueId(null)
     }
