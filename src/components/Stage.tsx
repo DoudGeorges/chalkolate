@@ -1,4 +1,4 @@
-import { Camera, Crop, MonitorUp, RefreshCw, Upload } from 'lucide-react'
+import { Camera, Crop, MonitorUp, Play, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { CalibrationCorners } from '../api/schemas'
 import { MonitorPhase } from '../hooks/useBoardMonitor'
@@ -35,8 +35,11 @@ export interface StageProps {
   onApplyCalibration: () => void
   onResetCrop: () => void
   onCancelCalibration: () => void
-  onCheckNow: () => void
   onUserVideoSeekOrRestart: () => void
+  /** Guided start shown when no source is chosen; falls back to plain source buttons. */
+  welcome?: React.ReactNode
+  /** Show a "press Start" hint once a source is ready but monitoring has not begun. */
+  startHint?: boolean
 }
 
 export function Stage({
@@ -65,8 +68,9 @@ export function Stage({
   onApplyCalibration,
   onResetCrop,
   onCancelCalibration,
-  onCheckNow,
   onUserVideoSeekOrRestart,
+  welcome,
+  startHint = false,
 }: StageProps) {
   const emptyFileRef = useRef<HTMLInputElement | null>(null)
   const [containerEl, setContainerEl] = useState<HTMLElement | null>(null)
@@ -129,28 +133,30 @@ export function Stage({
       tabIndex={mediaState.kind === 'video' ? 0 : undefined}
       onKeyDown={handleStageKeyDown}
       data-testid="board-stage"
-      className="relative flex-1 min-w-0 min-h-0 overflow-hidden bg-black focus:outline-none"
+      className="relative flex-1 min-w-0 min-h-0 overflow-hidden bg-zinc-100 focus:outline-none"
     >
-      {mediaState.kind === 'none' && (
+      {mediaState.kind === 'none' && welcome}
+
+      {mediaState.kind === 'none' && !welcome && (
         <div className="flex h-full flex-col items-center justify-center gap-5 px-6 text-center">
-          <p className="max-w-sm text-sm text-zinc-400">
+          <p className="max-w-sm text-sm text-zinc-500">
             Choose a camera, share a screen, or upload a lecture video
           </p>
           <div className="flex flex-wrap items-center justify-center gap-2">
             <button
               type="button"
               onClick={onStartCamera}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white/[0.04] px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-800 transition hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
             >
-              <Camera className="h-3.5 w-3.5 text-zinc-400" aria-hidden="true" />
+              <Camera className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" />
               Camera
             </button>
             <button
               type="button"
               onClick={onStartScreenShare}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white/[0.04] px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-800 transition hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
             >
-              <MonitorUp className="h-3.5 w-3.5 text-zinc-400" aria-hidden="true" />
+              <MonitorUp className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" />
               Screen
             </button>
             <input
@@ -167,12 +173,27 @@ export function Stage({
             <button
               type="button"
               onClick={() => emptyFileRef.current?.click()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white/[0.04] px-3 py-2 text-xs font-medium text-zinc-200 transition hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-800 transition hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
             >
-              <Upload className="h-3.5 w-3.5 text-zinc-400" aria-hidden="true" />
+              <Upload className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" />
               Upload
             </button>
           </div>
+        </div>
+      )}
+
+      {startHint && mediaState.kind !== 'none' && mediaState.ready && !monitoring && !calibrationEditing && (
+        <div
+          role="status"
+          className="pointer-events-none absolute top-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full border border-line bg-white px-3.5 py-1.5 text-xs text-zinc-700 shadow-md animate-pill-in"
+        >
+          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-accent text-white" aria-hidden="true">
+            <Play className="h-2 w-2 translate-x-px fill-current" />
+          </span>
+          <span>
+            Ready. Press <span className="font-semibold text-accent">Start</span> (top right) to
+            begin checking for mistakes.
+          </span>
         </div>
       )}
 
@@ -209,7 +230,7 @@ export function Stage({
           <polygon
             points={committedCorners.map(([x, y]) => `${x},${y}`).join(' ')}
             fill="none"
-            stroke="rgba(231, 178, 122, 0.35)"
+            stroke="rgba(24, 24, 27, 0.45)"
             strokeDasharray="6 6"
             strokeWidth={1.5}
             vectorEffect="non-scaling-stroke"
@@ -247,7 +268,7 @@ export function Stage({
         <div
           role="status"
           aria-live="polite"
-          className="pointer-events-none absolute bottom-4 left-4 z-20 inline-flex items-center gap-1.5 text-xs font-medium text-zinc-200/85 drop-shadow-[0_1px_4px_rgba(0,0,0,0.95)]"
+          className="pointer-events-none absolute bottom-4 left-4 z-20 inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 shadow-sm"
         >
           <span
             className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse"
@@ -272,36 +293,19 @@ export function Stage({
         </div>
       )}
 
-      {/* Bottom-right compact tool cluster (Crop + Check Now while monitoring) */}
+      {/* Bottom-right crop control */}
       {mediaState.ready && !calibrationEditing && (
-        <div className="absolute right-4 bottom-4 z-20 flex items-center gap-1 rounded-full border border-line bg-panel/90 p-1 shadow-lg backdrop-blur-xl">
-          <button
-            type="button"
-            onClick={onToggleCalibration}
-            title={committedCorners ? 'Recalibrate board crop' : 'Crop / calibrate board'}
-            aria-label={committedCorners ? 'Recalibrate board crop' : 'Crop board'}
-            className={`flex h-7 w-7 items-center justify-center rounded-full transition hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
-              committedCorners ? 'text-accent' : 'text-zinc-300 hover:text-zinc-100'
-            }`}
-          >
-            <Crop className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-
-          {monitoring && (
-            <button
-              type="button"
-              onClick={onCheckNow}
-              title="Check now"
-              aria-label="Check now"
-              className="flex h-7 w-7 items-center justify-center rounded-full text-zinc-300 transition hover:bg-white/10 hover:text-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-            >
-              <RefreshCw
-                className={`h-3.5 w-3.5 ${phase === 'ANALYZING' ? 'animate-spin text-accent' : ''}`}
-                aria-hidden="true"
-              />
-            </button>
-          )}
-        </div>
+        <button
+          type="button"
+          onClick={onToggleCalibration}
+          title={committedCorners ? 'Adjust the board crop' : 'Crop to just the board'}
+          className={`absolute right-4 bottom-4 z-20 inline-flex h-10 items-center gap-2 rounded-full border bg-white px-4 text-sm font-medium shadow-lg transition hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
+            committedCorners ? 'border-accent text-zinc-900' : 'border-line text-zinc-800'
+          }`}
+        >
+          <Crop className="h-4.5 w-4.5" aria-hidden="true" />
+          {committedCorners ? 'Adjust crop' : 'Crop board'}
+        </button>
       )}
     </main>
   )

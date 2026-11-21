@@ -24,19 +24,19 @@ export function Toasts({ toasts, onDismiss }: ToastsProps) {
       {toasts.slice(0, 3).map((toast) => {
         const ringTone =
           toast.tone === 'error'
-            ? 'border-rose-500/40 text-rose-100'
+            ? 'border-rose-200 text-rose-900'
             : toast.tone === 'success'
-              ? 'border-emerald-500/40 text-emerald-100'
-              : 'border-line text-zinc-100'
+              ? 'border-emerald-200 text-emerald-900'
+              : 'border-line text-zinc-900'
 
         return (
           <div
             key={toast.id}
             role={toast.tone === 'error' ? 'alert' : 'status'}
-            className={`pointer-events-auto flex w-full items-center gap-2.5 rounded-xl border bg-panel px-3.5 py-2.5 text-xs shadow-2xl backdrop-blur-xl animate-pill-in ${ringTone}`}
+            className={`pointer-events-auto flex w-full items-center gap-2.5 rounded-xl border bg-white px-3.5 py-2.5 text-xs shadow-lg animate-pill-in ${ringTone}`}
           >
             {toast.tone === 'error' && (
-              <AlertCircle className="h-3.5 w-3.5 shrink-0 text-rose-400" aria-hidden="true" />
+              <AlertCircle className="h-3.5 w-3.5 shrink-0 text-rose-600" aria-hidden="true" />
             )}
             <span className="flex-1 leading-snug">{toast.message}</span>
             {toast.actionLabel && toast.onAction && (
@@ -46,7 +46,7 @@ export function Toasts({ toasts, onDismiss }: ToastsProps) {
                   toast.onAction?.()
                   onDismiss(toast.id)
                 }}
-                className="inline-flex shrink-0 items-center gap-1 rounded-md bg-white/10 px-2 py-1 text-[11px] font-medium text-zinc-100 transition hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+                className="inline-flex shrink-0 items-center gap-1 rounded-md bg-zinc-100 px-2 py-1 text-[11px] font-medium text-zinc-900 transition hover:bg-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
               >
                 {toast.tone === 'error' && <RefreshCw className="h-3 w-3" aria-hidden="true" />}
                 {toast.actionLabel}
@@ -56,7 +56,7 @@ export function Toasts({ toasts, onDismiss }: ToastsProps) {
               type="button"
               aria-label="Dismiss notification"
               onClick={() => onDismiss(toast.id)}
-              className="rounded p-0.5 text-zinc-400 transition hover:text-zinc-100"
+              className="rounded p-0.5 text-zinc-500 transition hover:text-zinc-900"
             >
               <X className="h-3.5 w-3.5" aria-hidden="true" />
             </button>

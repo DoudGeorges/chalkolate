@@ -55,6 +55,21 @@ export const AnalysisResponseSchema = z
   .strict()
 export type AnalysisResponse = z.infer<typeof AnalysisResponseSchema>
 
+export const SpeechVoiceOptionSchema = z
+  .object({
+    id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+    label: z.string().min(1).max(80),
+  })
+  .strict()
+export type SpeechVoiceOption = z.infer<typeof SpeechVoiceOptionSchema>
+
+export const VoicesResponseSchema = z
+  .object({
+    voices: z.array(SpeechVoiceOptionSchema).max(250),
+  })
+  .strict()
+export type VoicesResponse = z.infer<typeof VoicesResponseSchema>
+
 export const HealthResponseSchema = z
   .object({
     status: z.literal('ok'),
