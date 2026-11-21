@@ -1,18 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { detectBoardCorners, fetchHealth } from './api/client'
-import { CalibrationCorners, HealthResponse } from './api/schemas'
+import { detectBoardCorners, fetchHealth, fetchVoices } from './api/client'
+import { CalibrationCorners, HealthResponse, SpeechVoiceOption } from './api/schemas'
 import { CalibrationDetectStatus } from './components/CalibrationOverlay'
-import { FindingsPanel } from './components/FindingsPanel'
+import { FindingsPanel, SidePanelTab } from './components/FindingsPanel'
+import { SettingsContent } from './components/SettingsContent'
 import { Stage } from './components/Stage'
+import { VoiceSettings } from './components/VoiceSettings'
+import { WelcomeGuide, WelcomeSource } from './components/WelcomeGuide'
 import { ToastItem, Toasts } from './components/Toasts'
 import { TopBar } from './components/TopBar'
 import { VerificationResultSummary, useBoardMonitor } from './hooks/useBoardMonitor'
 import { useMediaSource } from './hooks/useMediaSource'
 import { useSpeechAlerts } from './hooks/useSpeechAlerts'
 import { AlertMode } from './lib/categoryColors'
+import { parseVoiceLabel } from './lib/voiceLabels'
+import {
+  VoicePreferences,
+  loadVoicePreferences,
+  sanitizeVoicePreferences,
+  saveVoicePreferences,
+} from './lib/voicePreferences'
 import { captureJpegBlob } from './lib/frameCapture'
 import { DEFAULT_CALIBRATION_CORNERS, validateCalibrationQuad } from './lib/geometry'
 import { TrackedIssue } from './lib/issueTracker'
+
+const LAUNCH_TIMEOUT_MS = 60_000
 
 export function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
@@ -21,6 +33,18 @@ export function App() {
   // Monitoring is always stopped by default when the application opens.
   const [monitoring, setMonitoring] = useState(false)
   const [alertMode, setAlertMode] = useState<AlertMode>('voice_visual')
+  const [voicePreferences, setVoicePreferences] =
+    useState<VoicePreferences>(loadVoicePreferences)
+  const [elevenLabsVoices, setElevenLabsVoices] = useState<SpeechVoiceOption[]>([])
+  const [voicesError, setVoicesError] = useState<string | null>(null)
+
+  const handleChangeVoicePreferences = useCallback((patch: Partial<VoicePreferences>) => {
+    setVoicePreferences((prev) => {
+      const next = sanitizeVoicePreferences({ ...prev, ...patch })
+      saveVoicePreferences(next)
+      return next
+    })
+  }, [])
 
   const [calibrationEditing, setCalibrationEditing] = useState(false)
   const [calibrationDetectStatus, setCalibrationDetectStatus] =
@@ -33,7 +57,13 @@ export function App() {
   const userEditedDraftRef = useRef(false)
   const calibrationCanvasRef = useRef<HTMLCanvasElement | null>(null)
 
+  // One right-side panel hosts both Findings and Settings as tabs.
   const [panelOpen, setPanelOpen] = useState(false)
+  const [sidebarTab, setSidebarTab] = useState<SidePanelTab>('findings')
+  const openSettings = useCallback(() => {
+    setSidebarTab('settings')
+    setPanelOpen(true)
+  }, [])
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null)
   const [hoveredIssueId, setHoveredIssueId] = useState<string | null>(null)
   const [pulseBadge, setPulseBadge] = useState(false)
@@ -96,14 +126,61 @@ export function App() {
     return () => controller.abort()
   }, [])
 
+  // A saved voice the backend no longer offers falls back to the configured default.
+  const effectiveVoicePreferences = useMemo<VoicePreferences>(() => {
+    return elevenLabsVoices.some((v) => v.id === voicePreferences.elevenLabsVoice)
+      ? voicePreferences
+      : { ...voicePreferences, elevenLabsVoice: 'default' }
+  }, [elevenLabsVoices, voicePreferences])
+
+  const speechConfigured = health?.speech_configured ?? false
+  const [voicesLoading, setVoicesLoading] = useState(false)
+  const [voicesReloadKey, setVoicesReloadKey] = useState(0)
+  const retryVoices = useCallback(() => setVoicesReloadKey((k) => k + 1), [])
+
+  useEffect(() => {
+    if (!speechConfigured) {
+      setElevenLabsVoices([])
+      setVoicesError(null)
+      setVoicesLoading(false)
+      return
+    }
+    const controller = new AbortController()
+    setVoicesLoading(true)
+    setVoicesError(null)
+    fetchVoices(controller.signal)
+      .then((res) => {
+        setElevenLabsVoices(res.voices)
+        setVoicesError(null)
+      })
+      .catch((err) => {
+        if (err instanceof DOMException && err.name === 'AbortError') return
+        setVoicesError(
+          err instanceof Error && err.message
+            ? `Couldn't load voices: ${err.message}`
+            : "Couldn't load ElevenLabs voices.",
+        )
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setVoicesLoading(false)
+      })
+    return () => controller.abort()
+  }, [speechConfigured, voicesReloadKey])
+
+  const selectedVoiceName = useMemo(() => {
+    if (!speechConfigured) return 'Browser voice'
+    const option = elevenLabsVoices.find((v) => v.id === effectiveVoicePreferences.elevenLabsVoice)
+    return option ? parseVoiceLabel(option).name : 'Default voice'
+  }, [effectiveVoicePreferences.elevenLabsVoice, elevenLabsVoices, speechConfigured])
+
   const markSpokenRef = useRef<(id: string) => void>(() => {})
-  const fallbackNoticeShownRef = useRef(false)
   const speech = useSpeechAlerts({
     elevenLabsConfigured: health?.speech_configured ?? false,
+    preferences: effectiveVoicePreferences,
     onUtteranceStarted: (id) => markSpokenRef.current(id),
+    // The hook already deduplicates: once per session for account-wide failures and
+    // once per voice for voices the account cannot use.
     onProviderFallback: (reason) => {
-      if (fallbackNoticeShownRef.current) return
-      fallbackNoticeShownRef.current = true
       pushToast({ message: `${reason} Using browser voice.`, tone: 'info' }, 6000)
     },
   })
@@ -165,6 +242,58 @@ export function App() {
       pushToast({ message: media.state.error, tone: 'error' }, 5000)
     }
   }, [media.state.error, pushToast])
+
+  // The welcome guide's Start button opens the chosen source and then begins checking.
+  // Nothing is opened before that explicit click.
+  const [launchPending, setLaunchPending] = useState(false)
+  // Source generation and error at launch, so stale state from earlier attempts is ignored.
+  const launchBaselineRef = useRef({ generation: 0, error: null as string | null })
+  const handleWelcomeLaunch = useCallback(
+    (source: WelcomeSource, file?: File) => {
+      speech.unlockAudio()
+      launchBaselineRef.current = {
+        generation: media.state.sourceGeneration,
+        error: media.state.error,
+      }
+      setLaunchPending(true)
+      if (source === 'camera') void media.startCamera()
+      else if (source === 'screen') void media.startScreenShare()
+      else if (file) media.loadUploadedFile(file)
+    },
+    [media, speech],
+  )
+
+  useEffect(() => {
+    if (!launchPending) return
+    const baseline = launchBaselineRef.current
+    if (media.state.sourceGeneration !== baseline.generation) {
+      if (media.state.kind === 'none') {
+        // Permission denied or capture failed; the error toast explains why.
+        setLaunchPending(false)
+        return
+      }
+      if (media.state.ready) {
+        setLaunchPending(false)
+        setMonitoring(true)
+        return
+      }
+    } else if (media.state.error && media.state.error !== baseline.error) {
+      setLaunchPending(false)
+      return
+    }
+    // Give up if the permission prompt is dismissed without an error being reported.
+    const timer = window.setTimeout(() => setLaunchPending(false), LAUNCH_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [
+    launchPending,
+    media.state.error,
+    media.state.kind,
+    media.state.ready,
+    media.state.sourceGeneration,
+  ])
+
+  // Home screen: the welcome guide is the only path until a source is live.
+  const onboarding = media.state.kind === 'none'
 
   const activeMediaElement =
     media.state.kind === 'image' ? media.imageElRef.current : media.videoElRef.current
@@ -290,8 +419,18 @@ export function App() {
     }
   }, [abortBoardDetection, media.imageElRef, media.state.kind, media.state.ready, media.videoElRef])
 
+  // Back to the landing page: release the camera/screen/file. clearSource triggers the normal
+  // source reset, which stops monitoring and clears findings, calibration, and speech history.
+  const handleGoHome = () => {
+    speech.cancelAll()
+    setLaunchPending(false)
+    setPanelOpen(false)
+    media.clearSource()
+  }
+
   const handleToggleMonitoring = () => {
     if (!media.state.ready) return
+    setLaunchPending(false)
     if (!monitoring) {
       speech.unlockAudio()
     }
@@ -309,7 +448,9 @@ export function App() {
     if (mode === 'visual_only') {
       speech.cancelAll()
     }
-    if (mode === 'voice_only') {
+    // Voice only keeps a clean board: close Findings, but leave Settings open if the
+    // user is changing the mode from there.
+    if (mode === 'voice_only' && !(panelOpen && sidebarTab === 'settings')) {
       setPanelOpen(false)
     }
   }
@@ -325,10 +466,18 @@ export function App() {
 
   const dismissedCount = monitor.state.tracker.dismissalHistoryIds.length
   const showVisualFindings = alertMode !== 'voice_only'
+  const activeSidebarTab: SidePanelTab = showVisualFindings ? sidebarTab : 'settings'
+  const settingsOpen = panelOpen && activeSidebarTab === 'settings'
+
+  const handleToggleSettings = () => {
+    if (settingsOpen) setPanelOpen(false)
+    else openSettings()
+  }
 
   const handleSelectOverlayIssue = (issueId: string) => {
     setSelectedIssueId(issueId)
     if (showVisualFindings) {
+      setSidebarTab('findings')
       setPanelOpen(true)
     }
   }
@@ -397,25 +546,21 @@ export function App() {
     healthError !== null || (health !== null && !health.analysis_configured)
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-surface text-zinc-100">
+    <div className="flex h-screen flex-col overflow-hidden bg-surface text-zinc-900">
       <TopBar
-        mediaKind={media.state.kind}
         mediaReady={media.state.ready}
-        videoDevices={media.videoDevices}
-        selectedDeviceId={media.selectedDeviceId}
-        onStartCamera={(id) => void media.startCamera(id)}
-        onStartScreenShare={() => void media.startScreenShare()}
-        onUploadFile={media.loadUploadedFile}
         monitoring={monitoring}
         onToggleMonitoring={handleToggleMonitoring}
-        alertMode={alertMode}
-        onChangeAlertMode={handleChangeAlertMode}
+        settingsOpen={settingsOpen}
+        onToggleSettings={handleToggleSettings}
+        onboarding={onboarding}
+        onGoHome={handleGoHome}
       />
 
       {backendNeedsSetup && (
         <div
           role="alert"
-          className="flex items-center justify-center border-b border-amber-500/20 bg-amber-950/30 px-4 py-1.5 text-xs text-amber-200"
+          className="flex items-center justify-center border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-xs text-amber-800"
         >
           {healthError
             ? 'Backend unreachable — start the FastAPI server on port 8000.'
@@ -452,13 +597,75 @@ export function App() {
           onApplyCalibration={handleApplyCalibration}
           onResetCrop={handleResetCrop}
           onCancelCalibration={handleCancelCalibration}
-          onCheckNow={monitor.requestCheckNow}
           onUserVideoSeekOrRestart={monitor.handleVideoSeek}
+          startHint
+          welcome={
+            <WelcomeGuide
+              onLaunch={handleWelcomeLaunch}
+              launching={launchPending && media.state.kind === 'none'}
+              voiceName={alertMode === 'visual_only' ? null : selectedVoiceName}
+              talkativeness={effectiveVoicePreferences.talkativeness}
+              onChangeTalkativeness={(talkativeness) =>
+                handleChangeVoicePreferences({ talkativeness })
+              }
+              alertMode={alertMode}
+              onChangeAlertMode={handleChangeAlertMode}
+              onOpenSettings={openSettings}
+              onPreviewVoice={speech.isSupported ? () => speech.previewVoice() : undefined}
+              previewing={speech.previewingVoice !== null}
+              onStopPreview={speech.cancelAll}
+              renderVoiceMenu={(close) => (
+                <div className="space-y-3">
+                  <VoiceSettings
+                    voiceOnly
+                    preferences={effectiveVoicePreferences}
+                    onChange={handleChangeVoicePreferences}
+                    elevenLabsConfigured={speechConfigured}
+                    voices={elevenLabsVoices}
+                    voicesLoading={voicesLoading}
+                    voicesError={voicesError}
+                    onRetryVoices={retryVoices}
+                    previewingVoice={speech.previewingVoice}
+                    onPreviewVoice={speech.isSupported ? speech.previewVoice : undefined}
+                    onStopPreview={speech.cancelAll}
+                  />
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={close}
+                      className="inline-flex h-7 items-center rounded-md bg-accent px-3 text-[11px] font-semibold text-white transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2"
+                    >
+                      Done
+                    </button>
+                  </div>
+                </div>
+              )}
+            />
+          }
         />
 
-        {showVisualFindings && (
+        {!onboarding && (
           <FindingsPanel
             open={panelOpen}
+            tab={activeSidebarTab}
+            onChangeTab={setSidebarTab}
+            findingsEnabled={showVisualFindings}
+            settingsContent={
+              <SettingsContent
+                alertMode={alertMode}
+                onChangeAlertMode={handleChangeAlertMode}
+                voicePreferences={effectiveVoicePreferences}
+                onChangeVoicePreferences={handleChangeVoicePreferences}
+                elevenLabsConfigured={speechConfigured}
+                voices={elevenLabsVoices}
+                voicesLoading={voicesLoading}
+                voicesError={voicesError}
+                onRetryVoices={retryVoices}
+                previewingVoice={speech.previewingVoice}
+                onPreviewVoice={speech.isSupported ? speech.previewVoice : undefined}
+                onStopPreview={speech.cancelAll}
+              />
+            }
             monitoring={monitoring}
             onToggle={() => setPanelOpen((prev) => !prev)}
             onClose={() => setPanelOpen(false)}

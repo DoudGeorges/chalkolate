@@ -7,6 +7,8 @@ import {
   ErrorEnvelopeSchema,
   HealthResponse,
   HealthResponseSchema,
+  VoicesResponse,
+  VoicesResponseSchema,
 } from './schemas'
 
 export class ApiClientError extends Error {
@@ -114,6 +116,49 @@ export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse>
   if (!parsed.success) {
     throw new ApiClientError('Health response failed contract validation.', {
       code: 'INVALID_HEALTH_CONTRACT',
+      status: response.status,
+    })
+  }
+  return parsed.data
+}
+
+/** Lists the ElevenLabs voices available to the backend's account ('default' first). */
+export async function fetchVoices(signal?: AbortSignal): Promise<VoicesResponse> {
+  let response: Response
+  try {
+    response = await fetch('/api/voices', {
+      method: 'GET',
+      signal,
+      headers: { Accept: 'application/json' },
+    })
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw err
+    }
+    throw new ApiClientError('Unable to load ElevenLabs voices.', {
+      code: 'NETWORK_ERROR',
+      status: 0,
+    })
+  }
+
+  if (!response.ok) {
+    throw await parseErrorResponse(response)
+  }
+
+  let raw: unknown
+  try {
+    raw = await response.json()
+  } catch {
+    throw new ApiClientError('Voices endpoint returned malformed JSON.', {
+      code: 'MALFORMED_RESPONSE',
+      status: response.status,
+    })
+  }
+
+  const parsed = VoicesResponseSchema.safeParse(raw)
+  if (!parsed.success) {
+    throw new ApiClientError('Voices response failed contract validation.', {
+      code: 'INVALID_VOICES_CONTRACT',
       status: response.status,
     })
   }
@@ -229,10 +274,18 @@ export async function detectBoardCorners(
   return parsed.data
 }
 
+export interface SpeechStreamOptions {
+  /** ElevenLabs voice ID from /api/voices; omitted/'default' uses the configured voice. */
+  voice?: string
+}
+
 export async function requestSpeechStream(
   text: string,
   signal?: AbortSignal,
+  options: SpeechStreamOptions = {},
 ): Promise<Response> {
+  const body: { text: string; voice?: string } = { text }
+  if (options.voice && options.voice !== 'default') body.voice = options.voice
   let response: Response
   try {
     response = await fetch('/api/speech', {
@@ -241,7 +294,7 @@ export async function requestSpeechStream(
         'Content-Type': 'application/json',
         Accept: 'audio/mpeg',
       },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(body),
       signal,
     })
   } catch (err) {

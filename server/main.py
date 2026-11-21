@@ -42,17 +42,21 @@ from schemas import (
     HealthResponse,
     SourceSpaceDetectedError,
     SpeechRequest,
+    SpeechVoiceOption,
+    VoicesResponse,
 )
 from speech import (
+    DEFAULT_VOICE_KEY,
     SlidingWindowRateLimiter,
     SpeechAuthError,
     SpeechConfigError,
+    SpeechError,
     SpeechPlanError,
-    SpeechProviderError,
     SpeechQuotaError,
     SpeechRateLimitError,
     SpeechTimeoutError,
     SpeechUnavailableError,
+    VoiceCatalog,
     open_elevenlabs_speech_stream,
 )
 from vision import (
@@ -224,6 +228,41 @@ def _extract_request_id_best_effort(raw_metadata: str) -> str | None:
         return None
 
 
+def _speech_error_response(exc: SpeechError) -> JSONResponse:
+    """Map typed ElevenLabs failures to the shared error envelope without provider details."""
+    message = str(exc)
+    if isinstance(exc, SpeechConfigError):
+        return _error_response(status_code=503, code="SPEECH_NOT_CONFIGURED", message=message)
+    if isinstance(exc, SpeechAuthError):
+        return _error_response(status_code=502, code="SPEECH_AUTH_ERROR", message=message)
+    if isinstance(exc, SpeechQuotaError):
+        return _error_response(
+            status_code=503,
+            code="SPEECH_QUOTA_EXCEEDED",
+            message=message,
+            headers={"Retry-After": str(exc.retry_after_s or 60)},
+        )
+    if isinstance(exc, SpeechPlanError):
+        return _error_response(status_code=503, code="SPEECH_VOICE_PLAN_REQUIRED", message=message)
+    if isinstance(exc, SpeechRateLimitError):
+        return _error_response(
+            status_code=429,
+            code="SPEECH_RATE_LIMITED",
+            message=message,
+            headers={"Retry-After": str(exc.retry_after_s or 10)},
+        )
+    if isinstance(exc, SpeechTimeoutError):
+        return _error_response(status_code=504, code="SPEECH_TIMEOUT", message=message)
+    if isinstance(exc, SpeechUnavailableError):
+        return _error_response(
+            status_code=503,
+            code="SPEECH_UNAVAILABLE",
+            message=message,
+            headers={"Retry-After": str(exc.retry_after_s or 5)},
+        )
+    return _error_response(status_code=502, code="SPEECH_PROVIDER_ERROR", message=message)
+
+
 def _default_client_factory(settings: Settings) -> AsyncGenAIClient:
     return cast(AsyncGenAIClient, genai.Client(api_key=settings.gemini_api_key))
 
@@ -249,6 +288,7 @@ def create_app(
         resolved_settings.speech_rate_limit_per_minute,
         60.0,
     )
+    voice_catalog = VoiceCatalog()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -279,6 +319,7 @@ def create_app(
     app.state.settings = resolved_settings
     app.state.concurrency_gate = gate
     app.state.speech_concurrency_gate = speech_gate
+    app.state.voice_catalog = voice_catalog
 
     if resolved_settings.cors_allowed_origins:
         app.add_middleware(
@@ -392,6 +433,34 @@ def create_app(
             confidence=detected.confidence,
         )
 
+    @app.get("/api/voices", response_model=None)
+    async def get_voices(request: Request) -> VoicesResponse | JSONResponse:
+        speech_client = cast(
+            httpx.AsyncClient | None,
+            getattr(request.app.state, "speech_client", None),
+        )
+        if not resolved_settings.speech_configured or speech_client is None:
+            return _error_response(
+                status_code=503,
+                code="SPEECH_NOT_CONFIGURED",
+                message="ElevenLabs text-to-speech is not configured on the backend.",
+            )
+        try:
+            voices = await voice_catalog.get(speech_client, resolved_settings)
+        except SpeechError as exc:
+            return _speech_error_response(exc)
+
+        configured_id = resolved_settings.elevenlabs_voice_id.strip()
+        configured = next((v for v in voices if v.voice_id == configured_id), None)
+        default_label = f"Default: {configured.label}" if configured else "Default"
+        options = [SpeechVoiceOption(id=DEFAULT_VOICE_KEY, label=default_label[:80])]
+        options.extend(
+            SpeechVoiceOption(id=v.voice_id, label=v.label)
+            for v in voices
+            if v.voice_id != configured_id
+        )
+        return VoicesResponse(voices=options)
+
     @app.post("/api/speech", response_model=None)
     async def post_speech(
         request: Request,
@@ -435,54 +504,24 @@ def create_app(
                 speech_gate.release()
 
         try:
+            if payload.voice != DEFAULT_VOICE_KEY and not await voice_catalog.contains(
+                speech_client, resolved_settings, payload.voice
+            ):
+                release_once()
+                return _error_response(
+                    status_code=422,
+                    code="SPEECH_VOICE_UNAVAILABLE",
+                    message="Selected voice is not available on this ElevenLabs account.",
+                )
             opened = await open_elevenlabs_speech_stream(
                 speech_client,
                 payload.text,
                 resolved_settings,
+                voice=payload.voice,
             )
-        except SpeechConfigError as exc:
+        except SpeechError as exc:
             release_once()
-            return _error_response(status_code=503, code="SPEECH_NOT_CONFIGURED", message=str(exc))
-        except SpeechAuthError as exc:
-            release_once()
-            return _error_response(status_code=502, code="SPEECH_AUTH_ERROR", message=str(exc))
-        except SpeechQuotaError as exc:
-            release_once()
-            return _error_response(
-                status_code=503,
-                code="SPEECH_QUOTA_EXCEEDED",
-                message=str(exc),
-                headers={"Retry-After": str(exc.retry_after_s or 60)},
-            )
-        except SpeechPlanError as exc:
-            release_once()
-            return _error_response(
-                status_code=503,
-                code="SPEECH_VOICE_PLAN_REQUIRED",
-                message=str(exc),
-            )
-        except SpeechRateLimitError as exc:
-            release_once()
-            return _error_response(
-                status_code=429,
-                code="SPEECH_RATE_LIMITED",
-                message=str(exc),
-                headers={"Retry-After": str(exc.retry_after_s or 10)},
-            )
-        except SpeechTimeoutError as exc:
-            release_once()
-            return _error_response(status_code=504, code="SPEECH_TIMEOUT", message=str(exc))
-        except SpeechUnavailableError as exc:
-            release_once()
-            return _error_response(
-                status_code=503,
-                code="SPEECH_UNAVAILABLE",
-                message=str(exc),
-                headers={"Retry-After": str(exc.retry_after_s or 5)},
-            )
-        except SpeechProviderError as exc:
-            release_once()
-            return _error_response(status_code=502, code="SPEECH_PROVIDER_ERROR", message=str(exc))
+            return _speech_error_response(exc)
         except BaseException:
             release_once()
             raise
