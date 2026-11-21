@@ -63,6 +63,8 @@ The standalone [board detection lab](experiments/board-detect-lab.html) helps tu
 
 Keep the Next.js project at the repository root. Vercel routes /api requests to api/index.py, the FastAPI entrypoint. Configure provider keys as server environment variables. Set MAX_UPLOAD_BYTES=4194304 to leave room for multipart metadata within Vercel's default request limit. Match the analysis and notes deadlines to the platform's function duration.
 
+The Python function uses Vercel's Large Functions beta when its assembled image-processing bundle exceeds the standard limit. The build flag is set in vercel.json. Fluid Compute with Active CPU is required.
+
 Verify /api/health, /api/detect-board, /api/analyze, /api/notes, and /api/speech on a preview deployment. Health reports configured credentials without calling providers. Configure access controls or edge rate limits before exposing paid inference to untrusted traffic. The service's concurrency gates and speech limiter are per process.
 
 ## Team
