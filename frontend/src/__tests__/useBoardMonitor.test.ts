@@ -482,4 +482,63 @@ describe('useBoardMonitor near-real-time pipeline', () => {
 
     unmount()
   })
+
+  it('dispatches follow-up analysis quickly when new board writing settles while a request is in flight', async () => {
+    let clock = 40_000
+    let seq = 0
+    const base = makeSample(30)
+    let currentFrame = base
+    const pending: Array<{
+      meta: AnalysisMetadataPayload
+      resolve: (r: AnalysisResponse) => void
+    }> = []
+
+    const fakeSource = document.createElement('canvas')
+    renderHook(() =>
+      useBoardMonitor({
+        mediaSource: fakeSource,
+        mediaReady: true,
+        sourceGeneration: 1,
+        monitoring: true,
+        calibrationEditing: false,
+        committedCorners: null,
+        deps: {
+          now: () => clock,
+          createUuid: () => `00000000-0000-4000-8000-${String(++seq).padStart(12, '0')}`,
+          sampleFrame: () => currentFrame,
+          captureSnapshot: async () => ({ blob: new Blob(['jpg']), width: 1280, height: 720 }),
+          analyzeRequest: (_b, meta) =>
+            new Promise<AnalysisResponse>((resolve) => {
+              pending.push({ meta, resolve })
+            }),
+        },
+      }),
+    )
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(pending).toHaveLength(1)
+
+    // Write a settled stroke while request 1 is still in flight (>= STILL_TICKS_FOR_PERSISTENCE calm ticks).
+    currentFrame = drawBlock(base, 18, 18, 10, 8, 170)
+    for (let i = 0; i < 4; i++) {
+      act(() => {
+        clock += SAMPLE_INTERVAL_MS
+        vi.advanceTimersByTime(SAMPLE_INTERVAL_MS)
+      })
+    }
+    expect(pending).toHaveLength(1)
+
+    // Resolving request 1 schedules an immediate follow-up without waiting for a full gap/poll cycle.
+    await act(async () => {
+      pending[0]!.resolve(makeResponse(pending[0]!.meta.request_id, 'Initial empty'))
+      await Promise.resolve()
+      await Promise.resolve()
+      clock += 70
+      vi.advanceTimersByTime(70)
+      await Promise.resolve()
+    })
+    expect(pending).toHaveLength(2)
+  })
 })

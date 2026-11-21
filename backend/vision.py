@@ -260,7 +260,9 @@ def _auto_enhance(bgr: BGRImage) -> BGRImage:
     High-contrast frames (whiteboards/projected slides with crisp strokes) are returned
     unchanged using a fast strided luma check so normal boards pay minimal preprocessing cost.
     """
-    sample_bgr = bgr[::4, ::4] if bgr.shape[0] >= 16 and bgr.shape[1] >= 16 else bgr
+    sample_bgr = np.ascontiguousarray(
+        bgr[::4, ::4] if bgr.shape[0] >= 16 and bgr.shape[1] >= 16 else bgr
+    )
     sample_lab = cv2.cvtColor(sample_bgr, cv2.COLOR_BGR2LAB)
     if float(np.std(sample_lab[:, :, 0])) >= AUTO_ENHANCE_L_STD:
         return bgr
@@ -402,7 +404,7 @@ def _compute_uncalibrated_resize(
     else:
         model_w = src_width
         model_h = src_height
-        resized = bgr.copy()
+        resized = bgr
 
     sx = model_w / float(src_width)
     sy = model_h / float(src_height)
@@ -701,13 +703,13 @@ def _extract_hough_quads(
             angle = 180.0 - angle
 
         seg = (x1, y1, x2, y2)
-        if angle <= 20.0:
+        if angle <= 26.0:
             mid_y = 0.5 * (y1 + y2)
             if mid_y < half_h:
                 top_lines.append((length, seg))
             else:
                 bottom_lines.append((length, seg))
-        elif angle >= 70.0:
+        elif angle >= 64.0:
             mid_x = 0.5 * (x1 + x2)
             if mid_x < half_w:
                 left_lines.append((length, seg))

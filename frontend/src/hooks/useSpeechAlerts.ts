@@ -29,6 +29,7 @@ export const BROWSER_SPEECH_MAX_MS = 20_000
 export interface UseSpeechAlertsOptions {
   elevenLabsConfigured?: boolean
   onUtteranceStarted?: (issueId: string) => void
+  onUtteranceCompleted?: (issueId: string) => void
   onProviderFallback?: (reason: string) => void
   deps?: Partial<SpeechAlertDeps>
 }
@@ -43,6 +44,7 @@ interface ActivePlaybackControl {
   issueId: string
   gen: number
   provider: 'elevenlabs' | 'browser'
+  started: boolean
   cancel: () => void
 }
 
@@ -94,6 +96,7 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
   const {
     elevenLabsConfigured = false,
     onUtteranceStarted,
+    onUtteranceCompleted,
     onProviderFallback,
     deps: partialDeps,
   } = options
@@ -103,6 +106,8 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
 
   const onStartedRef = useRef(onUtteranceStarted)
   onStartedRef.current = onUtteranceStarted
+  const onCompletedRef = useRef(onUtteranceCompleted)
+  onCompletedRef.current = onUtteranceCompleted
 
   const onFallbackRef = useRef(onProviderFallback)
   onFallbackRef.current = onProviderFallback
@@ -201,6 +206,7 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
         let settled = false
         let startWatchdog: number | undefined
         let maxWatchdog: number | undefined
+        let keepAliveTimer: number | undefined
 
         const clearWatchdogs = () => {
           if (startWatchdog !== undefined) {
@@ -211,6 +217,10 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
             window.clearTimeout(maxWatchdog)
             maxWatchdog = undefined
           }
+          if (keepAliveTimer !== undefined) {
+            window.clearInterval(keepAliveTimer)
+            keepAliveTimer = undefined
+          }
         }
 
         const finish = () => {
@@ -218,6 +228,9 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
           settled = true
           clearWatchdogs()
           activeUtterancesRef.current.delete(utterance)
+          if (activeControlRef.current?.gen === gen && activeControlRef.current.issueId === item.id) {
+            activeControlRef.current = null
+          }
           resolve()
         }
 
@@ -226,6 +239,7 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
           issueId: item.id,
           gen,
           provider: 'browser',
+          started: false,
           cancel: () => {
             try {
               synth.cancel()
@@ -244,6 +258,7 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
             // Ignore stalled cancel error.
           }
           queuedIdsRef.current.delete(item.id)
+          startedIdsRef.current.delete(item.id)
           finish()
         }, BROWSER_SPEECH_START_TIMEOUT_MS)
 
@@ -255,6 +270,7 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
             // Ignore stalled cancel error.
           }
           queuedIdsRef.current.delete(item.id)
+          startedIdsRef.current.delete(item.id)
           finish()
         }, BROWSER_SPEECH_MAX_MS)
 
@@ -264,20 +280,27 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
             startWatchdog = undefined
           }
           if (gen !== cancelGenRef.current || settled) return
+          if (activeControlRef.current?.issueId === item.id && activeControlRef.current.gen === gen) {
+            activeControlRef.current.started = true
+          }
           queuedIdsRef.current.delete(item.id)
-          startedIdsRef.current.add(item.id)
           setSpeechError(null)
           onStartedRef.current?.(item.id)
         }
 
         utterance.onend = () => {
           queuedIdsRef.current.delete(item.id)
+          if (gen === cancelGenRef.current && !settled) {
+            startedIdsRef.current.add(item.id)
+            onCompletedRef.current?.(item.id)
+          }
           finish()
         }
 
         utterance.onerror = (event) => {
           queuedIdsRef.current.delete(item.id)
           if (gen === cancelGenRef.current && !settled) {
+            startedIdsRef.current.delete(item.id)
             const errCode = event.error
             if (errCode !== 'canceled' && errCode !== 'interrupted') {
               setSpeechError(
@@ -296,8 +319,19 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
             synth.resume()
           }
           synth.speak(utterance)
+          keepAliveTimer = window.setInterval(() => {
+            if (settled) return
+            if ('paused' in synth && synth.paused && typeof synth.resume === 'function') {
+              try {
+                synth.resume()
+              } catch {
+                // Ignore browser keep-alive resume quirks.
+              }
+            }
+          }, 10_000)
         } catch {
           queuedIdsRef.current.delete(item.id)
+          startedIdsRef.current.delete(item.id)
           if (gen === cancelGenRef.current) {
             setSpeechError('Speech synthesis failed to start.')
           }
@@ -337,6 +371,7 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
             issueId: item.id,
             gen,
             provider: 'elevenlabs',
+            started: false,
             cancel: () => {
               window.clearTimeout(timeoutId)
               abortController.abort()
@@ -361,13 +396,22 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
                   return
                 }
                 didStart = true
+                if (
+                  activeControlRef.current?.issueId === item.id &&
+                  activeControlRef.current.gen === gen
+                ) {
+                  activeControlRef.current.started = true
+                }
                 queuedIdsRef.current.delete(item.id)
-                startedIdsRef.current.add(item.id)
                 setSpeechError(null)
                 onStartedRef.current?.(item.id)
               },
             })
             queuedIdsRef.current.delete(item.id)
+            if (gen === cancelGenRef.current && !abortController.signal.aborted) {
+              startedIdsRef.current.add(item.id)
+              onCompletedRef.current?.(item.id)
+            }
           } catch (err) {
             window.clearTimeout(timeoutId)
             if (
@@ -393,19 +437,16 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
               elevenLabsCooldownUntilRef.current = depsRef.current.now() + cooldownMs
             }
 
-            if (!didStart) {
-              if (getSpeechSynthesisApi() !== null) {
-                needBrowserFallback = true
-              } else {
-                queuedIdsRef.current.delete(item.id)
-                setSpeechError(
-                  effectiveErr instanceof Error && effectiveErr.message
-                    ? effectiveErr.message
-                    : 'Speech playback failed. Visual alerts remain active.',
-                )
-              }
+            queuedIdsRef.current.delete(item.id)
+            startedIdsRef.current.delete(item.id)
+            if (getSpeechSynthesisApi() !== null) {
+              needBrowserFallback = true
             } else {
-              queuedIdsRef.current.delete(item.id)
+              setSpeechError(
+                effectiveErr instanceof Error && effectiveErr.message
+                  ? effectiveErr.message
+                  : 'Speech playback failed. Visual alerts remain active.',
+              )
             }
           } finally {
             window.clearTimeout(timeoutId)
@@ -441,7 +482,11 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
       for (const issue of issues) {
         const text = issue.spoken_alert.trim()
         if (!text) continue
-        if (queuedIdsRef.current.has(issue.id) || startedIdsRef.current.has(issue.id)) {
+        if (
+          queuedIdsRef.current.has(issue.id) ||
+          startedIdsRef.current.has(issue.id) ||
+          activeControlRef.current?.issueId === issue.id
+        ) {
           continue
         }
         queuedIdsRef.current.add(issue.id)
@@ -468,9 +513,33 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
     [cancelAll, pumpQueue],
   )
 
+  const cancelIssue = useCallback(
+    (issueId: string) => {
+      if (queueRef.current.length > 0) {
+        queueRef.current = queueRef.current.filter((item) => item.id !== issueId)
+      }
+      queuedIdsRef.current.delete(issueId)
+
+      const active = activeControlRef.current
+      if (active && active.issueId === issueId) {
+        cancelGenRef.current += 1
+        activeControlRef.current = null
+        isProcessingRef.current = false
+        active.cancel()
+        if (queueRef.current.length > 0) {
+          void pumpQueue()
+        } else {
+          setIsSpeaking(false)
+        }
+      }
+    },
+    [pumpQueue],
+  )
+
   /**
-   * Cancels queued or active announcements for findings that have resolved or been
-   * dismissed so stale audio never finishes speaking after an issue leaves the board.
+   * Cancels queued or unstarted announcements for findings that have resolved or been
+   * dismissed, while allowing an already-started short utterance to finish cleanly unless
+   * explicitly canceled via cancelIssue or cancelAll.
    */
   const syncActiveIssueIds = useCallback(
     (activeIds: ReadonlySet<string>) => {
@@ -487,7 +556,7 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
       }
 
       const active = activeControlRef.current
-      if (active && !activeIds.has(active.issueId)) {
+      if (active && !activeIds.has(active.issueId) && !active.started) {
         cancelGenRef.current += 1
         activeControlRef.current = null
         isProcessingRef.current = false
@@ -515,6 +584,7 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
     speechError,
     enqueueAutoAlerts,
     speakNow,
+    cancelIssue,
     cancelAll,
     resetHistory,
     syncActiveIssueIds,

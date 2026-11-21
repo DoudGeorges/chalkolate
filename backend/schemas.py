@@ -8,7 +8,18 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-ErrorCategory = Literal["math", "physics", "spelling"]
+ErrorCategory = Literal[
+    "math",
+    "physics",
+    "chemistry",
+    "engineering",
+    "code",
+    "logic",
+    "concept",
+    "notation",
+    "grammar",
+    "spelling",
+]
 
 MAX_PREV_SUMMARY_LENGTH = 2000
 MAX_BOARD_SUMMARY_LENGTH = 600
@@ -136,12 +147,15 @@ class _FindingBase(StrictModel):
     """Shared validated finding payload prior to distinguishing coordinate spaces."""
 
     category: ErrorCategory = Field(
-        description="Mistake category: math, physics, or spelling.",
+        description=(
+            "Best-fit error category across any academic or instructional content: math, physics, "
+            "chemistry, engineering, code, logic, concept, notation, grammar, or spelling."
+        ),
     )
     detected_text: str = Field(
         min_length=1,
         max_length=MAX_DETECTED_TEXT_LENGTH,
-        description="Exact visible erroneous term, equation fragment, unit, or misspelled word.",
+        description="Exact visible erroneous term, equation fragment, token, unit, or phrase.",
     )
     correction_text: str = Field(
         min_length=1,
@@ -160,14 +174,18 @@ class _FindingBase(StrictModel):
         min_length=1,
         max_length=MAX_SPOKEN_ALERT_LENGTH,
         description=(
-            "One concise natural-speech alert sentence (max 180 chars) phrasing math, exponents, "
-            "and units in plain spoken words without LaTeX markup or square-bracket tags."
+            "One concise natural-speech sentence (max 180 chars) identifying the visible "
+            "location (when supported) and explicit replacement in plain spoken words without "
+            "LaTeX or square-bracket tags."
         ),
     )
     explanation: str = Field(
         min_length=1,
         max_length=MAX_EXPLANATION_LENGTH,
-        description="One concise sentence explaining the error and correction.",
+        description=(
+            "One concise actionable sentence stating where the mistake appears and what to change "
+            "it to, adding brief reasoning only when essential."
+        ),
     )
     confidence: float = Field(
         ge=0.0,
@@ -282,8 +300,8 @@ class BoardAnalysisResult(StrictModel):
         default_factory=list,
         max_length=MAX_FINDINGS,
         description=(
-            "List of at most 20 high-confidence demonstrable math, physics, or spelling errors "
-            "currently visible in the image; empty list when none are justified."
+            "List of at most 20 demonstrable errors currently visible across any academic, "
+            "technical, or instructional content on the board; empty list when none are justified."
         ),
     )
 

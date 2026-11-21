@@ -25,6 +25,7 @@ export interface TrackedIssue {
   lastSeenSample: GrayscaleSample | null
   spoken: boolean
   pendingVerification: boolean
+  resolvedByEdit?: boolean
 }
 
 export interface IssueTrackerState {
@@ -236,9 +237,11 @@ function tokenJaccard(a: Set<string>, b: Set<string>): number {
   return union > 0 ? intersection / union : 0
 }
 
+const LANGUAGE_CATEGORIES = new Set<ErrorCategory>(['spelling', 'grammar'])
+
 function categoriesCompatible(a: ErrorCategory, b: ErrorCategory): boolean {
   if (a === b) return true
-  return (a === 'math' && b === 'physics') || (a === 'physics' && b === 'math')
+  return LANGUAGE_CATEGORIES.has(a) === LANGUAGE_CATEGORIES.has(b)
 }
 
 function containsNonTrivial(haystack: string, needle: string): boolean {
@@ -311,6 +314,13 @@ export function areEquivalentFindings(
 
   // Overlapping or nested boxes (e.g. full equation enclosing wrong RHS or LHS).
   if (iou >= 0.45 || containment >= 0.65) {
+    if (
+      a.category === b.category &&
+      descA.compactDetected === descB.compactDetected &&
+      descA.compactDetected.length >= 2
+    ) {
+      return true
+    }
     if (sameCorr && (detMatch || explainSim >= 0.25)) return true
     if (descA.compactCorrection === descB.compactCorrection && descA.compactCorrection.length >= 2) {
       return true
@@ -445,7 +455,7 @@ export function reconcileAnalysis(
     for (let j = 0; j < preparedFindings.length; j++) {
       const f = preparedFindings[j]!
 
-      if (existing.category === f.finding.category) {
+      if (categoriesCompatible(existing.category, f.finding.category)) {
         const iou = computeBoxIoU(existing.box_2d, f.finding.box_2d)
         const dist = computeBoxCenterDistance(existing.box_2d, f.finding.box_2d)
         const spatiallyClose = iou >= MATCH_MIN_IOU || dist <= MATCH_MAX_CENTER_DIST
@@ -529,12 +539,42 @@ export function reconcileAnalysis(
   const verifiedResolved: TrackedIssue[] = []
   const verifiedStillPresent: TrackedIssue[] = []
 
+  const buildTrackedIssue = (f: (typeof preparedFindings)[number]): TrackedIssue => ({
+    id: generateLocalUuid(),
+    category: f.finding.category,
+    detected_text: f.finding.detected_text,
+    normalized_text: f.norm,
+    compact_text: f.compact,
+    correction_text: f.finding.correction_text,
+    correction_latex: f.finding.correction_latex,
+    spoken_alert: f.finding.spoken_alert,
+    explanation: f.finding.explanation,
+    box_2d: f.finding.box_2d,
+    confidence: f.finding.confidence,
+    status: 'open',
+    missCount: 0,
+    needsRecheck: false,
+    firstSeenSeq: nextSeq,
+    lastSeenSeq: nextSeq,
+    lastSeenSample: ctx.sample,
+    spoken: false,
+    pendingVerification: false,
+    resolvedByEdit: false,
+  })
+
   for (let i = 0; i < state.issues.length; i++) {
     const existing = state.issues[i]!
     const match = matchedIssueToMatch.get(i)
 
     if (match !== undefined) {
       const f = preparedFindings[match.findingIndex]!
+      if (existing.status === 'resolved' && existing.resolvedByEdit) {
+        const reopenedAsNew = buildTrackedIssue(f)
+        nextIssues.push(reopenedAsNew)
+        newlyOpened.push(reopenedAsNew)
+        continue
+      }
+
       const nextStatus: IssueLifecycleStatus =
         existing.status === 'dismissed' ? 'dismissed' : 'open'
 
@@ -567,6 +607,7 @@ export function reconcileAnalysis(
             lastSeenSeq: nextSeq,
             lastSeenSample: ctx.sample,
             pendingVerification: false,
+            resolvedByEdit: false,
           }
         : {
             ...existing,
@@ -586,6 +627,7 @@ export function reconcileAnalysis(
             lastSeenSeq: nextSeq,
             lastSeenSample: ctx.sample,
             pendingVerification: false,
+            resolvedByEdit: false,
           }
 
       nextIssues.push(updated)
@@ -604,6 +646,7 @@ export function reconcileAnalysis(
             missCount: existing.missCount + 1,
             needsRecheck: false,
             pendingVerification: false,
+            resolvedByEdit: true,
           }
           nextIssues.push(resolved)
           verifiedResolved.push(resolved)
@@ -624,6 +667,7 @@ export function reconcileAnalysis(
           missCount: nextMiss,
           needsRecheck: !isResolved,
           status: isResolved ? 'resolved' : 'open',
+          resolvedByEdit: isResolved ? !ctx.relaxSpatial && region === 'changed' : false,
         })
       }
     } else {
@@ -638,27 +682,7 @@ export function reconcileAnalysis(
   for (let j = 0; j < preparedFindings.length; j++) {
     if (matchedFindingIndices.has(j)) continue
     const f = preparedFindings[j]!
-    const created: TrackedIssue = {
-      id: generateLocalUuid(),
-      category: f.finding.category,
-      detected_text: f.finding.detected_text,
-      normalized_text: f.norm,
-      compact_text: f.compact,
-      correction_text: f.finding.correction_text,
-      correction_latex: f.finding.correction_latex,
-      spoken_alert: f.finding.spoken_alert,
-      explanation: f.finding.explanation,
-      box_2d: f.finding.box_2d,
-      confidence: f.finding.confidence,
-      status: 'open',
-      missCount: 0,
-      needsRecheck: false,
-      firstSeenSeq: nextSeq,
-      lastSeenSeq: nextSeq,
-      lastSeenSample: ctx.sample,
-      spoken: false,
-      pendingVerification: false,
-    }
+    const created = buildTrackedIssue(f)
     nextIssues.push(created)
     newlyOpened.push(created)
   }
