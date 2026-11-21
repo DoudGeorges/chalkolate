@@ -3,6 +3,7 @@ import {
   STILL_TICKS_FOR_PERSISTENCE,
   classifyRegion,
   createDetectorState,
+  hasSettledChangesFromBaseline,
   updateDetector,
 } from '../lib/changeDetector'
 import { GrayscaleSample } from '../lib/frameCapture'
@@ -147,5 +148,42 @@ describe('Tile-based persistent changeDetector', () => {
     sEdit = updateDetector(sEdit, edited, lastSeen, null).state
     const rEdit = updateDetector(sEdit, edited, lastSeen, null)
     expect(classifyRegion(box, lastSeen, edited, rEdit.stillTicks, null)).toBe('changed')
+  })
+
+  it('tracks active adjacent writing via writingInChangedZone and validates settled baseline deltas', () => {
+    const baseline = makeSample(160, 96, 30)
+    let state = updateDetector(createDetectorState(), baseline, baseline, null).state
+
+    // Left part of equation (tile 1,1) settles, while adjacent tile (tile 2,1) is actively moving
+    const strokeLeft = drawRect(baseline, 18, 18, 8, 8, 170)
+    state = updateDetector(state, strokeLeft, baseline, null).state
+    state = updateDetector(state, strokeLeft, baseline, null).state
+    state = updateDetector(state, strokeLeft, baseline, null).state
+
+    // Now move marker in adjacent tile (2,1) at x=34..42, y=18..26
+    const withAdjacentMarker = drawRect(strokeLeft, 34, 18, 8, 8, 170)
+    const duringWrite = updateDetector(state, withAdjacentMarker, baseline, null)
+    state = duringWrite.state
+    expect(duringWrite.persistentChangedTiles).toBeGreaterThanOrEqual(1)
+    expect(duringWrite.writingInChangedZone).toBe(true)
+    expect(hasSettledChangesFromBaseline(withAdjacentMarker, baseline, duringWrite.stillTicks, null)).toBe(
+      false,
+    )
+
+    // Hold frame calm until adjacent tile reaches STILL_TICKS_FOR_PERSISTENCE
+    state = updateDetector(state, withAdjacentMarker, baseline, null).state
+    const settled = updateDetector(state, withAdjacentMarker, baseline, null)
+    expect(settled.writingInChangedZone).toBe(false)
+    expect(hasSettledChangesFromBaseline(withAdjacentMarker, baseline, settled.stillTicks, null)).toBe(
+      true,
+    )
+
+    // Distant motion far away (x=120..136, y=72..88) does not mark the settled stroke as actively writing
+    const withDistantMotion = drawRect(withAdjacentMarker, 120, 72, 16, 16, 180)
+    const distantMove = updateDetector(settled.state, withDistantMotion, baseline, null)
+    expect(distantMove.writingInChangedZone).toBe(false)
+    expect(
+      hasSettledChangesFromBaseline(withDistantMotion, baseline, distantMove.stillTicks, null),
+    ).toBe(true)
   })
 })
