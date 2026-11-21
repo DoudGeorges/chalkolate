@@ -226,11 +226,14 @@ __marimo__/
 .env.*
 !.env.example
 
-# Frontend / Node / Vite
+# Frontend / Node / Next.js
 !frontend/src/lib/
 !frontend/src/lib/**
 node_modules/
 frontend/dist/
+.next/
+out/
+next-env.d.ts
 .vite/
 *.tsbuildinfo
 coverage/

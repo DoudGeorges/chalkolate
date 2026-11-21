@@ -44,7 +44,7 @@ Key settings (process environment variables and `.env` values override defaults)
 - `ELEVENLABS_VOICE_ID`: Target ElevenLabs voice identifier.
 - `ANALYSIS_CONFIDENCE_THRESHOLD`: Product heuristic confidence cutoff (default `0.85`; not a calibrated probability).
 - `MAX_MODEL_LONG_EDGE`: Maximum processed image dimension sent to Gemini (default `1600`; recommended `1600` for naturally sized board handwriting — check your `.env` if an older `1280` override is set).
-- `CORS_ALLOWED_ORIGINS`: Comma-separated explicit development origins (leave empty when using the Vite `/api` dev proxy).
+- `CORS_ALLOWED_ORIGINS`: Comma-separated explicit development origins (leave empty when using the Next.js `/api` dev rewrite).
 
 ## Installation & Development
 
@@ -74,7 +74,7 @@ Terminal 2 (from `frontend/`):
 npm run dev
 ```
 
-Open `http://localhost:5173`. Vite proxies `/api/*` requests to `http://127.0.0.1:8000` (override target via `CHALKOLATE_API_PROXY_TARGET`).
+Open `http://localhost:5173`. Next.js rewrites `/api/*` requests to `http://127.0.0.1:8000` (override target via `CHALKOLATE_API_PROXY_TARGET`).
 
 ### 3. Using Chalkolate
 
