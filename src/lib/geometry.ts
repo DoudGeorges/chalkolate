@@ -267,9 +267,9 @@ export function computeOverlayPillPosition(
   let top = boxTopPx - estimatedPillHeight - 6
   if (top < minTop) {
     placement = 'below'
-    top = Math.min(
-      Math.max(minTop, clipRect.top + clipRect.height - estimatedPillHeight - 4),
-      boxBottomPx + 6,
+    top = Math.max(
+      minTop,
+      Math.min(clipRect.top + clipRect.height - estimatedPillHeight - 4, boxBottomPx + 6),
     )
   }
 
