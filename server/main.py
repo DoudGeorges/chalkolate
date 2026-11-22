@@ -467,12 +467,14 @@ async def _read_image_upload(
             status_code=413,
             code="PAYLOAD_TOO_LARGE",
             message="Uploaded image exceeds maximum allowed byte size.",
+            request_id=request_id,
         )
     if not raw_bytes:
         return _error_response(
             status_code=422,
             code="EMPTY_IMAGE",
             message="Uploaded image is empty.",
+            request_id=request_id,
         )
     return raw_bytes
 
@@ -496,7 +498,7 @@ def create_app(
     resolved_speech_factory = speech_client_factory or _default_speech_client_factory
     logging.basicConfig(level=getattr(logging, resolved_settings.log_level, logging.INFO))
 
-    gate = ConcurrencyGate(resolved_settings.analysis_max_concurrency)
+    analysis_gate = ConcurrencyGate(resolved_settings.analysis_max_concurrency)
     detection_gate = ConcurrencyGate(resolved_settings.analysis_max_concurrency)
     speech_gate = ConcurrencyGate(resolved_settings.speech_max_concurrency)
     notes_gate = ConcurrencyGate(resolved_settings.notes_max_concurrency)
@@ -529,12 +531,6 @@ def create_app(
         version="0.1.0",
         lifespan=lifespan,
     )
-    app.state.settings = resolved_settings
-    app.state.concurrency_gate = gate
-    app.state.speech_concurrency_gate = speech_gate
-    app.state.notes_concurrency_gate = notes_gate
-    app.state.voice_catalog = voice_catalog
-
     multipart_overhead = resolved_settings.max_metadata_bytes + 64 * 1024
     upload_limit = resolved_settings.max_upload_bytes + multipart_overhead
     app.add_middleware(
@@ -800,7 +796,7 @@ def create_app(
                 request_id=request_id_str,
                 headers={"Retry-After": "2"},
             )
-        if not gate.try_acquire():
+        if not analysis_gate.try_acquire():
             analysis_client_gate.release(caller)
             return _error_response(
                 status_code=503,
@@ -851,7 +847,7 @@ def create_app(
                 latency_ms=elapsed_ms,
             )
         finally:
-            gate.release()
+            analysis_gate.release()
             analysis_client_gate.release(caller)
 
     @app.post("/api/notes", response_model=NotesResponse)
