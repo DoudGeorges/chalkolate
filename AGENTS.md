@@ -27,7 +27,7 @@
 
 Page `<title>` is exactly "Chalkolate".
 
-UI theme: solid light theme (`src/app/globals.css` tokens: white panels, `#e4e4e7` lines, neutral near-black accent `#18181b` for selection and primary buttons); no `backdrop-blur` or translucent glass surfaces.
+UI theme: solid light theme (Inter UI font; only the TopBar "Chalkolate" wordmark uses the Fredericka the Great chalk font via `next/font/google` → `--font-fredericka` → `font-chalk`; `src/app/globals.css` tokens: white panels, `#e4e4e7` lines, neutral near-black accent `#18181b` for selection and primary buttons); no `backdrop-blur` or translucent glass surfaces.
 
 ## Key Engineering Invariants
 
