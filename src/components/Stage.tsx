@@ -3,7 +3,12 @@ import { useEffect, useState } from 'react'
 import { CalibrationCorners } from '../api/schemas'
 import { MonitorPhase } from '../hooks/useBoardMonitor'
 import { MediaSourceState } from '../hooks/useMediaSource'
-import { ContainedImageRect, computeContainedImageRect } from '../lib/geometry'
+import {
+  ContainedImageRect,
+  computeContainedImageRect,
+  computeCropViewRect,
+  intersectRects,
+} from '../lib/geometry'
 import { TrackedIssue } from '../lib/issueTracker'
 import { CalibrationDetectStatus, CalibrationOverlay } from './CalibrationOverlay'
 import { DetectionOverlay } from './DetectionOverlay'
@@ -92,12 +97,42 @@ export function Stage({
     return () => window.removeEventListener('resize', updateSize)
   }, [containerEl])
 
-  const imageRect: ContainedImageRect = computeContainedImageRect(
-    containerSize.width,
-    containerSize.height,
-    mediaState.intrinsicWidth,
-    mediaState.intrinsicHeight,
-  )
+  // A committed crop (auto-detected or manual) zooms the view so the board fills the stage.
+  // While editing the crop we show the whole frame so the handles can reach anywhere.
+  const zoomToCrop = !calibrationEditing && committedCorners !== null
+  const imageRect: ContainedImageRect = zoomToCrop
+    ? computeCropViewRect(
+        containerSize.width,
+        containerSize.height,
+        mediaState.intrinsicWidth,
+        mediaState.intrinsicHeight,
+        committedCorners,
+      )
+    : computeContainedImageRect(
+        containerSize.width,
+        containerSize.height,
+        mediaState.intrinsicWidth,
+        mediaState.intrinsicHeight,
+      )
+  const visibleRect = intersectRects(imageRect, {
+    left: 0,
+    top: 0,
+    width: containerSize.width,
+    height: containerSize.height,
+  })
+  const hasMediaRect = imageRect.width > 0 && imageRect.height > 0
+  // Explicit placement keeps the media pixel-aligned with every overlay (same rect).
+  const mediaStyle: React.CSSProperties | undefined = hasMediaRect
+    ? {
+        position: 'absolute',
+        left: `${imageRect.left}px`,
+        top: `${imageRect.top}px`,
+        width: `${imageRect.width}px`,
+        height: `${imageRect.height}px`,
+        maxWidth: 'none',
+        maxHeight: 'none',
+      }
+    : undefined
 
   const isVideoLike =
     mediaState.kind === 'camera' || mediaState.kind === 'screen' || mediaState.kind === 'video'
@@ -183,6 +218,7 @@ export function Stage({
         ref={videoElRef}
         muted
         playsInline
+        style={isVideoLike ? mediaStyle : undefined}
         className={`h-full w-full object-contain ${isVideoLike ? 'block' : 'hidden'}`}
       />
 
@@ -191,6 +227,7 @@ export function Stage({
           ref={imageElRef}
           src={mediaState.objectUrl}
           alt="Active lecture board"
+          style={mediaStyle}
           className="h-full w-full object-contain select-none"
         />
       )}
@@ -222,6 +259,7 @@ export function Stage({
       {showOverlays && !calibrationEditing && (
         <DetectionOverlay
           imageRect={imageRect}
+          visibleRect={visibleRect}
           issues={openIssues}
           locationsUnverified={locationsUnverified}
           selectedIssueId={selectedIssueId}
