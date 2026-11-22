@@ -380,6 +380,8 @@ export function App() {
   useEffect(() => {
     const err = monitor.state.apiError
     if (!err) return
+    // The setup banner already explains an unreachable or unconfigured backend.
+    if (healthError !== null || (health !== null && !health.analysis_configured)) return
     const msg =
       err.retryAfterSeconds !== null
         ? `${err.message} (retrying in ${err.retryAfterSeconds}s)`
@@ -393,7 +395,7 @@ export function App() {
       },
       5500,
     )
-  }, [monitor.state.apiError, pushToast])
+  }, [monitor.state.apiError, pushToast, health, healthError])
 
   const runAutomaticBoardDetection = useCallback(async () => {
     const mediaEl =
