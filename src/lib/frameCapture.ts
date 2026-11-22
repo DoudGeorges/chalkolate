@@ -47,9 +47,15 @@ export function sampleGrayscaleFrame(
   const ctx = canvas.getContext('2d', { willReadFrequently: true })
   if (!ctx) return null
 
-  ctx.clearRect(0, 0, width, height)
-  ctx.drawImage(source, 0, 0, width, height)
-  const imageData = ctx.getImageData(0, 0, width, height)
+  let imageData: ImageData
+  try {
+    ctx.clearRect(0, 0, width, height)
+    ctx.drawImage(source, 0, 0, width, height)
+    imageData = ctx.getImageData(0, 0, width, height)
+  } catch (err) {
+    if (err instanceof DOMException) return null
+    throw err
+  }
   const rgba = imageData.data
   const luma = new Uint8Array(width * height)
 

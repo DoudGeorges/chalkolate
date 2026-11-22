@@ -1,25 +1,38 @@
 import type { Metadata, Viewport } from 'next'
 import type { ReactNode } from 'react'
-import { Fredericka_the_Great } from 'next/font/google'
+import localFont from 'next/font/local'
 import 'katex/dist/katex.min.css'
 import './globals.css'
 
-// Chalk handwriting font for the TopBar wordmark only (self-hosted by next/font).
-const chalk = Fredericka_the_Great({ weight: '400', subsets: ['latin'], display: 'swap', variable: '--font-fredericka' })
+const bodyFont = localFont({
+  src: './fonts/dm-sans.woff2',
+  weight: '100 1000',
+  variable: '--font-body',
+  display: 'swap',
+})
+const chalk = localFont({
+  src: './fonts/fredericka-the-great.woff2',
+  weight: '400',
+  variable: '--font-fredericka',
+  adjustFontFallback: 'Times New Roman',
+  display: 'swap',
+})
 
 export const metadata: Metadata = {
   title: 'Chalkolate',
+  icons: { icon: '/icon.svg' },
 }
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
+  themeColor: '#f4f6f2',
 }
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={chalk.variable}>
-      <body className="bg-surface text-zinc-900 antialiased">
+    <html lang="en" className={bodyFont.variable + ' ' + chalk.variable}>
+      <body className="bg-surface text-ink antialiased">
         {children}
       </body>
     </html>

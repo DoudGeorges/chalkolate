@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { isAbortError } from '../lib/abort'
 import {
   DisplaySurface,
   SELF_CAPTURE_MESSAGE,
@@ -6,16 +7,17 @@ import {
   isLikelySelfCapture,
 } from '../lib/displayCapture'
 
-export type MediaSourceKind = 'none' | 'camera' | 'screen' | 'image' | 'video'
+export type MediaSourceKind = 'none' | 'camera' | 'screen' | 'video'
 
 export interface MediaSourceState {
   kind: MediaSourceKind
-  label: string
   stream: MediaStream | null
   objectUrl: string | null
   intrinsicWidth: number
   intrinsicHeight: number
   ready: boolean
+  videoPlaying: boolean
+  previewNeedsGesture: boolean
   error: string | null
   sourceGeneration: number
 }
@@ -31,11 +33,24 @@ export interface UseMediaSourceOptions {
   onVideoSeek: () => void
 }
 
+const EMPTY_SOURCE = {
+  kind: 'none',
+  stream: null,
+  objectUrl: null,
+  intrinsicWidth: 0,
+  intrinsicHeight: 0,
+  ready: false,
+  videoPlaying: false,
+  previewNeedsGesture: false,
+  error: null,
+} satisfies Omit<MediaSourceState, 'sourceGeneration'>
+
 const EXCLUDED_VIRTUAL_CAMERA_RE = /\bobs\s+virtual\s+camera\b|\bobs[-\s]?virtualcam\b|\bobs-camera\b/i
 const INTEGRATED_WEBCAM_RE =
   /integrated|built[\s-]?in|internal|facetime|front\s+camera|truevision|hd\s+user\s+facing|laptop/i
 const NON_OBS_VIRTUAL_CAMERA_RE = /virtual|snap\s*camera|manycam|epoccam|iriun|droidcam|ndi/i
 const INFRARED_SENSOR_RE = /\bir\b|infrared|depth/i
+const VIDEO_FILE_EXTENSION_RE = /\.(mp4|m4v|mov|webm|ogv)$/i
 
 export function isExcludedVirtualCamera(label: string): boolean {
   return EXCLUDED_VIRTUAL_CAMERA_RE.test(label)
@@ -92,17 +107,21 @@ function formatCaptureError(err: unknown, mode: 'camera' | 'screen'): string {
   if (err instanceof DOMException) {
     if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
       return mode === 'camera'
-        ? 'Camera permission denied. Allow camera access in browser settings and retry.'
-        : 'Screen share cancelled or denied.'
+        ? 'Allow camera access in your browser settings, then try again.'
+        : 'Screen sharing did not start. Select Share screen to try again.'
     }
     if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-      return 'No camera found. Connect a camera or share a screen.'
+      return mode === 'camera'
+        ? 'No camera was found. Connect a camera or share your screen.'
+        : 'No screen was available to share.'
     }
     if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
-      return 'Camera is in use by another app or failed to start. Close other apps using it and retry.'
+      return mode === 'camera'
+        ? 'The camera could not start. Close any other app using it and try again.'
+        : 'The screen share could not start. Select Share screen to try again.'
     }
     if (err.name === 'OverconstrainedError') {
-      return 'Selected camera does not support the requested video settings.'
+      return 'This camera does not support the requested video settings.'
     }
     if (err.name === 'NotSupportedError') {
       return mode === 'screen'
@@ -113,7 +132,7 @@ function formatCaptureError(err: unknown, mode: 'camera' | 'screen'): string {
   if (err instanceof Error && err.message) {
     return err.message
   }
-  return mode === 'camera' ? 'Failed to start camera capture.' : 'Failed to start screen share.'
+  return mode === 'camera' ? 'The camera could not start. Try again.' : 'Screen sharing could not start. Try again.'
 }
 
 function delayMs(ms: number): Promise<void> {
@@ -204,32 +223,19 @@ export function useMediaSource(options: UseMediaSourceOptions) {
   const { onSourceReset, onGeometryChange, onVideoSeek } = options
 
   const [state, setState] = useState<MediaSourceState>({
-    kind: 'none',
-    label: 'No source selected',
-    stream: null,
-    objectUrl: null,
-    intrinsicWidth: 0,
-    intrinsicHeight: 0,
-    ready: false,
-    error: null,
+    ...EMPTY_SOURCE,
     sourceGeneration: 0,
   })
-  const [videoDevices, setVideoDevices] = useState<VideoDeviceOption[]>([])
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string>('')
 
   const activeStreamRef = useRef<MediaStream | null>(null)
   const activeObjectUrlRef = useRef<string | null>(null)
   const activeCameraDeviceIdRef = useRef<string>('')
-  const activeKindRef = useRef<MediaSourceKind>('none')
   const videoElRef = useRef<HTMLVideoElement | null>(null)
-  const imageElRef = useRef<HTMLImageElement | null>(null)
   const requestSeqRef = useRef<number>(0)
   const hasLoadedFrameRef = useRef<boolean>(false)
 
   const callbacksRef = useRef({ onSourceReset, onGeometryChange, onVideoSeek })
   callbacksRef.current = { onSourceReset, onGeometryChange, onVideoSeek }
-
-  activeKindRef.current = state.kind
 
   const cleanupCurrentMedia = useCallback(() => {
     hasLoadedFrameRef.current = false
@@ -259,13 +265,7 @@ export function useMediaSource(options: UseMediaSourceOptions) {
       requestSeqRef.current += 1
       cleanupCurrentMedia()
       setState((prev) => ({
-        kind: 'none',
-        label: 'No source selected',
-        stream: null,
-        objectUrl: null,
-        intrinsicWidth: 0,
-        intrinsicHeight: 0,
-        ready: false,
+        ...EMPTY_SOURCE,
         error: errorMessage,
         sourceGeneration: prev.sourceGeneration + 1,
       }))
@@ -274,78 +274,49 @@ export function useMediaSource(options: UseMediaSourceOptions) {
     [cleanupCurrentMedia],
   )
 
-  const refreshDevices = useCallback(async (): Promise<VideoDeviceOption[]> => {
+  const listCameras = useCallback(async (): Promise<VideoDeviceOption[]> => {
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) {
       return []
     }
     try {
       const devices = await navigator.mediaDevices.enumerateDevices()
-      const cams = filterAndSortVideoDevices(devices)
-      setVideoDevices(cams)
-      setSelectedDeviceId((prev) => {
-        if (prev && cams.some((c) => c.deviceId === prev)) return prev
-        if (
-          activeCameraDeviceIdRef.current &&
-          cams.some((c) => c.deviceId === activeCameraDeviceIdRef.current)
-        ) {
-          return activeCameraDeviceIdRef.current
-        }
-        return cams[0]?.deviceId ?? ''
-      })
-
-      if (
-        activeKindRef.current === 'camera' &&
-        activeCameraDeviceIdRef.current &&
-        cams.length > 0 &&
-        !cams.some((c) => c.deviceId === activeCameraDeviceIdRef.current)
-      ) {
-        clearSource('Camera disconnected.')
-      }
-      return cams
+      return filterAndSortVideoDevices(devices)
     } catch {
       return []
     }
-  }, [clearSource])
+  }, [])
 
   useEffect(() => {
-    void refreshDevices()
+    if (state.kind !== 'camera' || !state.stream) return
     const mediaDevices = typeof navigator !== 'undefined' ? navigator.mediaDevices : undefined
     if (!mediaDevices?.addEventListener) return
-    const handleDeviceChange = () => {
-      void refreshDevices()
+    const stream = state.stream
+    const handleDeviceChange = async () => {
+      const cameras = await listCameras()
+      const id = activeCameraDeviceIdRef.current
+      if (activeStreamRef.current === stream && id && cameras.length > 0 &&
+          !cameras.some((camera) => camera.deviceId === id)) {
+        clearSource('Camera disconnected.')
+      }
     }
     mediaDevices.addEventListener('devicechange', handleDeviceChange)
     return () => {
       mediaDevices.removeEventListener('devicechange', handleDeviceChange)
     }
-  }, [refreshDevices])
+  }, [clearSource, listCameras, state.kind, state.stream])
 
   const startLiveStream = useCallback(
-    async (mode: 'camera' | 'screen', deviceIdOverride?: string) => {
-      let targetDeviceId =
-        mode === 'camera' ? (deviceIdOverride ?? (selectedDeviceId || undefined)) : undefined
-
-      if (mode === 'camera' && targetDeviceId === undefined) {
-        const currentCams = await refreshDevices()
-        targetDeviceId = currentCams[0]?.deviceId
-      }
-
-      // Avoid tearing down and reopening an already-live stream for the same camera device.
-      if (
-        mode === 'camera' &&
-        activeKindRef.current === 'camera' &&
-        hasLiveVideoTrack(activeStreamRef.current) &&
-        (!targetDeviceId || targetDeviceId === activeCameraDeviceIdRef.current)
-      ) {
+    async (mode: 'camera' | 'screen') => {
+      const seq = ++requestSeqRef.current
+      // Avoid reopening an already-live camera.
+      if (mode === 'camera' && state.kind === 'camera' && hasLiveVideoTrack(activeStreamRef.current)) {
         return
       }
-
-      const seq = ++requestSeqRef.current
 
       if (typeof window !== 'undefined' && !window.isSecureContext) {
         setState((prev) => ({
           ...prev,
-          error: 'Camera and screen capture require a secure context (HTTPS or localhost).',
+          error: 'To use a camera or share a screen, open Chalkolate over HTTPS or on localhost.',
         }))
         return
       }
@@ -353,7 +324,7 @@ export function useMediaSource(options: UseMediaSourceOptions) {
       if (typeof navigator === 'undefined' || !navigator.mediaDevices) {
         setState((prev) => ({
           ...prev,
-          error: 'Media capture APIs are not supported in this browser.',
+          error: 'This browser cannot open a camera or share a screen. Choose a video file instead.',
         }))
         return
       }
@@ -361,7 +332,7 @@ export function useMediaSource(options: UseMediaSourceOptions) {
       if (mode === 'camera' && !navigator.mediaDevices.getUserMedia) {
         setState((prev) => ({
           ...prev,
-          error: 'Camera capture (getUserMedia) is unavailable in this browser.',
+          error: 'Camera access is unavailable in this browser.',
         }))
         return
       }
@@ -369,7 +340,7 @@ export function useMediaSource(options: UseMediaSourceOptions) {
       if (mode === 'screen' && !navigator.mediaDevices.getDisplayMedia) {
         setState((prev) => ({
           ...prev,
-          error: 'Screen Share (getDisplayMedia) is unavailable in this browser.',
+          error: 'Screen sharing is unavailable in this browser.',
         }))
         return
       }
@@ -378,31 +349,44 @@ export function useMediaSource(options: UseMediaSourceOptions) {
       // physical webcam drivers do not fail with NotReadableError.
       cleanupCurrentMedia()
 
-      let stream: MediaStream
+      let stream: MediaStream | null = null
+      let targetDeviceId: string | undefined
       try {
         if (mode === 'camera') {
+          const cameras = await listCameras()
+          if (seq !== requestSeqRef.current) return
+          targetDeviceId = cameras[0]?.deviceId
           stream = await openCameraStreamWithFallbacks(
             targetDeviceId,
             () => seq !== requestSeqRef.current,
           )
-
-          // If Windows/browser defaulted to OBS Virtual Camera before device labels were unlocked,
-          // enumerate now-permitted devices, drop OBS, and seamlessly switch to the integrated webcam.
-          const firstTrackLabel = stream.getVideoTracks()[0]?.label ?? ''
-          if (!deviceIdOverride && isExcludedVirtualCamera(firstTrackLabel)) {
+          if (seq !== requestSeqRef.current) {
             stopStreamTracks(stream)
-            const permittedCams = await refreshDevices()
-            const preferredCam = permittedCams[0]
-            if (!preferredCam) {
-              throw new Error(
-                'No supported camera found. Connect an integrated or external webcam or share a screen.',
+            return
+          }
+
+          if (!targetDeviceId || isExcludedVirtualCamera(stream.getVideoTracks()[0]?.label ?? '')) {
+            // Camera labels become available after permission, so reconsider the default device.
+            const permittedCams = await listCameras()
+            if (seq !== requestSeqRef.current) {
+              stopStreamTracks(stream)
+              return
+            }
+            const firstTrack = stream.getVideoTracks()[0]
+            const firstDeviceId = firstTrack?.getSettings().deviceId
+            const preferred = permittedCams[0]
+            const excluded = isExcludedVirtualCamera(firstTrack?.label ?? '')
+            if (preferred && (excluded || (firstDeviceId && firstDeviceId !== preferred.deviceId))) {
+              stopStreamTracks(stream)
+              targetDeviceId = preferred.deviceId
+              stream = await openCameraStreamWithFallbacks(
+                targetDeviceId,
+                () => seq !== requestSeqRef.current,
               )
             }
-            targetDeviceId = preferredCam.deviceId
-            stream = await openCameraStreamWithFallbacks(
-              targetDeviceId,
-              () => seq !== requestSeqRef.current,
-            )
+          }
+          if (isExcludedVirtualCamera(stream.getVideoTracks()[0]?.label ?? '')) {
+            throw new Error('Connect an integrated or external camera, or share your screen.')
           }
         } else {
           stream = await navigator.mediaDevices.getDisplayMedia(buildDisplayMediaOptions())
@@ -412,24 +396,14 @@ export function useMediaSource(options: UseMediaSourceOptions) {
           const surface = (track?.getSettings?.() as { displaySurface?: string } | undefined)
             ?.displaySurface as DisplaySurface
           if (track && isLikelySelfCapture(track.label, surface, document.title)) {
-            stopStreamTracks(stream)
             throw new Error(SELF_CAPTURE_MESSAGE)
           }
         }
+        if (!hasLiveVideoTrack(stream)) throw new Error('The source closed before it could open. Try again.')
       } catch (err) {
+        stopStreamTracks(stream)
         if (seq !== requestSeqRef.current) return
-        setState((prev) => ({
-          kind: 'none',
-          label: 'No source selected',
-          stream: null,
-          objectUrl: null,
-          intrinsicWidth: 0,
-          intrinsicHeight: 0,
-          ready: false,
-          error: formatCaptureError(err, mode),
-          sourceGeneration: prev.sourceGeneration + 1,
-        }))
-        callbacksRef.current.onSourceReset()
+        clearSource(formatCaptureError(err, mode))
         return
       }
 
@@ -439,46 +413,23 @@ export function useMediaSource(options: UseMediaSourceOptions) {
       }
 
       activeStreamRef.current = stream
-      const videoTrack = stream.getVideoTracks()[0]
-      const actualDeviceId = videoTrack?.getSettings?.().deviceId ?? ''
       if (mode === 'camera') {
-        const resolvedId = actualDeviceId || targetDeviceId || ''
-        if (resolvedId) {
-          activeCameraDeviceIdRef.current = resolvedId
-          setSelectedDeviceId(resolvedId)
-        }
-      }
-
-      const label =
-        videoTrack?.label || (mode === 'camera' ? 'Live Camera' : 'Shared Screen')
-
-      if (mode === 'camera') {
-        void refreshDevices()
+        activeCameraDeviceIdRef.current = stream.getVideoTracks()[0]?.getSettings().deviceId ?? ''
       }
 
       setState((prev) => ({
+        ...EMPTY_SOURCE,
         kind: mode,
-        label,
         stream,
-        objectUrl: null,
-        intrinsicWidth: 0,
-        intrinsicHeight: 0,
-        ready: false,
-        error: null,
         sourceGeneration: prev.sourceGeneration + 1,
       }))
       callbacksRef.current.onSourceReset()
     },
-    [cleanupCurrentMedia, refreshDevices, selectedDeviceId],
+    [cleanupCurrentMedia, clearSource, listCameras, state.kind],
   )
 
   const startCamera = useCallback(
-    async (deviceId?: string) => {
-      if (deviceId !== undefined) {
-        setSelectedDeviceId(deviceId)
-      }
-      await startLiveStream('camera', deviceId)
-    },
+    () => startLiveStream('camera'),
     [startLiveStream],
   )
 
@@ -486,45 +437,28 @@ export function useMediaSource(options: UseMediaSourceOptions) {
     await startLiveStream('screen')
   }, [startLiveStream])
 
-  const activateBlobSource = useCallback(
-    (blob: Blob, kind: 'image' | 'video', label: string) => {
+  const loadUploadedFile = useCallback(
+    (file: File) => {
+      const untyped = !file.type || file.type === 'application/octet-stream'
+      const supportedType = file.type.startsWith('video/') || (untyped && VIDEO_FILE_EXTENSION_RE.test(file.name))
+      if (!file.size || !supportedType) {
+        clearSource('Choose a video file your browser can play.')
+        return
+      }
       requestSeqRef.current += 1
       cleanupCurrentMedia()
-      const objectUrl = URL.createObjectURL(blob)
+      const objectUrl = URL.createObjectURL(file)
       activeObjectUrlRef.current = objectUrl
 
       setState((prev) => ({
-        kind,
-        label,
-        stream: null,
+        ...EMPTY_SOURCE,
+        kind: 'video',
         objectUrl,
-        intrinsicWidth: 0,
-        intrinsicHeight: 0,
-        ready: false,
-        error: null,
         sourceGeneration: prev.sourceGeneration + 1,
       }))
       callbacksRef.current.onSourceReset()
     },
-    [cleanupCurrentMedia],
-  )
-
-  const loadUploadedFile = useCallback(
-    (file: File) => {
-      if (file.type.startsWith('image/')) {
-        activateBlobSource(file, 'image', file.name || 'Uploaded image')
-        return
-      }
-      if (file.type.startsWith('video/')) {
-        activateBlobSource(file, 'video', file.name || 'Uploaded video')
-        return
-      }
-      setState((prev) => ({
-        ...prev,
-        error: `Unsupported file "${file.type || file.name}". Upload a browser-decodable video or image.`,
-      }))
-    },
-    [activateBlobSource],
+    [cleanupCurrentMedia, clearSource],
   )
 
   useEffect(() => {
@@ -532,6 +466,7 @@ export function useMediaSource(options: UseMediaSourceOptions) {
     if (!stream) return
     const tracks = stream.getVideoTracks()
     const handleEnded = () => {
+      if (activeStreamRef.current !== stream || hasLiveVideoTrack(stream)) return
       clearSource(
         state.kind === 'screen' ? 'Screen share ended.' : 'Camera disconnected.',
       )
@@ -539,6 +474,7 @@ export function useMediaSource(options: UseMediaSourceOptions) {
     for (const track of tracks) {
       track.addEventListener('ended', handleEnded)
     }
+    handleEnded()
     return () => {
       for (const track of tracks) {
         track.removeEventListener('ended', handleEnded)
@@ -556,72 +492,78 @@ export function useMediaSource(options: UseMediaSourceOptions) {
 
     let cancelled = false
     let frameCallbackHandle: number | null = null
+    let lastWidth = 0
+    let lastHeight = 0
+    const hasCurrentSource = () => state.stream
+      ? activeStreamRef.current === state.stream && videoEl.srcObject === state.stream
+      : activeObjectUrlRef.current === state.objectUrl && videoEl.src === state.objectUrl
 
     const syncVideoReady = () => {
-      if (cancelled) return
-      if (videoEl.readyState >= 2 && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
-        hasLoadedFrameRef.current = true
-        setState((prev) => {
-          const dimsChanged =
-            prev.intrinsicWidth !== videoEl.videoWidth ||
-            prev.intrinsicHeight !== videoEl.videoHeight
-          if (dimsChanged && prev.ready) {
-            queueMicrotask(() => callbacksRef.current.onGeometryChange())
-          }
-          if (
-            prev.ready &&
-            prev.intrinsicWidth === videoEl.videoWidth &&
-            prev.intrinsicHeight === videoEl.videoHeight
-          ) {
-            return prev
-          }
-          return {
-            ...prev,
-            intrinsicWidth: videoEl.videoWidth,
-            intrinsicHeight: videoEl.videoHeight,
-            ready: true,
-            error: null,
-          }
-        })
-      }
+      if (cancelled || !hasCurrentSource()) return
+      // A stream can decode its first frame before the preview is playing.
+      if (state.stream && videoEl.paused && !hasLoadedFrameRef.current) return
+      const { videoWidth: width, videoHeight: height, readyState } = videoEl
+      if (readyState < 2 || width <= 0 || height <= 0 || (lastWidth === width && lastHeight === height)) return
+
+      const dimensionsChanged = lastWidth > 0
+      hasLoadedFrameRef.current = true
+      lastWidth = width
+      lastHeight = height
+      setState((prev) => prev.sourceGeneration === state.sourceGeneration ? {
+        ...prev,
+        intrinsicWidth: width,
+        intrinsicHeight: height,
+        ready: true,
+        error: null,
+      } : prev)
+      if (dimensionsChanged) callbacksRef.current.onGeometryChange()
     }
 
-    const ensureStreamPlaying = () => {
-      if (cancelled || !state.stream) return
-      if (videoEl.paused) {
-        void videoEl.play().catch(() => {
-          // Retry on subsequent loadedmetadata/canplay/unmute events.
-        })
-      }
+    const syncVideoPlayback = () => {
+      if (cancelled || !hasCurrentSource()) return
+      const videoPlaying = !videoEl.paused && !videoEl.ended && !videoEl.seeking
+      setState((prev) => {
+        if (prev.sourceGeneration !== state.sourceGeneration) return prev
+        const previewNeedsGesture = prev.previewNeedsGesture && !videoPlaying
+        if (prev.videoPlaying === videoPlaying && prev.previewNeedsGesture === previewNeedsGesture) {
+          return prev
+        }
+        return { ...prev, videoPlaying, previewNeedsGesture }
+      })
+    }
+
+    const handlePlaying = () => {
       syncVideoReady()
+      syncVideoPlayback()
     }
 
-    const handleResize = () => {
-      syncVideoReady()
-    }
-
-    const handleSeeked = () => {
-      // Ignore synthetic seeked events emitted during initial load() before first decoded frame.
-      if (!hasLoadedFrameRef.current) return
-      callbacksRef.current.onVideoSeek()
+    const handleSeeking = () => {
+      syncVideoPlayback()
+      if (state.kind === 'video' && hasCurrentSource() && hasLoadedFrameRef.current) {
+        callbacksRef.current.onVideoSeek()
+      }
     }
 
     const handleError = () => {
-      if (cancelled) return
-      clearSource('Selected video could not be decoded by this browser.')
+      if (cancelled || !hasCurrentSource()) return
+      clearSource(state.kind === 'video'
+        ? 'This browser could not play the video. Choose a different file.'
+        : 'The preview could not be played. Open the source again.')
     }
 
-    videoEl.addEventListener('loadedmetadata', ensureStreamPlaying)
     videoEl.addEventListener('loadeddata', syncVideoReady)
-    videoEl.addEventListener('canplay', ensureStreamPlaying)
-    videoEl.addEventListener('playing', syncVideoReady)
-    videoEl.addEventListener('resize', handleResize)
-    videoEl.addEventListener('seeked', handleSeeked)
+    videoEl.addEventListener('canplay', syncVideoReady)
+    videoEl.addEventListener('playing', handlePlaying)
+    videoEl.addEventListener('resize', syncVideoReady)
+    videoEl.addEventListener('seeking', handleSeeking)
+    videoEl.addEventListener('seeked', syncVideoPlayback)
+    videoEl.addEventListener('pause', syncVideoPlayback)
+    videoEl.addEventListener('ended', syncVideoPlayback)
     videoEl.addEventListener('error', handleError)
 
     const videoTracks = state.stream ? state.stream.getVideoTracks() : []
     for (const track of videoTracks) {
-      track.addEventListener('unmute', ensureStreamPlaying)
+      track.addEventListener('unmute', syncVideoReady)
     }
 
     if (state.stream) {
@@ -647,7 +589,6 @@ export function useMediaSource(options: UseMediaSourceOptions) {
         }
         frameCallbackHandle = videoEl.requestVideoFrameCallback(onFrame)
       }
-      ensureStreamPlaying()
     } else if (state.objectUrl) {
       hasLoadedFrameRef.current = false
       videoEl.srcObject = null
@@ -656,6 +597,13 @@ export function useMediaSource(options: UseMediaSourceOptions) {
     }
 
     syncVideoReady()
+    // Opening a source starts only the muted preview. The toolbar owns mistake monitoring.
+    void videoEl.play().catch((err: unknown) => {
+      if (cancelled || !hasCurrentSource() || !videoEl.paused || isAbortError(err)) return
+      setState((prev) => prev.sourceGeneration === state.sourceGeneration
+        ? { ...prev, previewNeedsGesture: true }
+        : prev)
+    })
 
     return () => {
       cancelled = true
@@ -666,56 +614,19 @@ export function useMediaSource(options: UseMediaSourceOptions) {
         videoEl.cancelVideoFrameCallback(frameCallbackHandle)
       }
       for (const track of videoTracks) {
-        track.removeEventListener('unmute', ensureStreamPlaying)
+        track.removeEventListener('unmute', syncVideoReady)
       }
-      videoEl.removeEventListener('loadedmetadata', ensureStreamPlaying)
       videoEl.removeEventListener('loadeddata', syncVideoReady)
-      videoEl.removeEventListener('canplay', ensureStreamPlaying)
-      videoEl.removeEventListener('playing', syncVideoReady)
-      videoEl.removeEventListener('resize', handleResize)
-      videoEl.removeEventListener('seeked', handleSeeked)
+      videoEl.removeEventListener('canplay', syncVideoReady)
+      videoEl.removeEventListener('playing', handlePlaying)
+      videoEl.removeEventListener('resize', syncVideoReady)
+      videoEl.removeEventListener('seeking', handleSeeking)
+      videoEl.removeEventListener('seeked', syncVideoPlayback)
+      videoEl.removeEventListener('pause', syncVideoPlayback)
+      videoEl.removeEventListener('ended', syncVideoPlayback)
       videoEl.removeEventListener('error', handleError)
     }
-  }, [clearSource, state.kind, state.objectUrl, state.stream])
-
-  useEffect(() => {
-    const imgEl = imageElRef.current
-    if (!imgEl || state.kind !== 'image' || !state.objectUrl) return
-
-    let cancelled = false
-
-    const handleLoad = () => {
-      if (cancelled) return
-      if (imgEl.naturalWidth <= 0 || imgEl.naturalHeight <= 0) {
-        clearSource('Uploaded image has zero dimensions.')
-        return
-      }
-      setState((prev) => ({
-        ...prev,
-        intrinsicWidth: imgEl.naturalWidth,
-        intrinsicHeight: imgEl.naturalHeight,
-        ready: true,
-        error: null,
-      }))
-    }
-
-    const handleError = () => {
-      if (cancelled) return
-      clearSource('Uploaded image could not be decoded by this browser.')
-    }
-
-    imgEl.addEventListener('load', handleLoad)
-    imgEl.addEventListener('error', handleError)
-    if (imgEl.complete && imgEl.naturalWidth > 0) {
-      handleLoad()
-    }
-
-    return () => {
-      cancelled = true
-      imgEl.removeEventListener('load', handleLoad)
-      imgEl.removeEventListener('error', handleError)
-    }
-  }, [clearSource, state.kind, state.objectUrl])
+  }, [clearSource, state.kind, state.objectUrl, state.sourceGeneration, state.stream])
 
   useEffect(() => {
     return () => {
@@ -726,11 +637,7 @@ export function useMediaSource(options: UseMediaSourceOptions) {
 
   return {
     state,
-    videoDevices,
-    selectedDeviceId,
-    setSelectedDeviceId,
     videoElRef,
-    imageElRef,
     startCamera,
     startScreenShare,
     loadUploadedFile,

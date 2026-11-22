@@ -219,8 +219,7 @@ def load_settings(
         max_model_long_edge=_get_int(env, "MAX_MODEL_LONG_EDGE", 1600),
         cors_allowed_origins=_parse_origins(_get_str(env, "CORS_ALLOWED_ORIGINS", "")),
         log_level=_get_str(env, "LOG_LEVEL", "INFO").upper(),
-        admin_debug_logging=_get_str(env, "ADMIN_DEBUG_LOGGING", "").lower()
-        in ("1", "true", "yes"),
+        admin_debug_logging=_get_str(env, "ADMIN_DEBUG_LOGGING", "") == "1",
         admin_token=_get_str(env, "ADMIN_TOKEN", ""),
         admin_redis_url=_get_str(env, "UPSTASH_REDIS_REST_URL", "")
         or _get_str(env, "KV_REST_API_URL", ""),

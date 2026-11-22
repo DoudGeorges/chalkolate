@@ -63,6 +63,7 @@ from speech import (
     SpeechPlanError,
     SpeechQuotaError,
     SpeechRateLimitError,
+    SpeechTextError,
     SpeechTimeoutError,
     SpeechUnavailableError,
     VoiceCatalog,
@@ -107,10 +108,6 @@ class ConcurrencyGate:
     def release(self) -> None:
         if self._active > 0:
             self._active -= 1
-
-    @property
-    def active(self) -> int:
-        return self._active
 
 
 class PerClientGate:
@@ -330,6 +327,8 @@ def _speech_error_response(exc: SpeechError) -> JSONResponse:
     message = str(exc)
     if isinstance(exc, SpeechConfigError):
         return _error_response(status_code=503, code="SPEECH_NOT_CONFIGURED", message=message)
+    if isinstance(exc, SpeechTextError):
+        return _error_response(status_code=422, code="INVALID_SPEECH_TEXT", message=message)
     if isinstance(exc, SpeechAuthError):
         return _error_response(status_code=502, code="SPEECH_AUTH_ERROR", message=message)
     if isinstance(exc, SpeechQuotaError):
@@ -600,7 +599,9 @@ def create_app(
     ) -> JSONResponse:
         code = "NOT_FOUND" if exc.status_code == 404 else "HTTP_ERROR"
         message = exc.detail if isinstance(exc.detail, str) else "Request failed."
-        return _error_response(status_code=exc.status_code, code=code, message=message)
+        return _error_response(
+            status_code=exc.status_code, code=code, message=message, headers=exc.headers
+        )
 
     @app.exception_handler(Exception)
     async def handle_unexpected_exception(
@@ -854,11 +855,15 @@ def create_app(
             except AnalyzerError as exc:
                 return _model_error_response(exc, request_id_str)
 
-            try:
-                source_errors: list[SourceSpaceDetectedError] = [
-                    project_finding_to_source(finding, prepared) for finding in model_result.errors
-                ]
-            except ProjectionError:
+            source_errors: list[SourceSpaceDetectedError] = []
+            for finding in model_result.errors:
+                try:
+                    source_errors.append(project_finding_to_source(finding, prepared))
+                except ProjectionError:
+                    continue
+
+            projection_incomplete = len(source_errors) < len(model_result.errors)
+            if projection_incomplete and not source_errors:
                 return _error_response(
                     status_code=502,
                     code="INVALID_COORDINATE_PROJECTION",
@@ -867,7 +872,7 @@ def create_app(
                 )
 
             elapsed_ms = max(0, (time.perf_counter_ns() - started_ns) // 1_000_000)
-            if model_result.incomplete:
+            if model_result.incomplete or projection_incomplete:
                 response.headers[PARTIAL_ANALYSIS_HEADER] = "1"
             return AnalysisResponse(
                 request_id=request_id_str,

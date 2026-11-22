@@ -1,4 +1,4 @@
-import { AlertCircle, RefreshCw, X } from 'lucide-react'
+import { CircleAlert, CircleCheck, Info, X } from 'lucide-react'
 
 export interface ToastItem {
   id: string
@@ -13,52 +13,44 @@ export interface ToastsProps {
   onDismiss: (id: string) => void
 }
 
+const TOAST_STYLE = {
+  info: { icon: Info, color: 'bg-sunken text-accent' },
+  success: { icon: CircleCheck, color: 'bg-moss-soft text-moss' },
+  error: { icon: CircleAlert, color: 'bg-danger-soft text-danger' },
+} as const
+
 export function Toasts({ toasts, onDismiss }: ToastsProps) {
-  if (toasts.length === 0) return null
-
+  if (!toasts.length) return null
   return (
-    <div
-      aria-live="polite"
-      className="pointer-events-none fixed top-16 left-1/2 z-50 flex w-full max-w-md -translate-x-1/2 flex-col items-center gap-2 px-4"
-    >
+    <div className="pointer-events-none fixed inset-x-3 bottom-3 z-50 flex flex-col gap-2 pb-[env(safe-area-inset-bottom)] sm:inset-x-auto sm:right-5 sm:bottom-5 sm:w-[22rem]">
       {toasts.slice(0, 3).map((toast) => {
-        const ringTone =
-          toast.tone === 'error'
-            ? 'border-rose-200 text-rose-900'
-            : toast.tone === 'success'
-              ? 'border-emerald-200 text-emerald-900'
-              : 'border-line text-zinc-900'
-
+        const { icon: Icon, color } = TOAST_STYLE[toast.tone ?? 'info']
         return (
           <div
             key={toast.id}
             role={toast.tone === 'error' ? 'alert' : 'status'}
-            className={`pointer-events-auto flex w-full items-center gap-2.5 rounded-xl border bg-white px-3.5 py-2.5 text-xs shadow-lg animate-pill-in ${ringTone}`}
+            className="pointer-events-auto flex items-start gap-2 rounded-xl border border-line bg-panel p-3 text-sm text-ink shadow-pop animate-rise-in"
           >
-            {toast.tone === 'error' && (
-              <AlertCircle className="h-3.5 w-3.5 shrink-0 text-rose-600" aria-hidden="true" />
-            )}
-            <span className="flex-1 leading-snug">{toast.message}</span>
-            {toast.actionLabel && toast.onAction && (
-              <button
-                type="button"
-                onClick={() => {
-                  toast.onAction?.()
-                  onDismiss(toast.id)
-                }}
-                className="inline-flex shrink-0 items-center gap-1 rounded-md bg-zinc-100 px-2 py-1 text-[11px] font-medium text-zinc-900 transition hover:bg-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-              >
-                {toast.tone === 'error' && <RefreshCw className="h-3 w-3" aria-hidden="true" />}
-                {toast.actionLabel}
-              </button>
-            )}
-            <button
-              type="button"
-              aria-label="Dismiss notification"
-              onClick={() => onDismiss(toast.id)}
-              className="rounded p-0.5 text-zinc-500 transition hover:text-zinc-900"
-            >
-              <X className="h-3.5 w-3.5" aria-hidden="true" />
+            <span className={'grid size-7 shrink-0 place-items-center rounded-lg ' + color} aria-hidden="true">
+              <Icon className="size-4" />
+            </span>
+            <div className="min-w-0 flex-1 self-center">
+              <p className="leading-relaxed wrap-anywhere">{toast.message}</p>
+              {toast.actionLabel && toast.onAction && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    toast.onAction?.()
+                    onDismiss(toast.id)
+                  }}
+                  className="ui-button ui-compact mt-2"
+                >
+                  {toast.actionLabel}
+                </button>
+              )}
+            </div>
+            <button type="button" onClick={() => onDismiss(toast.id)} aria-label="Dismiss notification" className="ui-icon size-8">
+              <X aria-hidden="true" />
             </button>
           </div>
         )

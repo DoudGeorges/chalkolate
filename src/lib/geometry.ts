@@ -87,24 +87,24 @@ export function clientPointToNormalized(
 export function validateCalibrationQuad(corners: CalibrationCorners): ValidationResult {
   for (const [x, y] of corners) {
     if (!Number.isFinite(x) || !Number.isFinite(y)) {
-      return { valid: false, reason: 'Calibration coordinates must be finite numbers.' }
+      return { valid: false, reason: 'A corner position is invalid. Reset the crop and try again.' }
     }
     if (x < 0 || x > 1000 || y < 0 || y > 1000) {
-      return { valid: false, reason: 'Calibration corners must stay inside the board frame.' }
+      return { valid: false, reason: 'Keep all four corners inside the preview.' }
     }
   }
 
   for (let i = 0; i < 4; i++) {
     const a = corners[i]
-    if (!a) return { valid: false, reason: 'Calibration requires four corners.' }
+    if (!a) return { valid: false, reason: 'Place all four corners to crop the board.' }
     for (let j = i + 1; j < 4; j++) {
       const b = corners[j]
-      if (!b) return { valid: false, reason: 'Calibration requires four corners.' }
+      if (!b) return { valid: false, reason: 'Place all four corners to crop the board.' }
       const dist = Math.hypot(a[0] - b[0], a[1] - b[1])
       if (dist < MIN_CORNER_SEPARATION_NORM) {
         return {
           valid: false,
-          reason: 'Calibration corners are too close together.',
+          reason: 'Move the corners farther apart.',
         }
       }
     }
@@ -125,14 +125,14 @@ export function validateCalibrationQuad(corners: CalibrationCorners): Validation
     if (crossZ <= 0) {
       return {
         valid: false,
-        reason: 'Corners must form a convex quad in TL, TR, BR, BL order without crossing edges.',
+        reason: 'Place the handles around the board in clockwise order, starting at the top left.',
       }
     }
     const sinTheta = crossZ / (n1 * n2)
     if (sinTheta < MIN_CORNER_SIN) {
       return {
         valid: false,
-        reason: 'Calibration corners are nearly collinear; adjust handles into a clear quad.',
+        reason: 'Three handles are nearly in a line. Move each one to a separate corner.',
       }
     }
   }
@@ -145,14 +145,14 @@ export function validateCalibrationQuad(corners: CalibrationCorners): Validation
   }
   const area = Math.abs(area2) / 2
   if (area < MIN_QUAD_AREA_NORM) {
-    return { valid: false, reason: 'Selected board area is too small.' }
+    return { valid: false, reason: 'Move the handles apart to include more of the board.' }
   }
 
   const [tl, tr, br, bl] = corners
   if (!(tr[0] > tl[0] && br[0] > bl[0] && bl[1] > tl[1] && br[1] > tr[1])) {
     return {
       valid: false,
-      reason: 'Maintain TL, TR, BR, BL orientation without swapping corners.',
+      reason: 'Keep the top handles above the bottom handles and the left handles on the left.',
     }
   }
 
@@ -192,39 +192,232 @@ export function buildNormalizedQuadMask(
   return mask
 }
 
+/** Row-major 3x3 projective transform. */
+export type Homography = readonly [
+  number, number, number, number, number, number, number, number, number,
+]
+
+type Point = readonly [number, number]
+export type FindingBoxProjector = (box: Box2D) => Point[]
+
+/** Solve the homography mapping four `src` points onto four `dst` points (null if degenerate). */
+function solveHomography(
+  src: readonly [Point, Point, Point, Point],
+  dst: readonly [Point, Point, Point, Point],
+): Homography | null {
+  // 8x9 augmented system [A | b], solved by Gauss-Jordan elimination with partial pivoting.
+  // Stored flat (row-major, 9 columns) to keep indexing simple under noUncheckedIndexedAccess.
+  const m = new Float64Array(8 * 9)
+  const at = (r: number, c: number) => m[r * 9 + c] ?? 0
+  const pairs = [
+    [src[0], dst[0]],
+    [src[1], dst[1]],
+    [src[2], dst[2]],
+    [src[3], dst[3]],
+  ] as const
+  pairs.forEach(([[x, y], [u, v]], i) => {
+    m.set([x, y, 1, 0, 0, 0, -x * u, -y * u, u], 2 * i * 9)
+    m.set([0, 0, 0, x, y, 1, -x * v, -y * v, v], (2 * i + 1) * 9)
+  })
+
+  for (let col = 0; col < 8; col += 1) {
+    let pivot = col
+    for (let r = col + 1; r < 8; r += 1) {
+      if (Math.abs(at(r, col)) > Math.abs(at(pivot, col))) pivot = r
+    }
+    if (Math.abs(at(pivot, col)) < 1e-12) return null
+    if (pivot !== col) {
+      const pivotRow = m.slice(pivot * 9, pivot * 9 + 9)
+      m.copyWithin(pivot * 9, col * 9, col * 9 + 9)
+      m.set(pivotRow, col * 9)
+    }
+    const diag = at(col, col)
+    for (let r = 0; r < 8; r += 1) {
+      if (r === col) continue
+      const factor = at(r, col) / diag
+      if (factor === 0) continue
+      for (let k = col; k < 9; k += 1) m[r * 9 + k] = at(r, k) - factor * at(col, k)
+    }
+  }
+
+  const h: Homography = [
+    at(0, 8) / at(0, 0),
+    at(1, 8) / at(1, 1),
+    at(2, 8) / at(2, 2),
+    at(3, 8) / at(3, 3),
+    at(4, 8) / at(4, 4),
+    at(5, 8) / at(5, 5),
+    at(6, 8) / at(6, 6),
+    at(7, 8) / at(7, 7),
+    1,
+  ]
+  if (!h.every(Number.isFinite)) return null
+
+  const weights = src.map(([x, y]) => h[6] * x + h[7] * y + h[8])
+  if (weights.every((w) => w > 1e-6)) return h
+  // CSS clips geometry with negative homogeneous w. Choose the positive side of the plane.
+  if (weights.every((w) => w < -1e-6)) {
+    const [a, b, c, d, e, f, g, i, j] = h
+    return [-a, -b, -c, -d, -e, -f, -g, -i, -j]
+  }
+  return null
+}
+
+function applyHomography(h: Homography, x: number, y: number): Point {
+  const w = h[6] * x + h[7] * y + h[8]
+  return [(h[0] * x + h[1] * y + h[2]) / w, (h[3] * x + h[4] * y + h[5]) / w]
+}
+
+/** CSS `matrix3d(...)` that applies `h` to an element with `transform-origin: 0 0`. */
+export function homographyToCssMatrix3d(h: Homography): string {
+  const [a, b, c, d, e, f, g, i, j] = h
+  return `matrix3d(${a}, ${d}, 0, ${g}, ${b}, ${e}, 0, ${i}, 0, 0, 1, 0, ${c}, ${f}, 0, ${j})`
+}
+
+function clipAtAxis(
+  polygon: readonly Point[],
+  axis: 0 | 1,
+  boundary: number,
+  direction: 1 | -1,
+): Point[] {
+  let previous = polygon.at(-1)
+  if (!previous) return []
+  let previousDistance = direction * (previous[axis] - boundary)
+  const clipped: Point[] = []
+  for (const point of polygon) {
+    const distance = direction * (point[axis] - boundary)
+    if (previousDistance * distance < 0) {
+      const t = previousDistance / (previousDistance - distance)
+      clipped.push([
+        previous[0] + t * (point[0] - previous[0]),
+        previous[1] + t * (point[1] - previous[1]),
+      ])
+    }
+    if (distance >= 0) clipped.push(point)
+    previous = point
+    previousDistance = distance
+  }
+  return clipped
+}
+
+/** Intersect the source-space finding box with the board before projecting it. */
+function clipFindingToBoard(corners: CalibrationCorners, box: Box2D): Point[] {
+  const [ymin, xmin, ymax, xmax] = box
+  let polygon = clipAtAxis(corners, 0, xmin, 1)
+  polygon = clipAtAxis(polygon, 0, xmax, -1)
+  polygon = clipAtAxis(polygon, 1, ymin, 1)
+  return clipAtAxis(polygon, 1, ymax, -1)
+}
+
+export interface RectifiedCropView {
+  /** Stage-space rectangle the straightened board fills. */
+  rect: ContainedImageRect
+  /** Maps media element pixels (intrinsic size) onto `rect`-local pixels. */
+  elementToRect: Homography
+  /** Projects only the portion of a finding that intersects the board. */
+  projectBox: FindingBoxProjector
+}
+
+/**
+ * Perspective-correct view of the committed crop: the board quad is straightened into a rectangle
+ * that is as large as possible inside the stage. The rectified aspect ratio matches the backend
+ * (`max(top, bottom)` x `max(left, right)` edge length in source pixels), so writing is not
+ * stretched. Returns null when the crop cannot be rectified.
+ */
+export function computeRectifiedCropView(
+  containerWidth: number,
+  containerHeight: number,
+  intrinsicWidth: number,
+  intrinsicHeight: number,
+  corners: CalibrationCorners | null,
+): RectifiedCropView | null {
+  if (
+    !corners ||
+    containerWidth <= 0 ||
+    containerHeight <= 0 ||
+    intrinsicWidth <= 0 ||
+    intrinsicHeight <= 0 ||
+    !validateCalibrationQuad(corners).valid
+  ) {
+    return null
+  }
+
+  const toPixels = ([x, y]: Point): Point => [
+    (x / 1000) * intrinsicWidth,
+    (y / 1000) * intrinsicHeight,
+  ]
+  const px = [toPixels(corners[0]), toPixels(corners[1]), toPixels(corners[2]), toPixels(corners[3])] as const
+  const dist = (p: Point, q: Point) => Math.hypot(p[0] - q[0], p[1] - q[1])
+  const boardWidth = Math.max(dist(px[0], px[1]), dist(px[3], px[2]))
+  const boardHeight = Math.max(dist(px[0], px[3]), dist(px[1], px[2]))
+  if (!(boardWidth > 0) || !(boardHeight > 0)) return null
+
+  const rect = computeContainedImageRect(
+    containerWidth,
+    containerHeight,
+    boardWidth,
+    boardHeight,
+  )
+  if (rect.width <= 0 || rect.height <= 0) return null
+
+  const elementToRect = solveHomography(px, [
+    [0, 0],
+    [rect.width, 0],
+    [rect.width, rect.height],
+    [0, rect.height],
+  ])
+  if (!elementToRect) return null
+
+  return {
+    rect,
+    elementToRect,
+    projectBox: (box) =>
+      clipFindingToBoard(corners, box).map((point) => {
+        const [u, v] = applyHomography(elementToRect, ...toPixels(point))
+        return [rect.left + u, rect.top + v]
+      }),
+  }
+}
+
+/** Project a normalized source box into an uncropped contained image. */
+export function projectBoxThroughRect(rect: ContainedImageRect): FindingBoxProjector {
+  const project = (x: number, y: number): Point => [
+    rect.left + (x / 1000) * rect.width,
+    rect.top + (y / 1000) * rect.height,
+  ]
+  return ([ymin, xmin, ymax, xmax]) => [
+    project(xmin, ymin),
+    project(xmax, ymin),
+    project(xmax, ymax),
+    project(xmin, ymax),
+  ]
+}
+
 export interface PillPosition {
   left: number
   top: number
   placement: 'above' | 'below'
 }
 
+/**
+ * Places a finding pill above (or below) a box given in stage pixels, kept inside `clipRect`
+ * (the visible media area).
+ */
 export function computeOverlayPillPosition(
-  box: Box2D,
-  imageRect: ContainedImageRect,
+  boxPx: { left: number; top: number; bottom: number },
+  clipRect: ContainedImageRect,
   estimatedPillWidth = 220,
   estimatedPillHeight = 30,
 ): PillPosition {
-  const [ymin, xmin, ymax] = box
-  const boxLeftPx = (xmin / 1000) * imageRect.width
-  const boxTopPx = (ymin / 1000) * imageRect.height
-  const boxBottomPx = (ymax / 1000) * imageRect.height
+  const minLeft = clipRect.left + 4
+  const maxLeft = Math.max(minLeft, clipRect.left + clipRect.width - estimatedPillWidth - 4)
+  const left = Math.max(minLeft, Math.min(maxLeft, boxPx.left))
 
-  const maxLocalLeft = Math.max(4, imageRect.width - estimatedPillWidth - 4)
-  const localLeft = Math.max(4, Math.min(maxLocalLeft, boxLeftPx))
+  const minTop = clipRect.top + 4
+  const maxTop = Math.max(minTop, clipRect.top + clipRect.height - estimatedPillHeight - 4)
+  const above = boxPx.top - estimatedPillHeight - 6
+  const placement = above >= minTop ? 'above' : 'below'
+  const top = Math.max(minTop, Math.min(maxTop, placement === 'above' ? above : boxPx.bottom + 6))
 
-  let placement: 'above' | 'below' = 'above'
-  let localTop = boxTopPx - estimatedPillHeight - 6
-  if (localTop < 4) {
-    placement = 'below'
-    localTop = Math.min(
-      Math.max(4, imageRect.height - estimatedPillHeight - 4),
-      boxBottomPx + 6,
-    )
-  }
-
-  return {
-    left: imageRect.left + localLeft,
-    top: imageRect.top + localTop,
-    placement,
-  }
+  return { left, top, placement }
 }

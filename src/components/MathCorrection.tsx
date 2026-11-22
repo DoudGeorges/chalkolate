@@ -42,7 +42,7 @@ export function MathCorrection({
   if (renderedHtml !== null) {
     return (
       <span
-        className={`inline-block max-w-full overflow-x-auto align-middle text-emerald-700 ${className}`}
+        className={`inline-block max-w-full overflow-x-auto align-middle text-moss ${className}`}
         aria-label={correctionText}
         // KaTeX HTML output is generated strictly with trust: false and bounded expansion.
         dangerouslySetInnerHTML={{ __html: renderedHtml }}
@@ -51,7 +51,7 @@ export function MathCorrection({
   }
 
   return (
-    <span className={`font-medium text-emerald-700 break-words ${className}`}>
+    <span className={`font-medium text-moss break-words ${className}`}>
       {correctionText}
     </span>
   )

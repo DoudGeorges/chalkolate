@@ -1,6 +1,6 @@
 # Chalkolate
 
-Chalkolate monitors lecture boards from a camera or screen share. It highlights supported errors, can announce corrections aloud, and builds lecture notes from snapshots. Your media source and findings stay in the browser. Gemini receives selected board snapshots and context when enabled. ElevenLabs receives alert text when its speech service is configured.
+Chalkolate monitors lecture boards from a camera, screen share, or uploaded video. It highlights supported errors, can announce corrections aloud, and builds lecture notes from snapshots. Your media source and findings stay in the browser. Gemini receives selected board snapshots and context when enabled. ElevenLabs receives alert text when its speech service is configured.
 
 ## Local setup
 
@@ -27,10 +27,12 @@ Open http://localhost:5173. Next.js proxies /api requests to FastAPI in developm
 
 ## Using the studio
 
-1. Choose a source and an alert mode, then select **Start**. The browser asks for camera or screen permissions at this point.
-2. Use **Crop board** to detect or adjust corners for a camera. Screen shares use the full selected surface. Share the lecture tab or window to avoid capturing the studio preview.
-3. Mistakes appear as highlights with corrections on the board. Open **Settings** to change alert mode, spoken detail, or answer format. **Stop** pauses mistake checks and spoken alerts while keeping the source open.
+1. Pick a board source and an alert mode. Select **Open camera** or **Share screen** and grant browser permission. For a recording, select **Video file**, then **Choose video**. The preview plays as soon as the source opens.
+2. Select **Start** to begin checking the board. Uploaded video is checked during playback. Use the playback controls to pause, seek, or restart. Use **Crop board** to straighten a board in a camera feed or video. For screen sharing, choose the lecture tab or window.
+3. Select a highlighted correction to read its explanation. Under **Spoken feedback**, **Student** states each mistake and explains the correction. **Professor** gives just the short correction. You can change spoken feedback, voice, alert mode, and number format in **Settings**. **Stop** ends board checks and spoken alerts while the preview keeps playing.
 4. Open **Notes** to read or download the lecture notes, which build automatically while a source is live. Notes are kept only for this browser tab: they survive reloads and are discarded when the tab closes, so export them first. Clear them when starting a separate lecture.
+
+Select the Chalkolate wordmark to close the source and return to setup.
 
 Only use captures you have permission to share with the configured providers. Avoid capturing unrelated windows and sensitive information.
 

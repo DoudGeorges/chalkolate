@@ -1,17 +1,18 @@
-import { Download, Printer, Trash2, X } from 'lucide-react'
-import { useMemo } from 'react'
+import { FileCode2, FileText, NotebookPen, Printer, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { NotesPhase } from '../hooks/useNotesBuilder'
 import { NotesDocument, renderNotesBodyHtml } from '../lib/notes'
+import { StudioPanel } from './StudioPanel'
 
 export interface NotesPanelProps {
   open: boolean
-  /** Notes are being built automatically right now (source live and not paused). */
   active: boolean
   configured: boolean
+  editingCrop: boolean
   phase: NotesPhase
   error: string | null
   notes: NotesDocument
-  onToggleOpen: () => void
+  onClose: () => void
   onExportMarkdown: () => void
   onExportLatex: () => void
   onExportPrint: () => void
@@ -19,11 +20,10 @@ export interface NotesPanelProps {
 }
 
 function NoteBody({ markdown }: { markdown: string }) {
-  // Output is escaped by renderNotesBodyHtml and KaTeX runs with trust disabled.
   const html = useMemo(() => renderNotesBodyHtml(markdown), [markdown])
   return (
     <div
-      className="space-y-2 text-sm leading-relaxed text-zinc-700 [&_li]:ml-4 [&_ol]:list-decimal [&_ul]:list-disc"
+      className="ui-copy space-y-2 overflow-x-auto wrap-anywhere [&_li]:ml-4 [&_ol]:list-decimal [&_ul]:list-disc"
       dangerouslySetInnerHTML={{ __html: html }}
     />
   )
@@ -33,124 +33,149 @@ export function NotesPanel({
   open,
   active,
   configured,
+  editingCrop,
   phase,
   error,
   notes,
-  onToggleOpen,
+  onClose,
   onExportMarkdown,
   onExportLatex,
   onExportPrint,
   onClear,
 }: NotesPanelProps) {
-  const count = notes.sections.length
-  const status =
-    phase === 'building'
-      ? 'Updating notes…'
-      : !configured
-        ? 'Board analysis unavailable'
-        : !active
-          ? 'Waiting for a camera, screen, or video'
-          : null
+  const hasNotes = notes.sections.length > 0
+  const SectionHeading = notes.title ? 'h4' : 'h3'
+  let status: string | null = null
+  if (!configured) status = 'Automatic notes are unavailable.'
+  else if (editingCrop) status = 'Notes will resume when you finish cropping.'
+  else if (phase === 'building') status = 'Updating notes…'
+  else if (!active) status = 'Waiting for the preview to play.'
+  const [confirmingClear, setConfirmingClear] = useState(false)
+  const cancelClearRef = useRef<HTMLButtonElement>(null)
+  const clearButtonRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (!hasNotes || !open) setConfirmingClear(false)
+  }, [hasNotes, open])
+
+  useEffect(() => {
+    if (!confirmingClear) return
+    cancelClearRef.current?.focus()
+    const timer = window.setTimeout(() => {
+      const restoreFocus = cancelClearRef.current?.parentElement?.contains(document.activeElement)
+      setConfirmingClear(false)
+      if (restoreFocus) requestAnimationFrame(() => clearButtonRef.current?.focus())
+    }, 5000)
+    return () => window.clearTimeout(timer)
+  }, [confirmingClear])
+
+  const close = () => {
+    setConfirmingClear(false)
+    onClose()
+    document.getElementById('notes-toggle')?.focus()
+  }
 
   return (
-    <div
-      data-testid="notes-panel-container"
-      className={`relative z-30 shrink-0 overflow-hidden bg-white transition-[width,height] duration-200 ease-out ${
-        open
-          ? 'h-[42vh] w-full border-b border-line md:h-auto md:w-[360px] md:border-r md:border-b-0'
-          : 'h-0 w-full border-transparent md:h-auto md:w-0'
-      }`}
-    >
-      <aside
-        aria-label="Lecture notes"
-        aria-hidden={!open}
-        inert={!open}
-        className="flex h-full w-full flex-col md:w-[360px]"
-      >
-        <header className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
-          <h2 className="truncate text-sm font-medium text-zinc-900">
-            {notes.title || 'Lecture notes'}
-          </h2>
-          <button
-            type="button"
-            onClick={onToggleOpen}
-            aria-label="Close notes"
-            className="rounded p-1 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
-          >
-            <X className="h-4 w-4" aria-hidden />
-          </button>
-        </header>
+    <StudioPanel id="lecture-notes-panel" side="left" title="Notes" open={open} onClose={close}>
+      {status && (
+        <p role="status" className="flex items-center gap-2 border-b border-line bg-sunken px-4 py-2 text-xs text-muted">
+          {phase === 'building' && configured && !editingCrop && <span className="ui-spinner-dot" aria-hidden="true" />}
+          {status}
+        </p>
+      )}
+      {error && (
+        <p role="alert" className="border-b border-warn-line bg-warn-soft px-4 py-2 text-xs leading-relaxed text-warn">
+          {error}
+        </p>
+      )}
 
-        {status && (
-          <p role="status" className="border-b border-line px-3 py-2 text-xs text-zinc-600">
-            {status}
-          </p>
-        )}
-
-        {error && (
-          <div
-            role="alert"
-            className="border-b border-amber-500/20 bg-amber-50 px-3 py-1.5 text-xs text-amber-800"
-          >
-            {error}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
+        {hasNotes ? (
+          <>
+            {notes.title && (
+              <h3 className="mb-4 text-xl leading-tight font-semibold tracking-tight wrap-anywhere">{notes.title}</h3>
+            )}
+            <div className="divide-y divide-line">
+              {notes.sections.map((section) => (
+                <section key={section.id} className="py-4 first:pt-0 animate-fade-in">
+                  <SectionHeading className="ui-label mb-2 wrap-anywhere">{section.heading}</SectionHeading>
+                  <NoteBody markdown={section.body_markdown} />
+                  {section.figure && (
+                    <img
+                      src={section.figure}
+                      alt={'Board snapshot for ' + section.heading}
+                      loading="lazy"
+                      className="mt-3 max-w-full rounded-lg border border-line"
+                    />
+                  )}
+                </section>
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="flex min-h-full flex-col items-center justify-center gap-2 p-3 text-center">
+            <span className="grid size-10 place-items-center rounded-xl bg-accent-soft text-accent" aria-hidden="true">
+              <NotebookPen className="size-5" />
+            </span>
+            <p className="text-sm font-semibold text-ink">No notes yet</p>
+            {active && <p className="ui-copy max-w-[26ch]">Notes appear here as the board changes.</p>}
           </div>
         )}
+      </div>
 
-        <div className="flex-1 space-y-5 overflow-y-auto px-3 py-3">
-          {count === 0 ? (
-            <p className="text-sm text-zinc-500">No notes yet.</p>
-          ) : (
-            notes.sections.map((section) => (
-              <section key={section.id} aria-label={section.heading}>
-                <h3 className="mb-1 text-sm font-semibold text-zinc-900">{section.heading}</h3>
-                <NoteBody markdown={section.body_markdown} />
-                {section.figure && (
-                  <img
-                    src={section.figure}
-                    alt={`Board snapshot: ${section.heading}`}
-                    className="mt-2 rounded border border-line"
-                  />
-                )}
-              </section>
-            ))
-          )}
-        </div>
-
-        <footer className="flex flex-wrap items-center gap-2 border-t border-line px-3 py-2 text-xs">
-          <button
-            type="button"
-            onClick={onExportMarkdown}
-            disabled={count === 0}
-            className="flex items-center gap-1 rounded border border-line px-2 py-1 text-zinc-900 hover:bg-zinc-100 disabled:opacity-40"
-          >
-            <Download className="h-3 w-3" aria-hidden /> Export Markdown
-          </button>
-          <button
-            type="button"
-            onClick={onExportLatex}
-            disabled={count === 0}
-            className="flex items-center gap-1 rounded border border-line px-2 py-1 text-zinc-900 hover:bg-zinc-100 disabled:opacity-40"
-          >
-            <Download className="h-3 w-3" aria-hidden /> LaTeX
-          </button>
-          <button
-            type="button"
-            onClick={onExportPrint}
-            disabled={count === 0}
-            className="flex items-center gap-1 rounded border border-line px-2 py-1 text-zinc-900 hover:bg-zinc-100 disabled:opacity-40"
-          >
-            <Printer className="h-3 w-3" aria-hidden /> Print / PDF
-          </button>
-          <button
-            type="button"
-            onClick={onClear}
-            disabled={count === 0}
-            className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-zinc-600 hover:text-rose-700 disabled:opacity-40"
-          >
-            <Trash2 className="h-3 w-3" aria-hidden /> Clear
-          </button>
-        </footer>
-      </aside>
-    </div>
+      <footer className="flex flex-wrap items-center gap-2 border-t border-line p-3">
+        {confirmingClear && hasNotes ? (
+          <div role="group" aria-label="Clear all notes" className="flex w-full items-center gap-2 animate-fade-in">
+            <span className="mr-auto text-xs font-medium text-ink">Clear all notes?</span>
+            <button
+              ref={cancelClearRef}
+              type="button"
+              onClick={() => {
+                setConfirmingClear(false)
+                requestAnimationFrame(() => clearButtonRef.current?.focus())
+              }}
+              className="ui-button ui-compact"
+              data-variant="quiet"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setConfirmingClear(false)
+                onClear()
+                document.getElementById('lecture-notes-panel-heading')?.focus()
+              }}
+              className="ui-button ui-compact"
+              data-variant="danger-solid"
+            >
+              Clear
+            </button>
+          </div>
+        ) : (
+          <>
+            <button type="button" onClick={onExportMarkdown} disabled={!hasNotes} className="ui-button ui-compact" aria-label="Export Markdown">
+              <FileText aria-hidden="true" /> Markdown
+            </button>
+            <button type="button" onClick={onExportLatex} disabled={!hasNotes} className="ui-button ui-compact" aria-label="Export LaTeX">
+              <FileCode2 aria-hidden="true" /> LaTeX
+            </button>
+            <button type="button" onClick={onExportPrint} disabled={!hasNotes} className="ui-button ui-compact" aria-label="Print notes or save as PDF">
+              <Printer aria-hidden="true" /> Print
+            </button>
+            <button
+              ref={clearButtonRef}
+              type="button"
+              onClick={() => setConfirmingClear(true)}
+              disabled={!hasNotes}
+              className="ui-button ui-compact ml-auto"
+              data-variant="danger"
+            >
+              <Trash2 aria-hidden="true" /> Clear
+            </button>
+          </>
+        )}
+      </footer>
+    </StudioPanel>
   )
 }

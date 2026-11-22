@@ -12,7 +12,6 @@ export const MOVING_TILE_FRACTION = 0.06
 /** Number of consecutive calm ticks a tile must hold before changes there count as persistent. */
 export const STILL_TICKS_FOR_PERSISTENCE = 2
 /** Fraction of valid tiles persistently changed from baseline that indicates a full scene shift. */
-export const SCENE_SHIFT_FRACTION = 0.5
 /** Minimum fraction of a tile's area inside the calibration mask for the tile to participate. */
 export const MIN_TILE_COVERAGE = 0.5
 /** Changed-pixel fraction inside a finding's bounding box needed to classify it as changed. */
@@ -32,8 +31,6 @@ export interface DetectorUpdate {
   movingFraction: number
   activeChangedTiles: number
   persistentChangedTiles: number
-  persistentChangedFraction: number
-  sceneShift: boolean
   stillTicks: Uint16Array
 }
 
@@ -170,22 +167,16 @@ export function updateDetector(
 
   let activeChangedTiles = 0
   let persistentChangedTiles = 0
-  let persistentChangedFraction = 0
-  let sceneShift = false
 
   if (baseline) {
     if (baseline.width !== sample.width || baseline.height !== sample.height) {
       activeChangedTiles = tileCount
       persistentChangedTiles = tileCount
-      persistentChangedFraction = 1
-      sceneShift = true
     } else {
       const baseFracs = tileChangeFractions(baseline, sample, mask)
-      let validTiles = 0
       for (let i = 0; i < tileCount; i++) {
         const frac = baseFracs[i] ?? Number.NaN
         if (Number.isNaN(frac)) continue
-        validTiles++
         if (frac >= CHANGED_TILE_FRACTION) {
           activeChangedTiles++
           if ((nextStillTicks[i] ?? 0) >= STILL_TICKS_FOR_PERSISTENCE) {
@@ -193,9 +184,6 @@ export function updateDetector(
           }
         }
       }
-      persistentChangedFraction =
-        validTiles > 0 ? persistentChangedTiles / validTiles : 0
-      sceneShift = validTiles > 0 && persistentChangedFraction >= SCENE_SHIFT_FRACTION
     }
   }
 
@@ -209,8 +197,6 @@ export function updateDetector(
     movingFraction,
     activeChangedTiles,
     persistentChangedTiles,
-    persistentChangedFraction,
-    sceneShift,
     stillTicks: nextStillTicks,
   }
 }

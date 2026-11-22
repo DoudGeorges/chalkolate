@@ -1,3 +1,4 @@
+import { CircleAlert } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { detectBoardCorners, fetchHealth, fetchVoices } from './api/client'
 import {
@@ -11,7 +12,7 @@ import { CalibrationDetectStatus } from './components/CalibrationOverlay'
 import { NotesPanel } from './components/NotesPanel'
 import { SettingsPanel } from './components/SettingsPanel'
 import { Stage } from './components/Stage'
-import { WelcomeGuide, WelcomeSource } from './components/WelcomeGuide'
+import { LiveSource, WelcomeGuide, WelcomeSource } from './components/WelcomeGuide'
 import { ToastItem, Toasts } from './components/Toasts'
 import { TopBar } from './components/TopBar'
 import { VerificationResultSummary, useBoardMonitor } from './hooks/useBoardMonitor'
@@ -35,6 +36,7 @@ import { exportLatex } from './lib/notesLatex'
 const ANSWER_FORMAT_KEY = 'chalkolate.answerFormat.v1'
 
 const LAUNCH_TIMEOUT_MS = 60_000
+const PREVIEW_TIMEOUT_MS = 15_000
 
 /** Saves generated text as a local file download; nothing leaves the browser. */
 function downloadText(text: string, type: string, filename: string): void {
@@ -48,10 +50,15 @@ function downloadText(text: string, type: string, filename: string): void {
 
 export function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
-  const [healthError, setHealthError] = useState<string | null>(null)
+  const [healthFailed, setHealthFailed] = useState(false)
+  const [checkingHealth, setCheckingHealth] = useState(true)
+  const [healthCheck, setHealthCheck] = useState(0)
 
   // Monitoring is always stopped by default when the application opens.
   const [monitoring, setMonitoring] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const startSequenceRef = useRef(0)
+  const [selectedSource, setSelectedSource] = useState<WelcomeSource | null>(null)
   const [alertMode, setAlertMode] = useState<AlertMode>('voice_visual')
   const [answerFormat, setAnswerFormat] = useState<AnswerFormat>(() => {
     try {
@@ -72,12 +79,9 @@ export function App() {
   const [voicePreferences, setVoicePreferences] = useState<VoicePreferences>(loadVoicePreferences)
 
   const handleChangeVoicePreferences = useCallback((patch: Partial<VoicePreferences>) => {
-    setVoicePreferences((prev) => {
-      const next = sanitizeVoicePreferences({ ...prev, ...patch })
-      saveVoicePreferences(next)
-      return next
-    })
+    setVoicePreferences((prev) => sanitizeVoicePreferences({ ...prev, ...patch }))
   }, [])
+  useEffect(() => saveVoicePreferences(voicePreferences), [voicePreferences])
 
   const [calibrationEditing, setCalibrationEditing] = useState(false)
   const [calibrationDetectStatus, setCalibrationDetectStatus] =
@@ -85,13 +89,11 @@ export function App() {
   const [committedCorners, setCommittedCorners] = useState<CalibrationCorners | null>(null)
   const [draftCorners, setDraftCorners] = useState<CalibrationCorners>(DEFAULT_CALIBRATION_CORNERS)
   const detectAbortRef = useRef<AbortController | null>(null)
-  const userEditedDraftRef = useRef(false)
   const calibrationCanvasRef = useRef<HTMLCanvasElement | null>(null)
 
-  // One right-side panel hosts both Findings and Settings as tabs.
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  // Notes build automatically once a source is live.
-  const [notesOpen, setNotesOpen] = useState(false)
+  const [activePanel, setActivePanel] = useState<'notes' | 'settings' | null>(null)
+  const settingsOpen = activePanel === 'settings'
+  const notesOpen = activePanel === 'notes'
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null)
   const [hoveredIssueId, setHoveredIssueId] = useState<string | null>(null)
   const [toasts, setToasts] = useState<ToastItem[]>([])
@@ -140,15 +142,24 @@ export function App() {
     const controller = new AbortController()
     fetchHealth(controller.signal)
       .then((res) => {
+        if (controller.signal.aborted) return
         setHealth(res)
-        setHealthError(null)
+        setHealthFailed(false)
       })
       .catch((err) => {
-        if (isAbortError(err)) return
-        setHealthError(err instanceof Error ? err.message : 'Backend unavailable.')
+        if (controller.signal.aborted || isAbortError(err)) return
+        setHealthFailed(true)
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setCheckingHealth(false)
       })
     return () => controller.abort()
-  }, [])
+  }, [healthCheck])
+
+  const retryHealth = () => {
+    setCheckingHealth(true)
+    setHealthCheck((value) => value + 1)
+  }
 
   const speechConfigured = health?.speech_configured ?? false
 
@@ -170,16 +181,13 @@ export function App() {
     setVoicesError(null)
     fetchVoices(controller.signal)
       .then((res) => {
+        if (controller.signal.aborted) return
         setElevenLabsVoices(res.voices)
         setVoicesError(null)
       })
       .catch((err) => {
-        if (isAbortError(err)) return
-        setVoicesError(
-          err instanceof Error && err.message
-            ? `Couldn't load voices: ${err.message}`
-            : "Couldn't load ElevenLabs voices.",
-        )
+        if (controller.signal.aborted || isAbortError(err)) return
+        setVoicesError(err instanceof Error ? err.message : 'The voice list could not be loaded.')
       })
       .finally(() => {
         if (!controller.signal.aborted) setVoicesLoading(false)
@@ -202,12 +210,17 @@ export function App() {
     // The hook already deduplicates: once per session for account-wide failures and
     // once per voice for voices the account cannot use.
     onProviderFallback: (reason) => {
-      pushToast({ message: `${reason} Using browser voice.`, tone: 'info' }, 6000)
+      pushToast({ message: reason, tone: 'info' }, 6000)
     },
   })
   const { syncActiveIssueIds } = speech
 
   const speechUnavailableNotifiedRef = useRef(false)
+  useEffect(() => {
+    if (speech.isSupported && speech.speechError && alertMode !== 'visual_only') {
+      pushToast({ message: speech.speechError, tone: 'info' }, 5000)
+    }
+  }, [alertMode, pushToast, speech.isSupported, speech.speechError])
   useEffect(() => {
     if (
       monitoring &&
@@ -217,7 +230,7 @@ export function App() {
     ) {
       speechUnavailableNotifiedRef.current = true
       pushToast({
-        message: 'Speech synthesis is unavailable in this browser; showing visual alerts.',
+        message: 'Spoken alerts are unavailable. Corrections appear on the board.',
         tone: 'info',
       })
     }
@@ -233,6 +246,8 @@ export function App() {
 
   const handleResetAllOnSourceChange = useCallback(() => {
     abortBoardDetection()
+    startSequenceRef.current += 1
+    setStarting(false)
     setMonitoring(false)
     setCalibrationEditing(false)
     setCalibrationDetectStatus('idle')
@@ -254,69 +269,56 @@ export function App() {
       monitorCallbacksRef.current.onGeometryChange()
     },
     onVideoSeek: () => {
+      speech.resetHistory()
       monitorCallbacksRef.current.onVideoSeek()
     },
   })
+  const { clearSource } = media
 
   useEffect(() => {
     if (media.state.error) {
       pushToast({ message: media.state.error, tone: 'error' }, 5000)
     }
-  }, [media.state.error, pushToast])
+  }, [media.state.error, media.state.sourceGeneration, pushToast])
 
-  // The welcome guide's Start button opens the chosen source and then begins checking.
-  // Nothing is opened before that explicit click.
   const [launchPending, setLaunchPending] = useState(false)
-  // Source generation and error at launch, so stale state from earlier attempts is ignored.
-  const launchBaselineRef = useRef({ generation: 0, error: null as string | null })
-  const handleWelcomeLaunch = useCallback(
-    (source: WelcomeSource) => {
-      speech.unlockAudio()
-      launchBaselineRef.current = {
-        generation: media.state.sourceGeneration,
-        error: media.state.error,
-      }
-      setLaunchPending(true)
-      if (source === 'camera') void media.startCamera()
-      else void media.startScreenShare()
-    },
-    [media, speech],
-  )
+  const launchSequenceRef = useRef(0)
+  const handleWelcomeLaunch = async (source: LiveSource) => {
+    const sequence = ++launchSequenceRef.current
+    setLaunchPending(true)
+    try {
+      if (source === 'camera') await media.startCamera()
+      else await media.startScreenShare()
+    } finally {
+      if (sequence === launchSequenceRef.current) setLaunchPending(false)
+    }
+  }
 
   useEffect(() => {
     if (!launchPending) return
-    const baseline = launchBaselineRef.current
-    if (media.state.sourceGeneration !== baseline.generation) {
-      if (media.state.kind === 'none') {
-        // Permission denied or capture failed; the error toast explains why.
-        setLaunchPending(false)
-        return
-      }
-      if (media.state.ready) {
-        setLaunchPending(false)
-        setMonitoring(true)
-        return
-      }
-    } else if (media.state.error && media.state.error !== baseline.error) {
+    // Browsers may leave a permission request unresolved when the prompt is dismissed.
+    const timer = window.setTimeout(() => {
+      launchSequenceRef.current += 1
       setLaunchPending(false)
-      return
-    }
-    // Give up if the permission prompt is dismissed without an error being reported.
-    const timer = window.setTimeout(() => setLaunchPending(false), LAUNCH_TIMEOUT_MS)
+      clearSource('The source took too long to open. Try again.')
+    }, LAUNCH_TIMEOUT_MS)
     return () => window.clearTimeout(timer)
-  }, [
-    launchPending,
-    media.state.error,
-    media.state.kind,
-    media.state.ready,
-    media.state.sourceGeneration,
-  ])
+  }, [clearSource, launchPending])
+  useEffect(() => {
+    if (!starting) return
+    const timer = window.setTimeout(() => {
+      startSequenceRef.current += 1
+      setStarting(false)
+      pushToast({ message: 'The preview took too long to start. Try again.', tone: 'error' })
+    }, PREVIEW_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [pushToast, starting])
 
   // Home screen: the welcome guide is the only path until a source is live.
   const onboarding = media.state.kind === 'none'
 
-  const activeMediaElement =
-    media.state.kind === 'image' ? media.imageElRef.current : media.videoElRef.current
+  const activeMediaElement = media.videoElRef.current
+  const processingReady = media.state.ready && media.state.videoPlaying
 
   const alertModeRef = useRef(alertMode)
   alertModeRef.current = alertMode
@@ -352,9 +354,10 @@ export function App() {
     [pushToast],
   )
 
+  const analysisConfigured = health?.analysis_configured ?? false
   const monitor = useBoardMonitor({
     mediaSource: activeMediaElement,
-    mediaReady: media.state.ready,
+    mediaReady: processingReady && analysisConfigured && !healthFailed,
     sourceGeneration: media.state.sourceGeneration,
     monitoring,
     calibrationEditing,
@@ -365,12 +368,11 @@ export function App() {
     onVerificationResult: handleVerificationResult,
   })
 
-  const notesActive = health?.analysis_configured ?? false
   const notesBuilder = useNotesBuilder({
     mediaSource: activeMediaElement,
-    mediaReady: media.state.ready,
+    mediaReady: processingReady,
     sourceGeneration: media.state.sourceGeneration,
-    enabled: notesActive,
+    enabled: analysisConfigured && !healthFailed,
     calibrationEditing,
     committedCorners,
   })
@@ -384,21 +386,40 @@ export function App() {
   }
 
   const handleExportPrint = () => {
-    const blob = new Blob([exportPrintHtml(notesBuilder.notes)], { type: 'text/html' })
-    const url = URL.createObjectURL(blob)
-    const win = window.open(url, '_blank')
-    if (win) {
-      win.addEventListener('load', () => win.print())
-    } else {
+    const win = window.open('', '_blank')
+    if (!win) {
       pushToast({ message: 'Allow pop-ups to open the printable notes.', tone: 'info' })
+      return
     }
-    window.setTimeout(() => URL.revokeObjectURL(url), 60_000)
+    win.opener = null
+    win.document.open()
+    win.addEventListener('load', async () => {
+      // A print window has its own font set. Load the studio face before opening the dialog.
+      try {
+        const url = new URL('./app/fonts/dm-sans.woff2', import.meta.url)
+        const font = new FontFace('DM Sans', 'url("' + url.href + '")', { weight: '100 1000' })
+        win.document.fonts.add(await font.load())
+      } catch {
+        // The printable document also has a built-in sans serif fallback.
+      }
+      if (win.closed) return
+      win.focus()
+      win.print()
+    }, { once: true })
+    win.document.write(exportPrintHtml(notesBuilder.notes))
+    win.document.close()
   }
 
   markSpokenRef.current = monitor.markSpoken
   monitorCallbacksRef.current = {
-    onGeometryChange: monitor.resetSession,
-    onVideoSeek: monitor.handleVideoSeek,
+    onGeometryChange: () => {
+      monitor.resetSession()
+      notesBuilder.resetTracking()
+    },
+    onVideoSeek: () => {
+      monitor.handleVideoSeek()
+      notesBuilder.resetTracking()
+    },
   }
 
   // Surface latest API error cleanly as a single toast with Retry.
@@ -409,10 +430,10 @@ export function App() {
     const err = monitor.state.apiError
     if (!err) return
     // The setup banner already explains an unreachable or unconfigured backend.
-    if (healthError !== null || (health !== null && !health.analysis_configured)) return
+    if (healthFailed || !analysisConfigured) return
     const msg =
       err.retryAfterSeconds !== null
-        ? `${err.message} (retrying in ${err.retryAfterSeconds}s)`
+        ? `${err.message} Retrying in ${err.retryAfterSeconds}s.`
         : err.message
     pushToast(
       {
@@ -423,11 +444,10 @@ export function App() {
       },
       5500,
     )
-  }, [monitor.state.apiError, pushToast, health, healthError])
+  }, [monitor.state.apiError, pushToast, analysisConfigured, healthFailed])
 
-  const runAutomaticBoardDetection = useCallback(async () => {
-    const mediaEl =
-      media.state.kind === 'image' ? media.imageElRef.current : media.videoElRef.current
+  const runAutomaticBoardDetection = async () => {
+    const mediaEl = media.videoElRef.current
     if (!mediaEl || !media.state.ready) {
       setCalibrationDetectStatus('fallback')
       return
@@ -436,7 +456,6 @@ export function App() {
     abortBoardDetection()
     const controller = new AbortController()
     detectAbortRef.current = controller
-    userEditedDraftRef.current = false
     setCalibrationDetectStatus('detecting')
 
     try {
@@ -450,9 +469,7 @@ export function App() {
       if (controller.signal.aborted) return
 
       if (result.detected && result.corners && validateCalibrationQuad(result.corners).valid) {
-        if (!userEditedDraftRef.current) {
-          setDraftCorners(result.corners)
-        }
+        setDraftCorners(result.corners)
         setCalibrationDetectStatus('detected')
       } else {
         setCalibrationDetectStatus('fallback')
@@ -466,30 +483,60 @@ export function App() {
         detectAbortRef.current = null
       }
     }
-  }, [abortBoardDetection, media.imageElRef, media.state.kind, media.state.ready, media.videoElRef])
+  }
 
   // Back to the landing page: release the camera/screen/file. clearSource triggers the normal
   // source reset, which stops monitoring and clears findings, calibration, and speech history.
   const handleGoHome = () => {
     speech.cancelAll()
+    launchSequenceRef.current += 1
     setLaunchPending(false)
-    setSettingsOpen(false)
-    media.clearSource()
+    setSelectedSource(null)
+    setActivePanel(null)
+    clearSource()
   }
 
-  const handleToggleMonitoring = () => {
-    if (!media.state.ready) return
-    setLaunchPending(false)
-    if (!monitoring) {
-      speech.unlockAudio()
-    }
-    setMonitoring((prev) => {
-      const next = !prev
-      if (!next) {
-        speech.cancelAll()
+  const playCurrentVideo = async () => {
+    const video = media.videoElRef.current
+    const { stream, objectUrl } = media.state
+    if (!video || (!stream && !objectUrl)) return false
+
+    const isCurrentSource = () => stream ? video.srcObject === stream : video.src === objectUrl
+    if (!isCurrentSource()) return false
+    try {
+      await video.play()
+      return isCurrentSource()
+    } catch (err) {
+      if (isCurrentSource() && !isAbortError(err)) {
+        pushToast({ message: 'The preview couldn’t start. Try playing it again.', tone: 'error' })
       }
-      return next
-    })
+      return false
+    }
+  }
+
+  const handleToggleVideoPlayback = () => {
+    const video = media.videoElRef.current
+    if (!video) return
+    if (video.paused || video.ended) void playCurrentVideo()
+    else video.pause()
+  }
+
+  const handleToggleMonitoring = async () => {
+    if (monitoring) {
+      setMonitoring(false)
+      speech.cancelAll()
+      return
+    }
+    if (starting || media.state.kind === 'none') return
+    if ((!analysisConfigured || healthFailed) && !checkingHealth) retryHealth()
+
+    speech.unlockAudio()
+    const sequence = ++startSequenceRef.current
+    setStarting(true)
+    const started = await playCurrentVideo()
+    if (sequence !== startSequenceRef.current) return
+    setStarting(false)
+    if (started) setMonitoring(true)
   }
 
   const handleChangeAlertMode = (mode: AlertMode) => {
@@ -508,15 +555,19 @@ export function App() {
     syncActiveIssueIds(new Set(openIssues.map((item) => item.id)))
   }, [openIssues, syncActiveIssueIds])
 
-  const showVisualFindings = alertMode !== 'voice_only'
+  const showVisualFindings = alertMode !== 'voice_only' || !speech.isSupported || speech.speechError !== null
+  const closeCalibration = () => {
+    abortBoardDetection()
+    setCalibrationEditing(false)
+    setCalibrationDetectStatus('idle')
+    document.getElementById('crop-toggle')?.focus()
+  }
+
   const handleToggleCalibration = () => {
     if (!media.state.ready) return
     if (calibrationEditing) {
-      abortBoardDetection()
-      setCalibrationEditing(false)
-      setCalibrationDetectStatus('idle')
+      closeCalibration()
     } else {
-      userEditedDraftRef.current = false
       setDraftCorners(committedCorners ?? DEFAULT_CALIBRATION_CORNERS)
       setCalibrationEditing(true)
       if (!committedCorners) {
@@ -528,96 +579,90 @@ export function App() {
   }
 
   const handleChangeDraftCorners = (next: CalibrationCorners) => {
-    userEditedDraftRef.current = true
+    if (detectAbortRef.current) {
+      abortBoardDetection()
+      setCalibrationDetectStatus('idle')
+    }
     setDraftCorners(next)
   }
 
   const handleApplyCalibration = () => {
-    abortBoardDetection()
     speech.resetHistory()
     setCommittedCorners(draftCorners)
-    setCalibrationEditing(false)
-    setCalibrationDetectStatus('idle')
+    closeCalibration()
   }
 
   const handleResetCrop = () => {
-    abortBoardDetection()
     speech.resetHistory()
     setCommittedCorners(null)
     setDraftCorners(DEFAULT_CALIBRATION_CORNERS)
-    setCalibrationEditing(false)
-    setCalibrationDetectStatus('idle')
+    closeCalibration()
   }
 
-  const handleCancelCalibration = () => {
-    abortBoardDetection()
-    setCalibrationEditing(false)
-    setCalibrationDetectStatus('idle')
-  }
-
-  const backendNeedsSetup = healthError !== null || (health !== null && !health.analysis_configured)
+  const backendNeedsSetup = healthFailed || (health !== null && !analysisConfigured)
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-surface text-zinc-900">
+    <div className="flex h-dvh flex-col overflow-hidden bg-surface text-ink">
       <TopBar
-        mediaReady={media.state.ready}
+        starting={starting}
         monitoring={monitoring}
-        onToggleMonitoring={handleToggleMonitoring}
+        onToggleMonitoring={() => void handleToggleMonitoring()}
         onboarding={onboarding}
         onGoHome={handleGoHome}
         notesOpen={notesOpen}
         notesCount={notesBuilder.notes.sections.length}
-        notesActive={notesActive && media.state.ready && !calibrationEditing}
-        onToggleNotes={() => setNotesOpen((prev) => !prev)}
+        onToggleNotes={() => setActivePanel((panel) => panel === 'notes' ? null : 'notes')}
         settingsOpen={settingsOpen}
-        onToggleSettings={() => setSettingsOpen((prev) => !prev)}
-        canCrop={media.state.ready && media.state.kind !== 'screen' && !calibrationEditing}
+        onToggleSettings={() => setActivePanel((panel) => panel === 'settings' ? null : 'settings')}
+        canCrop={media.state.ready && media.state.kind !== 'screen'}
         cropped={committedCorners !== null}
+        calibrationEditing={calibrationEditing}
         onToggleCrop={handleToggleCalibration}
       />
 
       {backendNeedsSetup && (
-        <div
-          role="alert"
-          className="flex items-center justify-center border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-xs text-amber-800"
-        >
-          {healthError
-            ? 'Backend unreachable. Start the FastAPI server on port 8000.'
-            : 'Set GEMINI_API_KEY in .env and restart the backend.'}
+        <div className="flex shrink-0 items-center justify-center gap-3 border-b border-warn-line bg-warn-soft px-4 py-2 text-sm text-warn animate-fade-in">
+          <p role="status" className="flex items-start gap-2">
+            <CircleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+            {healthFailed ? 'Board checks and notes are offline. Check your connection and try again.' : 'Board checks and notes need a Gemini connection. You can still use the preview.'}
+          </p>
+          <button type="button" className="ui-button ui-compact" disabled={checkingHealth} onClick={retryHealth}>
+            {checkingHealth ? 'Checking…' : 'Retry'}
+          </button>
         </div>
       )}
 
       <Toasts toasts={toasts} onDismiss={dismissToast} />
 
-      <div className="relative flex flex-1 min-h-0 flex-col md:flex-row overflow-hidden">
+      <div data-panel-open={activePanel !== null && !onboarding} className={onboarding
+        ? 'relative flex min-h-0 flex-1 overflow-hidden'
+        : 'group relative flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto p-2 sm:gap-3 sm:p-3 lg:flex-row lg:overflow-hidden'}
+      >
         <NotesPanel
           open={notesOpen && !onboarding}
-          active={notesActive && media.state.ready && !calibrationEditing}
-          configured={health?.analysis_configured ?? false}
+          active={analysisConfigured && !healthFailed && processingReady && !calibrationEditing}
+          configured={analysisConfigured && !healthFailed}
+          editingCrop={calibrationEditing}
           phase={notesBuilder.phase}
           error={notesBuilder.error}
           notes={notesBuilder.notes}
-          onToggleOpen={() => setNotesOpen((prev) => !prev)}
+          onClose={() => setActivePanel(null)}
           onExportMarkdown={handleExportMarkdown}
           onExportLatex={handleExportLatex}
           onExportPrint={handleExportPrint}
-          onClear={() => {
-            if (window.confirm('Clear all lecture notes? This cannot be undone.')) {
-              notesBuilder.clear()
-            }
-          }}
+          onClear={() => notesBuilder.clear()}
         />
         <Stage
           mediaState={media.state}
           videoElRef={media.videoElRef}
-          imageElRef={media.imageElRef}
-          onStartCamera={() => void media.startCamera()}
-          onStartScreenShare={() => void media.startScreenShare()}
+          onToggleVideoPlayback={handleToggleVideoPlayback}
+          onPlayPreview={() => void playCurrentVideo()}
+          canMonitor={analysisConfigured && !healthFailed}
           monitoring={monitoring}
+          starting={starting}
           phase={monitor.state.phase}
           showOverlays={showVisualFindings}
           openIssues={openIssues}
-          locationsUnverified={monitor.state.locationsUnverified}
           selectedIssueId={selectedIssueId}
           hoveredIssueId={hoveredIssueId}
           onSelectIssue={setSelectedIssueId}
@@ -630,17 +675,16 @@ export function App() {
           onAutoDetectCalibration={() => void runAutomaticBoardDetection()}
           onApplyCalibration={handleApplyCalibration}
           onResetCrop={handleResetCrop}
-          onCancelCalibration={handleCancelCalibration}
-          onUserVideoSeekOrRestart={monitor.handleVideoSeek}
-          startHint
+          onCancelCalibration={closeCalibration}
           welcome={
             <WelcomeGuide
-              onLaunch={handleWelcomeLaunch}
+              source={selectedSource}
+              onChangeSource={setSelectedSource}
+              onLaunch={(source) => void handleWelcomeLaunch(source)}
+              onUpload={media.loadUploadedFile}
               launching={launchPending && media.state.kind === 'none'}
-              talkativeness={voicePreferences.talkativeness}
-              onChangeTalkativeness={(talkativeness) =>
-                handleChangeVoicePreferences({ talkativeness })
-              }
+              speechStyle={voicePreferences.speechStyle}
+              onChangeSpeechStyle={(speechStyle) => handleChangeVoicePreferences({ speechStyle })}
               alertMode={alertMode}
               onChangeAlertMode={handleChangeAlertMode}
             />
@@ -650,15 +694,11 @@ export function App() {
         {!onboarding && (
           <SettingsPanel
             open={settingsOpen}
-            onClose={() => setSettingsOpen(false)}
+            onClose={() => setActivePanel(null)}
             alertMode={alertMode}
             onChangeAlertMode={handleChangeAlertMode}
             answerFormat={answerFormat}
             onChangeAnswerFormat={handleChangeAnswerFormat}
-            talkativeness={voicePreferences.talkativeness}
-            onChangeTalkativeness={(talkativeness) =>
-              handleChangeVoicePreferences({ talkativeness })
-            }
             voiceSettings={{
               preferences: effectiveVoicePreferences,
               onChange: handleChangeVoicePreferences,
@@ -669,7 +709,7 @@ export function App() {
               onRetryVoices: retryVoices,
               previewingVoice: speech.previewingVoice,
               onPreviewVoice: speech.isSupported ? speech.previewVoice : undefined,
-              onStopPreview: speech.cancelAll,
+              onStopPreview: speech.stopPreview,
             }}
           />
         )}
