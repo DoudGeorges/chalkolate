@@ -1,4 +1,4 @@
-import { Download, FileText, Printer, Trash2, X } from 'lucide-react'
+import { Download, Printer, Trash2, X } from 'lucide-react'
 import { useMemo } from 'react'
 import { NotesPhase } from '../hooks/useNotesBuilder'
 import { NotesDocument, renderNotesBodyHtml } from '../lib/notes'
@@ -54,18 +54,6 @@ export function NotesPanel({
 
   return (
     <>
-      <button
-        type="button"
-        onClick={onToggleOpen}
-        aria-expanded={open}
-        aria-label="Toggle lecture notes"
-        className="absolute bottom-3 left-3 z-20 flex h-8 items-center gap-1.5 rounded-full border border-line bg-white px-3 text-xs text-zinc-700 hover:bg-zinc-100"
-      >
-        <FileText className="h-3.5 w-3.5" aria-hidden />
-        Notes{count > 0 ? ` (${count})` : ''}
-        {active && <span className="h-1.5 w-1.5 rounded-full bg-rose-500" aria-hidden />}
-      </button>
-
       {open && (
         <aside
           aria-label="Lecture notes"

@@ -1,4 +1,4 @@
-import { Camera, Crop, MonitorUp, Play } from 'lucide-react'
+import { Camera, MonitorUp, Play } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { CalibrationCorners } from '../api/schemas'
 import { MonitorPhase } from '../hooks/useBoardMonitor'
@@ -29,7 +29,6 @@ export interface StageProps {
   draftCorners: CalibrationCorners
   committedCorners: CalibrationCorners | null
   onChangeDraftCorners: (next: CalibrationCorners) => void
-  onToggleCalibration: () => void
   onAutoDetectCalibration: () => void
   onApplyCalibration: () => void
   onResetCrop: () => void
@@ -61,7 +60,6 @@ export function Stage({
   draftCorners,
   committedCorners,
   onChangeDraftCorners,
-  onToggleCalibration,
   onAutoDetectCalibration,
   onApplyCalibration,
   onResetCrop,
@@ -249,7 +247,7 @@ export function Stage({
         <div
           role="status"
           aria-live="polite"
-          className="pointer-events-none absolute bottom-4 left-28 z-20 inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 shadow-sm"
+          className="pointer-events-none absolute bottom-4 left-4 z-20 inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 shadow-sm"
         >
           <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" aria-hidden="true" />
           <span>Analyzing…</span>
@@ -269,21 +267,6 @@ export function Stage({
             onUserSeekOrRestart={onUserVideoSeekOrRestart}
           />
         </div>
-      )}
-
-      {/* Bottom-right crop control */}
-      {mediaState.ready && mediaState.kind !== 'screen' && !calibrationEditing && (
-        <button
-          type="button"
-          onClick={onToggleCalibration}
-          title={committedCorners ? 'Adjust the board crop' : 'Crop to just the board'}
-          className={`absolute right-4 bottom-4 z-20 inline-flex h-10 items-center gap-2 rounded-full border bg-white px-4 text-sm font-medium shadow-lg transition hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
-            committedCorners ? 'border-accent text-zinc-900' : 'border-line text-zinc-800'
-          }`}
-        >
-          <Crop className="h-4.5 w-4.5" aria-hidden="true" />
-          {committedCorners ? 'Adjust crop' : 'Crop board'}
-        </button>
       )}
     </main>
   )

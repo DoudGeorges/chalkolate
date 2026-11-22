@@ -565,6 +565,13 @@ export function App() {
         onToggleMonitoring={handleToggleMonitoring}
         onboarding={onboarding}
         onGoHome={handleGoHome}
+        notesOpen={notesOpen}
+        notesCount={notesBuilder.notes.sections.length}
+        notesActive={notesActive && media.state.ready && !calibrationEditing}
+        onToggleNotes={() => setNotesOpen((prev) => !prev)}
+        canCrop={media.state.ready && media.state.kind !== 'screen' && !calibrationEditing}
+        cropped={committedCorners !== null}
+        onToggleCrop={handleToggleCalibration}
       />
 
       {backendNeedsSetup && (
@@ -601,7 +608,6 @@ export function App() {
           draftCorners={draftCorners}
           committedCorners={committedCorners}
           onChangeDraftCorners={handleChangeDraftCorners}
-          onToggleCalibration={handleToggleCalibration}
           onAutoDetectCalibration={() => void runAutomaticBoardDetection()}
           onApplyCalibration={handleApplyCalibration}
           onResetCrop={handleResetCrop}
