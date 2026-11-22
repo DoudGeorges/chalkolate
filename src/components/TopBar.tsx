@@ -20,7 +20,7 @@ export function TopBar({
     <header className="relative z-40 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-line bg-white px-4">
       {/* Left: wordmark + way back to the landing page once a source is live */}
       <div className="flex min-w-0 items-center gap-3">
-        <span className="text-sm font-semibold tracking-tight text-zinc-900 select-none">
+        <span className="font-chalk text-xl leading-none text-zinc-900 select-none">
           Chalkolate
         </span>
         {!onboarding && onGoHome && (
