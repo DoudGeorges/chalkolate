@@ -84,6 +84,9 @@ logger = logging.getLogger("chalkolate.api")
 
 MAX_SPEECH_BODY_BYTES = 4096
 PARTIAL_ANALYSIS_HEADER = "X-Chalkolate-Partial-Analysis"
+# Every API response is per-request user data (board findings, notes, audio). Forbid browsers,
+# Vercel's CDN, and any intermediary from storing or replaying one to another caller.
+NO_STORE_CACHE_CONTROL = "no-store, private"
 
 
 class ConcurrencyGate:
@@ -146,7 +149,7 @@ class SpeechStreamingResponse(StreamingResponse):
         super().__init__(
             opened.iter_chunks(),
             media_type=opened.media_type,
-            headers={"Cache-Control": "no-store"},
+            headers={"Cache-Control": NO_STORE_CACHE_CONTROL},
         )
         self.opened = opened
         self.gate = gate
@@ -161,6 +164,28 @@ class SpeechStreamingResponse(StreamingResponse):
                     await self.opened.aclose()
             finally:
                 self.gate.release()
+
+
+class NoStoreCacheMiddleware:
+    """Mark every HTTP response ``Cache-Control: no-store, private`` unless already set."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_no_store(message: Message) -> None:
+            if message.get("type") == "http.response.start":
+                headers = list(message.get("headers", ()))
+                if not any(name.lower() == b"cache-control" for name, _ in headers):
+                    headers.append((b"cache-control", NO_STORE_CACHE_CONTROL.encode("ascii")))
+                    message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_no_store)
 
 
 class _StreamedBodyLimitExceeded(BaseException):
@@ -257,6 +282,7 @@ async def _send_error_json(
             "headers": [
                 (b"content-type", b"application/json"),
                 (b"content-length", str(len(body)).encode("ascii")),
+                (b"cache-control", NO_STORE_CACHE_CONTROL.encode("ascii")),
             ],
         }
     )
@@ -272,10 +298,12 @@ def _error_response(
     headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     envelope = ErrorEnvelope(code=code, message=message, request_id=request_id)
+    # Set here as well as in NoStoreCacheMiddleware: the catch-all 500 handler runs in
+    # Starlette's ServerErrorMiddleware, outside every user middleware.
     return JSONResponse(
         status_code=status_code,
         content=envelope.model_dump(),
-        headers=dict(headers) if headers else None,
+        headers={"Cache-Control": NO_STORE_CACHE_CONTROL, **(headers or {})},
     )
 
 
@@ -526,6 +554,8 @@ def create_app(
             allow_headers=["Content-Type"],
             expose_headers=["Retry-After", PARTIAL_ANALYSIS_HEADER],
         )
+    # Added last so it is the outermost user middleware and also covers early 413/400 replies.
+    app.add_middleware(NoStoreCacheMiddleware)
 
     @app.exception_handler(RequestValidationError)
     async def handle_request_validation(
