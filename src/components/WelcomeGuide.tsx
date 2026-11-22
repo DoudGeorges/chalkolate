@@ -55,14 +55,14 @@ export function WelcomeGuide({
         aria-labelledby="session-heading"
       >
         <h1 id="session-heading" className="ui-title">
-          Set up your session
+          Logo
         </h1>
         <p className="ui-copy mt-2">
           Open a board preview, then select Start when you want to check for mistakes.
         </p>
         <div className="mt-6 space-y-5 border-t border-line pt-6">
-          <OptionGroup label="Board source" value={source} onChange={onChangeSource} options={SOURCES} disabled={launching} />
-          <OptionGroup label="Alerts" value={alertMode} onChange={onChangeAlertMode} options={ALERT_MODE_OPTIONS} />
+          <OptionGroup label="Source" value={source} onChange={onChangeSource} options={SOURCES} disabled={launching} />
+          <OptionGroup label="Feedback" value={alertMode} onChange={onChangeAlertMode} options={ALERT_MODE_OPTIONS} />
           {alertMode !== 'visual_only' && (
             <SpeechStylePicker value={speechStyle} onChange={onChangeSpeechStyle} />
           )}

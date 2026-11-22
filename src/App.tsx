@@ -58,7 +58,7 @@ export function App() {
   const [monitoring, setMonitoring] = useState(false)
   const [starting, setStarting] = useState(false)
   const startSequenceRef = useRef(0)
-  const [selectedSource, setSelectedSource] = useState<WelcomeSource | null>(null)
+  const [selectedSource, setSelectedSource] = useState<WelcomeSource | null>('camera')
   const [alertMode, setAlertMode] = useState<AlertMode>('voice_visual')
   const [answerFormat, setAnswerFormat] = useState<AnswerFormat>(() => {
     try {
@@ -491,7 +491,7 @@ export function App() {
     speech.cancelAll()
     launchSequenceRef.current += 1
     setLaunchPending(false)
-    setSelectedSource(null)
+    setSelectedSource('camera')
     setActivePanel(null)
     clearSource()
   }

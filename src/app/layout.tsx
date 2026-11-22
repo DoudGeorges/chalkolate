@@ -20,7 +20,16 @@ const chalk = localFont({
 
 export const metadata: Metadata = {
   title: 'Chalkolate',
-  icons: { icon: '/icon.svg' },
+  icons: {
+    icon: [
+      { url: '/favicon-96x96.png', sizes: '96x96', type: 'image/png' },
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+    ],
+    shortcut: '/favicon.ico',
+    apple: { url: '/apple-touch-icon.png', sizes: '180x180' },
+  },
+  appleWebApp: { title: 'Chalkolate' },
+  manifest: '/site.webmanifest',
 }
 
 export const viewport: Viewport = {

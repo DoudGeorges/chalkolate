@@ -28,7 +28,7 @@
 
 Page `<title>` is exactly "Chalkolate".
 
-UI theme: solid light theme (DM Sans for interface text and headings. The Chalkolate wordmark uses Fredericka the Great (a wordmark-only subset) via `next/font/local` → `--font-fredericka` → `font-chalk`; `src/app/globals.css` tokens use sage backgrounds, white panels, green-gray borders, dark ink, accessible secondary text, success, danger, and warning tokens, and chalkboard green for primary actions and selected controls, shared `--animate-*` motion tokens with `prefers-reduced-motion` honored, and `public/icon.svg` (via `metadata.icons`) as the favicon); no `backdrop-blur` or translucent glass surfaces.
+UI theme: solid light theme (DM Sans for interface text and headings. The Chalkolate wordmark uses Fredericka the Great (a wordmark-only subset) via `next/font/local` → `--font-fredericka` → `font-chalk`; `src/app/globals.css` tokens use sage backgrounds, white panels, green-gray borders, dark ink, accessible secondary text, success, danger, and warning tokens, and chalkboard green for primary actions and selected controls, shared `--animate-*` motion tokens with `prefers-reduced-motion` honored, and the favicon set in `public/` (`favicon.svg`, `favicon-96x96.png`, `favicon.ico`, `apple-touch-icon.png`, plus `site.webmanifest` with 192/512 web-app icons) wired via `metadata.icons` and `metadata.manifest`); no `backdrop-blur` or translucent glass surfaces.
 
 ## Key Engineering Invariants
 

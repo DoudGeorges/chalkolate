@@ -8,7 +8,7 @@ export interface VoicePreferences {
 
 export const DEFAULT_VOICE_PREFERENCES: VoicePreferences = {
   elevenLabsVoice: 'default',
-  speechStyle: 'student',
+  speechStyle: 'professor',
 }
 
 const VOICE_PREFERENCES_STORAGE_KEY = 'chalkolate.voicePreferences.v1'

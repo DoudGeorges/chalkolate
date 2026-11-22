@@ -13,14 +13,12 @@ export function OptionGroup<T extends string>({
   value,
   onChange,
   options,
-  layout = 'tile',
   disabled = false,
 }: {
   label: string
   value: T | null
   onChange: (value: T) => void
   options: readonly Option<T>[]
-  layout?: 'tile' | 'choice'
   disabled?: boolean
 }) {
   const name = useId()
@@ -29,7 +27,7 @@ export function OptionGroup<T extends string>({
       <legend className="ui-label mb-2">{label}</legend>
       <div className={options.length === 2 ? 'grid grid-cols-2 gap-2' : 'grid grid-cols-3 gap-2'}>
         {options.map(({ id, label: optionLabel, icon: Icon, detail }) => (
-          <label key={id} className="option-card" data-layout={layout}>
+          <label key={id} className="option-card">
             <input
               type="radio"
               name={name}
@@ -38,7 +36,7 @@ export function OptionGroup<T extends string>({
               onChange={() => onChange(id)}
               aria-labelledby={name + id}
               aria-describedby={detail ? name + id + '-detail' : undefined}
-              className={layout === 'choice' ? 'option-radio' : 'sr-only'}
+              className="sr-only"
             />
             {Icon && <Icon aria-hidden="true" />}
             <span id={name + id}>{optionLabel}</span>
