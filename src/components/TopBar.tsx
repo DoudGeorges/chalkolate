@@ -89,9 +89,9 @@ export function TopBar({
             aria-pressed={monitoring}
             title={monitoring ? 'Stop mistake checks and spoken alerts' : 'Start mistake checks'}
             onClick={onToggleMonitoring}
-            className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold leading-none transition duration-150 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
+            className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium leading-none transition duration-150 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
               monitoring
-                ? 'border border-line bg-white text-zinc-900 shadow-sm hover:bg-zinc-100'
+                ? 'border border-line bg-white text-zinc-900 hover:bg-zinc-50'
                 : 'bg-accent text-white hover:brightness-105'
             }`}
           >
