@@ -20,8 +20,6 @@ dependencies = [
 [dependency-groups]
 dev = [
     "mypy>=1.15.0,<2.0.0",
-    "pytest>=9.0.3,<10.0.0",
-    "pytest-asyncio>=0.25.0,<2.0.0",
     "ruff>=0.9.0,<1.0.0",
 ]
 
@@ -51,9 +49,3 @@ plugins = ["pydantic.mypy"]
 init_forbid_extra = true
 init_typed = true
 warn_required_dynamic_aliases = true
-
-[tool.pytest.ini_options]
-pythonpath = ["server"]
-testpaths = ["server/tests"]
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"

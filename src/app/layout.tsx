@@ -8,7 +8,7 @@ import './globals.css'
 const chalk = Fredericka_the_Great({ weight: '400', subsets: ['latin'], display: 'swap', variable: '--font-fredericka' })
 
 export const metadata: Metadata = {
-  title: 'Chalkolate — Lecture Board Monitor',
+  title: 'Chalkolate',
 }
 
 export const viewport: Viewport = {

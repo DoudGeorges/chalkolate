@@ -36,10 +36,11 @@ class Settings:
     speech_max_concurrency: int = 2
     speech_rate_limit_per_minute: int = 30
     confidence_threshold: float = 0.85
-    analysis_max_concurrency: int = 2
+    analysis_max_concurrency: int = 6
     analysis_timeout_seconds: float = 12.0
     analysis_max_output_tokens: int = 4096
-    notes_max_concurrency: int = 1
+    notes_max_concurrency: int = 4
+    per_client_max_concurrency: int = 2
     notes_timeout_seconds: float = 40.0
     notes_max_output_tokens: int = 6144
     max_upload_bytes: int = 10 * 1024 * 1024
@@ -62,6 +63,8 @@ class Settings:
             raise ConfigurationError("ANALYSIS_TIMEOUT_SECONDS must be > 0.")
         if self.analysis_max_output_tokens < 64:
             raise ConfigurationError("ANALYSIS_MAX_OUTPUT_TOKENS must be >= 64.")
+        if self.per_client_max_concurrency < 1:
+            raise ConfigurationError("PER_CLIENT_MAX_CONCURRENCY must be >= 1.")
         if self.notes_max_concurrency < 1:
             raise ConfigurationError("NOTES_MAX_CONCURRENCY must be >= 1.")
         if self.notes_timeout_seconds <= 0:
@@ -185,10 +188,11 @@ def load_settings(
         speech_max_concurrency=_get_int(env, "SPEECH_MAX_CONCURRENCY", 2),
         speech_rate_limit_per_minute=_get_int(env, "SPEECH_RATE_LIMIT_PER_MINUTE", 30),
         confidence_threshold=_get_float(env, "ANALYSIS_CONFIDENCE_THRESHOLD", 0.85),
-        analysis_max_concurrency=_get_int(env, "ANALYSIS_MAX_CONCURRENCY", 2),
+        analysis_max_concurrency=_get_int(env, "ANALYSIS_MAX_CONCURRENCY", 6),
         analysis_timeout_seconds=_get_float(env, "ANALYSIS_TIMEOUT_SECONDS", 12.0),
         analysis_max_output_tokens=_get_int(env, "ANALYSIS_MAX_OUTPUT_TOKENS", 4096),
-        notes_max_concurrency=_get_int(env, "NOTES_MAX_CONCURRENCY", 1),
+        notes_max_concurrency=_get_int(env, "NOTES_MAX_CONCURRENCY", 4),
+        per_client_max_concurrency=_get_int(env, "PER_CLIENT_MAX_CONCURRENCY", 2),
         notes_timeout_seconds=_get_float(env, "NOTES_TIMEOUT_SECONDS", 40.0),
         notes_max_output_tokens=_get_int(env, "NOTES_MAX_OUTPUT_TOKENS", 6144),
         max_upload_bytes=_get_int(env, "MAX_UPLOAD_BYTES", 10 * 1024 * 1024),
