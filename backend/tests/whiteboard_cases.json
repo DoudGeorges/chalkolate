@@ -1,0 +1,252 @@
+
+[
+    {
+      "id": "arithmetic_error",
+      "category": "mathematics",
+      "input": "2 + 2 = 5",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "Correct answer is 4."
+    },
+    {
+      "id": "correct_arithmetic",
+      "category": "mathematics",
+      "input": "3 * 4 = 12",
+      "expected_error": false,
+      "actual_error": null,
+      "notes": "Correct arithmetic should not be flagged."
+    },
+    {
+      "id": "matrix_correct",
+      "category": "linear_algebra",
+      "input": "A=[[1,2],[3,4]], A*I=A",
+      "expected_error": false,
+      "actual_error": null,
+      "notes": "Multiplying by identity matrix gives A."
+    },
+    {
+      "id": "matrix_incorrect",
+      "category": "linear_algebra",
+      "input": "A=[[1,2],[3,4]], A*I=[[1,2],[3,5]]",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "Bottom-right entry should be 4."
+    },
+    {
+      "id": "graph_correct",
+      "category": "graphs",
+      "input": "Upward parabola labeled y=x^2",
+      "expected_error": false,
+      "actual_error": null,
+      "notes": "Correct graph and label."
+    },
+    {
+      "id": "graph_incorrect",
+      "category": "graphs",
+      "input": "Downward parabola labeled y=x^2",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "Graph should open upward."
+    },
+    {
+      "id": "color_colour",
+      "category": "spelling",
+      "input": "color / colour",
+      "expected_error": false,
+      "actual_error": null,
+      "notes": "Both US and UK spellings are valid."
+    },
+    {
+      "id": "korean_correct",
+      "category": "language",
+      "input": "안녕하세요",
+      "expected_error": false,
+      "actual_error": null,
+      "notes": "Correct Korean greeting."
+    },
+    {
+      "id": "korean_typo",
+      "category": "language",
+      "input": "안녕하새요",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "Correct spelling is 안녕하세요."
+    },
+    {
+      "id": "unit_conversion",
+      "category": "physics",
+      "input": "5 km = 500 m",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "5 km equals 5000 m."
+    },
+    {
+      "id": "incomplete_equation",
+      "category": "real_time_detection",
+      "input": "x^2 +",
+      "expected_error": false,
+      "actual_error": null,
+      "notes": "Wait for writing to finish."
+    },
+    {
+      "id": "matrix_multiplication_error",
+      "category": "linear_algebra",
+      "input": "A=[[1,2],[3,4]], B=[[2,0],[1,2]], AB=[[4,4],[10,9]]",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "Correct AB=[[4,4],[10,8]]."
+    },
+    {
+      "id": "determinant_error",
+      "category": "linear_algebra",
+      "input": "det([[2,3],[4,5]])=2*5+3*4=22",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "Correct determinant is -2."
+    },
+    {
+      "id": "eigenvalue_error",
+      "category": "linear_algebra",
+      "input": "A=[[2,0],[0,3]], eigenvalues=2,4",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "Eigenvalues are 2 and 3."
+    },
+    {
+      "id": "inverse_matrix_correct",
+      "category": "linear_algebra",
+      "input": "A=[[1,2],[3,4]], A^-1=[[-2,1],[1.5,-0.5]]",
+      "expected_error": false,
+      "actual_error": null,
+      "notes": "Correct inverse matrix."
+    },
+    {
+      "id": "chain_rule_error",
+      "category": "calculus",
+      "input": "f(x)=(3x^2+1)^5, f'(x)=5(3x^2+1)^4",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "Missing inner derivative 6x."
+    },
+    {
+      "id": "product_rule_error",
+      "category": "calculus",
+      "input": "f(x)=x^2*sin(x), f'(x)=2x*cos(x)",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "Correct derivative is 2x*sin(x)+x^2*cos(x)."
+    },
+    {
+      "id": "integral_correct",
+      "category": "calculus",
+      "input": "Integral of 2x dx = x^2 + C",
+      "expected_error": false,
+      "actual_error": null,
+      "notes": "Correct indefinite integral."
+    },
+    {
+      "id": "integral_error",
+      "category": "calculus",
+      "input": "Integral of x^2 dx = x^3 + C",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "Correct result is x^3/3 + C."
+    },
+    {
+      "id": "graph_slope_error",
+      "category": "graphs",
+      "input": "Graph of y=2x+1 drawn with slope -2",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "Slope should be positive 2."
+    },
+    {
+      "id": "graph_asymptote_error",
+      "category": "graphs",
+      "input": "y=1/(x-2), vertical asymptote x=-2",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "Vertical asymptote should be x=2."
+    },
+    {
+      "id": "graph_domain_correct",
+      "category": "graphs",
+      "input": "f(x)=sqrt(x-3), domain x>=3",
+      "expected_error": false,
+      "actual_error": null,
+      "notes": "Correct domain restriction."
+    },
+    {
+      "id": "kinetic_energy_error",
+      "category": "physics",
+      "input": "KE=m*v^2",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "Correct formula is KE=(1/2)*m*v^2."
+    },
+    {
+      "id": "physics_units_error",
+      "category": "physics",
+      "input": "F=m*a, units=kg*m/s",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "Force units are kg*m/s^2."
+    },
+    {
+      "id": "binary_conversion_error",
+      "category": "computer_science",
+      "input": "Binary 1011 = Decimal 13",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "Binary 1011 equals decimal 11."
+    },
+    {
+      "id": "binary_conversion_correct",
+      "category": "computer_science",
+      "input": "Binary 1101 = Decimal 13",
+      "expected_error": false,
+      "actual_error": null,
+      "notes": "Correct binary conversion."
+    },
+    {
+      "id": "big_o_error",
+      "category": "computer_science",
+      "input": "Two nested loops each running n times have O(n) time",
+      "expected_error": true,
+      "actual_error": null,
+      "notes": "Complexity is O(n^2)."
+    },
+    {
+      "id": "korean_grammar_variation",
+      "category": "language",
+      "input": "저는 학교에 가요 / 저는 학교를 가요",
+      "expected_error": false,
+      "actual_error": null,
+      "notes": "Both forms can be grammatical in context."
+    },
+    {
+      "id": "british_spelling",
+      "category": "language",
+      "input": "The colour of the centre is grey.",
+      "expected_error": false,
+      "actual_error": null,
+      "notes": "Valid British and Canadian English."
+    },
+    {
+      "id": "incomplete_derivative",
+      "category": "real_time_detection",
+      "input": "f(x)=x^3, f'(x)=",
+      "expected_error": false,
+      "actual_error": null,
+      "notes": "Wait for professor to finish writing."
+    },
+    {
+      "id": "intermediate_algebra_step",
+      "category": "real_time_detection",
+      "input": "2(x+3)=10; 2x+6=10",
+      "expected_error": false,
+      "actual_error": null,
+      "notes": "Correct intermediate algebra step."
+    }
+  ]
+  

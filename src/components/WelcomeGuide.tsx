@@ -160,17 +160,6 @@ export function WelcomeGuide({
   return (
     <div className="flex h-full items-center justify-center overflow-y-auto px-6 py-8">
       <div className="w-full max-w-lg">
-        <div className="mb-6 text-center">
-          <h1 className="text-lg font-semibold tracking-tight text-zinc-900">
-            Catch mistakes on the board as they&apos;re written
-          </h1>
-          <p className="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-zinc-500">
-            Chalkolate watches a whiteboard or lecture and points out math, physics, and spelling
-            mistakes on screen and out loud. Set it up below. Nothing turns on until you press
-            Start below.
-          </p>
-        </div>
-
         <div className="rounded-xl border border-line bg-white shadow-sm">
           <ol className="divide-y divide-zinc-200">
             <li className="flex gap-3.5 p-4">
