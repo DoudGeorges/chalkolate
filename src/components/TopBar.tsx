@@ -50,19 +50,21 @@ export function TopBar({
             Back to start
           </button>
         )}
-        <button
-          type="button"
-          onClick={onToggleNotes}
-          aria-expanded={notesOpen}
-          aria-label="Toggle lecture notes"
-          className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-        >
-          <FileText className="h-3.5 w-3.5" aria-hidden="true" />
-          Notes{notesCount > 0 ? ` (${notesCount})` : ''}
-          {notesActive && (
-            <span className="h-1.5 w-1.5 rounded-full bg-rose-500" aria-hidden="true" />
-          )}
-        </button>
+        {!onboarding && (
+          <button
+            type="button"
+            onClick={onToggleNotes}
+            aria-expanded={notesOpen}
+            aria-label="Toggle lecture notes"
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+          >
+            <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+            Notes{notesCount > 0 ? ` (${notesCount})` : ''}
+            {notesActive && (
+              <span className="h-1.5 w-1.5 rounded-full bg-rose-500" aria-hidden="true" />
+            )}
+          </button>
+        )}
       </div>
 
       {/* Right: Crop + Start/Stop */}

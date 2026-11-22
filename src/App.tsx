@@ -591,7 +591,7 @@ export function App() {
 
       <div className="relative flex flex-1 min-h-0 flex-col md:flex-row overflow-hidden">
         <NotesPanel
-          open={notesOpen}
+          open={notesOpen && !onboarding}
           active={notesActive && media.state.ready && !calibrationEditing}
           configured={health?.analysis_configured ?? false}
           phase={notesBuilder.phase}
