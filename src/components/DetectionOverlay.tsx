@@ -1,11 +1,10 @@
 import { CATEGORY_COLORS } from '../lib/categoryColors'
-import { ContainedImageRect, computeOverlayPillPosition } from '../lib/geometry'
+import { ContainedImageRect, FindingBoxProjector, computeOverlayPillPosition } from '../lib/geometry'
 import { TrackedIssue } from '../lib/issueTracker'
 import { MathCorrection } from './MathCorrection'
 
 export interface DetectionOverlayProps {
-  /** Maps canonical normalized `[0, 1000]` source coordinates onto stage pixels. */
-  project: (x: number, y: number) => [number, number]
+  projectBox: FindingBoxProjector
   /** Visible media area in stage pixels; overlays are clipped to it and pills kept inside it. */
   clipRect: ContainedImageRect
   issues: readonly TrackedIssue[]
@@ -17,7 +16,7 @@ export interface DetectionOverlayProps {
 }
 
 export function DetectionOverlay({
-  project,
+  projectBox,
   clipRect,
   issues,
   selectedIssueId,
@@ -35,26 +34,27 @@ export function DetectionOverlay({
   const bottom = clipRect.top + clipRect.height
   const clipPath = `polygon(${left}px ${top}px, ${right}px ${top}px, ${right}px ${bottom}px, ${left}px ${bottom}px)`
 
-  // Project every box once: under a perspective crop an axis-aligned source box becomes a quad.
-  const projected = issues.map((issue) => {
-    const [ymin, xmin, ymax, xmax] = issue.box_2d
-    const quad = [
-      project(xmin, ymin),
-      project(xmax, ymin),
-      project(xmax, ymax),
-      project(xmin, ymax),
-    ]
-    const ys = quad.map(([, y]) => y)
-    return {
-      issue,
-      points: quad.map(([x, y]) => `${x},${y}`).join(' '),
-      boxPx: {
-        left: Math.min(...quad.map(([x]) => x)),
-        top: Math.min(...ys),
-        bottom: Math.max(...ys),
-      },
+  // Hidden findings stay out of the tab order as well as the visible overlay.
+  const projected = issues.flatMap((issue) => {
+    const polygon = projectBox(issue.box_2d)
+    if (polygon.length < 3 || polygon.some(([x, y]) => !Number.isFinite(x) || !Number.isFinite(y))) {
+      return []
     }
+    const ys = polygon.map(([, y]) => y)
+    return [
+      {
+        issue,
+        points: polygon.map(([x, y]) => `${x},${y}`).join(' '),
+        boxPx: {
+          left: Math.min(...polygon.map(([x]) => x)),
+          top: Math.min(...ys),
+          bottom: Math.max(...ys),
+        },
+      },
+    ]
   })
+  const pillWidth = Math.min(280, clipRect.width - 8)
+  const showPills = pillWidth >= 32 && clipRect.height >= 38
 
   return (
     <div
@@ -102,8 +102,8 @@ export function DetectionOverlay({
 
       {/* Separate HTML layer so pill text is never warped */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        {projected.map(({ issue, boxPx }) => {
-          const pos = computeOverlayPillPosition(boxPx, clipRect)
+        {showPills && projected.map(({ issue, boxPx }) => {
+          const pos = computeOverlayPillPosition(boxPx, clipRect, pillWidth)
           const color = CATEGORY_COLORS[issue.category]
           const isHighlighted =
             issue.id === selectedIssueId || issue.id === hoveredIssueId
@@ -118,7 +118,7 @@ export function DetectionOverlay({
               style={{
                 left: `${pos.left}px`,
                 top: `${pos.top}px`,
-                maxWidth: `${Math.max(120, Math.min(280, clipRect.width - 8))}px`,
+                maxWidth: `${pillWidth}px`,
               }}
               className={`pointer-events-auto absolute flex items-center gap-1.5 rounded-lg border bg-white px-2.5 py-1 text-left text-xs shadow-md transition duration-150 animate-pill-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
                 isHighlighted

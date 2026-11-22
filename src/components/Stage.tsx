@@ -1,5 +1,5 @@
 import { Camera, MonitorUp, Play } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { CalibrationCorners } from '../api/schemas'
 import { MonitorPhase } from '../hooks/useBoardMonitor'
 import { MediaSourceState } from '../hooks/useMediaSource'
@@ -8,7 +8,7 @@ import {
   computeContainedImageRect,
   computeRectifiedCropView,
   homographyToCssMatrix3d,
-  projectThroughRect,
+  projectBoxThroughRect,
 } from '../lib/geometry'
 import { TrackedIssue } from '../lib/issueTracker'
 import { CalibrationDetectStatus, CalibrationOverlay } from './CalibrationOverlay'
@@ -108,15 +108,25 @@ export function Stage({
 
   // A committed crop (auto-detected or manual) shows ONLY the board, perspective-straightened
   // and as large as the stage allows. The full frame comes back while editing the crop.
-  const cropView = calibrationEditing
-    ? null
-    : computeRectifiedCropView(
-        containerSize.width,
-        containerSize.height,
-        mediaState.intrinsicWidth,
-        mediaState.intrinsicHeight,
-        committedCorners,
-      )
+  const cropView = useMemo(
+    () =>
+      calibrationEditing
+        ? null
+        : computeRectifiedCropView(
+            containerSize.width,
+            containerSize.height,
+            mediaState.intrinsicWidth,
+            mediaState.intrinsicHeight,
+            committedCorners,
+          ),
+    [
+      calibrationEditing,
+      containerSize,
+      mediaState.intrinsicWidth,
+      mediaState.intrinsicHeight,
+      committedCorners,
+    ],
+  )
 
   // The wrapper is always rendered (so the <video> never remounts and loses its stream); in crop
   // mode it becomes the board rectangle and clips everything outside the board.
@@ -143,7 +153,7 @@ export function Stage({
         transform: homographyToCssMatrix3d(cropView.elementToRect),
       }
     : undefined
-  const overlayProject = cropView ? cropView.project : projectThroughRect(imageRect)
+  const overlayProject = cropView?.projectBox ?? projectBoxThroughRect(imageRect)
   const overlayClipRect = cropView ? cropView.rect : imageRect
 
   const isVideoLike =
@@ -277,7 +287,7 @@ export function Stage({
 
       {showOverlays && !calibrationEditing && (
         <DetectionOverlay
-          project={overlayProject}
+          projectBox={overlayProject}
           clipRect={overlayClipRect}
           issues={openIssues}
           locationsUnverified={locationsUnverified}

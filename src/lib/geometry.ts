@@ -1,4 +1,4 @@
-import { CalibrationCorners, CornerPoint } from '../api/schemas'
+import { Box2D, CalibrationCorners, CornerPoint } from '../api/schemas'
 
 export interface ContainedImageRect {
   left: number
@@ -192,13 +192,16 @@ export function buildNormalizedQuadMask(
   return mask
 }
 
-/** Row-major 3x3 homography with the last entry fixed to 1: `[a, b, c, d, e, f, g, h]`. */
-export type Homography = readonly [number, number, number, number, number, number, number, number]
+/** Row-major 3x3 projective transform. */
+export type Homography = readonly [
+  number, number, number, number, number, number, number, number, number,
+]
 
 type Point = readonly [number, number]
+export type FindingBoxProjector = (box: Box2D) => Point[]
 
 /** Solve the homography mapping four `src` points onto four `dst` points (null if degenerate). */
-export function solveHomography(
+function solveHomography(
   src: readonly [Point, Point, Point, Point],
   dst: readonly [Point, Point, Point, Point],
 ): Homography | null {
@@ -246,19 +249,64 @@ export function solveHomography(
     at(5, 8) / at(5, 5),
     at(6, 8) / at(6, 6),
     at(7, 8) / at(7, 7),
+    1,
   ]
-  return h.every(Number.isFinite) ? h : null
+  if (!h.every(Number.isFinite)) return null
+
+  const weights = src.map(([x, y]) => h[6] * x + h[7] * y + h[8])
+  if (weights.every((w) => w > 1e-6)) return h
+  // CSS clips geometry with negative homogeneous w. Choose the positive side of the plane.
+  if (weights.every((w) => w < -1e-6)) {
+    const [a, b, c, d, e, f, g, i, j] = h
+    return [-a, -b, -c, -d, -e, -f, -g, -i, -j]
+  }
+  return null
 }
 
-export function applyHomography(h: Homography, x: number, y: number): [number, number] {
-  const w = h[6] * x + h[7] * y + 1
+function applyHomography(h: Homography, x: number, y: number): Point {
+  const w = h[6] * x + h[7] * y + h[8]
   return [(h[0] * x + h[1] * y + h[2]) / w, (h[3] * x + h[4] * y + h[5]) / w]
 }
 
 /** CSS `matrix3d(...)` that applies `h` to an element with `transform-origin: 0 0`. */
 export function homographyToCssMatrix3d(h: Homography): string {
-  const [a, b, c, d, e, f, g, hh] = h
-  return `matrix3d(${a}, ${d}, 0, ${g}, ${b}, ${e}, 0, ${hh}, 0, 0, 1, 0, ${c}, ${f}, 0, 1)`
+  const [a, b, c, d, e, f, g, i, j] = h
+  return `matrix3d(${a}, ${d}, 0, ${g}, ${b}, ${e}, 0, ${i}, 0, 0, 1, 0, ${c}, ${f}, 0, ${j})`
+}
+
+function clipAtAxis(
+  polygon: readonly Point[],
+  axis: 0 | 1,
+  boundary: number,
+  direction: 1 | -1,
+): Point[] {
+  let previous = polygon.at(-1)
+  if (!previous) return []
+  let previousDistance = direction * (previous[axis] - boundary)
+  const clipped: Point[] = []
+  for (const point of polygon) {
+    const distance = direction * (point[axis] - boundary)
+    if (previousDistance * distance < 0) {
+      const t = previousDistance / (previousDistance - distance)
+      clipped.push([
+        previous[0] + t * (point[0] - previous[0]),
+        previous[1] + t * (point[1] - previous[1]),
+      ])
+    }
+    if (distance >= 0) clipped.push(point)
+    previous = point
+    previousDistance = distance
+  }
+  return clipped
+}
+
+/** Intersect the source-space finding box with the board before projecting it. */
+function clipFindingToBoard(corners: CalibrationCorners, box: Box2D): Point[] {
+  const [ymin, xmin, ymax, xmax] = box
+  let polygon = clipAtAxis(corners, 0, xmin, 1)
+  polygon = clipAtAxis(polygon, 0, xmax, -1)
+  polygon = clipAtAxis(polygon, 1, ymin, 1)
+  return clipAtAxis(polygon, 1, ymax, -1)
 }
 
 export interface RectifiedCropView {
@@ -266,8 +314,8 @@ export interface RectifiedCropView {
   rect: ContainedImageRect
   /** Maps media element pixels (intrinsic size) onto `rect`-local pixels. */
   elementToRect: Homography
-  /** Maps canonical normalized `[0, 1000]` source coordinates onto stage pixels. */
-  project: (x: number, y: number) => [number, number]
+  /** Projects only the portion of a finding that intersects the board. */
+  projectBox: FindingBoxProjector
 }
 
 /**
@@ -294,9 +342,11 @@ export function computeRectifiedCropView(
     return null
   }
 
-  const px = corners.map(
-    ([x, y]) => [(x / 1000) * intrinsicWidth, (y / 1000) * intrinsicHeight] as const,
-  ) as unknown as [Point, Point, Point, Point]
+  const toPixels = ([x, y]: Point): Point => [
+    (x / 1000) * intrinsicWidth,
+    (y / 1000) * intrinsicHeight,
+  ]
+  const px = [toPixels(corners[0]), toPixels(corners[1]), toPixels(corners[2]), toPixels(corners[3])] as const
   const dist = (p: Point, q: Point) => Math.hypot(p[0] - q[0], p[1] - q[1])
   const boardWidth = Math.max(dist(px[0], px[1]), dist(px[3], px[2]))
   const boardHeight = Math.max(dist(px[0], px[3]), dist(px[1], px[2]))
@@ -321,22 +371,25 @@ export function computeRectifiedCropView(
   return {
     rect,
     elementToRect,
-    project: (x, y) => {
-      const [u, v] = applyHomography(
-        elementToRect,
-        (x / 1000) * intrinsicWidth,
-        (y / 1000) * intrinsicHeight,
-      )
-      return [rect.left + u, rect.top + v]
-    },
+    projectBox: (box) =>
+      clipFindingToBoard(corners, box).map((point) => {
+        const [u, v] = applyHomography(elementToRect, ...toPixels(point))
+        return [rect.left + u, rect.top + v]
+      }),
   }
 }
 
-/** Linear normalized `[0, 1000]` -> stage pixel mapping for an uncropped contained image. */
-export function projectThroughRect(rect: ContainedImageRect) {
-  return (x: number, y: number): [number, number] => [
+/** Project a normalized source box into an uncropped contained image. */
+export function projectBoxThroughRect(rect: ContainedImageRect): FindingBoxProjector {
+  const project = (x: number, y: number): Point => [
     rect.left + (x / 1000) * rect.width,
     rect.top + (y / 1000) * rect.height,
+  ]
+  return ([ymin, xmin, ymax, xmax]) => [
+    project(xmin, ymin),
+    project(xmax, ymin),
+    project(xmax, ymax),
+    project(xmin, ymax),
   ]
 }
 
@@ -361,15 +414,10 @@ export function computeOverlayPillPosition(
   const left = Math.max(minLeft, Math.min(maxLeft, boxPx.left))
 
   const minTop = clipRect.top + 4
-  let placement: 'above' | 'below' = 'above'
-  let top = boxPx.top - estimatedPillHeight - 6
-  if (top < minTop) {
-    placement = 'below'
-    top = Math.max(
-      minTop,
-      Math.min(clipRect.top + clipRect.height - estimatedPillHeight - 4, boxPx.bottom + 6),
-    )
-  }
+  const maxTop = Math.max(minTop, clipRect.top + clipRect.height - estimatedPillHeight - 4)
+  const above = boxPx.top - estimatedPillHeight - 6
+  const placement = above >= minTop ? 'above' : 'below'
+  const top = Math.max(minTop, Math.min(maxTop, placement === 'above' ? above : boxPx.bottom + 6))
 
   return { left, top, placement }
 }
