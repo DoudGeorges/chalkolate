@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ErrorCategory = Literal["math", "physics", "spelling"]
+AnswerFormat = Literal["exact", "fraction", "decimal3"]
 
 MAX_PREV_SUMMARY_LENGTH = 2000
 MAX_BOARD_SUMMARY_LENGTH = 600
@@ -20,6 +21,15 @@ MAX_SPOKEN_ALERT_LENGTH = 180
 MAX_EXPLANATION_LENGTH = 300
 MAX_SPEECH_TEXT_LENGTH = 240
 VOICE_KEY_PATTERN = r"^[A-Za-z0-9_-]{1,128}$"
+
+MAX_NOTES_CONTEXT_SECTIONS = 120
+MAX_NOTES_UPDATES = 8
+MAX_NOTE_ID_LENGTH = 40
+MAX_NOTE_HEADING_LENGTH = 120
+MAX_NOTE_BODY_LENGTH = 3000
+MAX_NOTES_TITLE_LENGTH = 160
+# Whole notes-context JSON sent with a snapshot; client trims older bodies to fit.
+MAX_NOTES_METADATA_BYTES = 48 * 1024
 
 
 def _validate_finite_coord(value: object) -> float:
@@ -77,6 +87,13 @@ class AnalysisMetadata(StrictModel):
         max_length=MAX_PREV_SUMMARY_LENGTH,
         description=(
             "Optional brief summary of the previous analyzed board state, up to 2,000 characters."
+        ),
+    )
+    answer_format: AnswerFormat = Field(
+        default="exact",
+        description=(
+            "How numeric values in corrections are written: exact (symbolic, e.g. sqrt(2)/2), "
+            "fraction (reduced fractions), or decimal3 (decimals rounded to 3 places)."
         ),
     )
     corners: list[tuple[float, float]] | None = Field(
@@ -272,7 +289,6 @@ class BoardAnalysisResult(StrictModel):
     """Complete structured output returned by the Gemini model in model image coordinates."""
 
     board_summary: str = Field(
-        default="",
         max_length=MAX_BOARD_SUMMARY_LENGTH,
         description=(
             "At most two short sentences describing currently visible work; "
@@ -280,7 +296,6 @@ class BoardAnalysisResult(StrictModel):
         ),
     )
     errors: list[DetectedError] = Field(
-        default_factory=list,
         max_length=MAX_FINDINGS,
         description=(
             "List of at most 20 high-confidence demonstrable math, physics, or spelling errors "
@@ -346,6 +361,145 @@ class SpeechRequest(StrictModel):
     @classmethod
     def _validate_text(cls, value: str) -> str:
         return _normalize_required_text(value, "text", MAX_SPEECH_TEXT_LENGTH)
+
+
+NoteId = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=MAX_NOTE_ID_LENGTH,
+        pattern=r"^[A-Za-z0-9_-]+$",
+        description="Stable section identifier: letters, digits, underscore, or hyphen.",
+    ),
+]
+
+
+class NotesSectionContext(StrictModel):
+    """One previously built notes section echoed back to the model as untrusted context."""
+
+    id: NoteId
+    heading: str = Field(max_length=MAX_NOTE_HEADING_LENGTH)
+    body_markdown: str = Field(default="", max_length=MAX_NOTE_BODY_LENGTH)
+
+
+class NotesMetadata(StrictModel):
+    """Client metadata for an incremental notes update, sent as JSON beside the image."""
+
+    request_id: UUID = Field(description="Client-generated UUID correlating this notes request.")
+    sections: list[NotesSectionContext] = Field(
+        default_factory=list,
+        max_length=MAX_NOTES_CONTEXT_SECTIONS,
+        description="Notes built so far, in order; older bodies may be empty to save space.",
+    )
+    corners: list[tuple[float, float]] | None = Field(
+        default=None,
+        min_length=4,
+        max_length=4,
+        description="Optional TL, TR, BR, BL calibration quad normalized to 0..1000.",
+    )
+
+    @field_validator("corners")
+    @classmethod
+    def _validate_corners(
+        cls, value: list[tuple[float, float]] | None
+    ) -> list[tuple[float, float]] | None:
+        if value is None:
+            return None
+        return [(_validate_finite_coord(x), _validate_finite_coord(y)) for x, y in value]
+
+
+class NoteSectionUpdate(StrictModel):
+    """Create-or-replace instruction for a single notes section."""
+
+    id: NoteId = Field(
+        description=(
+            "Existing section id to rewrite in place, or a new short unique id "
+            "(e.g. 'sec-7') to append a section."
+        ),
+    )
+    heading: str = Field(
+        min_length=1,
+        max_length=MAX_NOTE_HEADING_LENGTH,
+        description="Short plain-text section heading.",
+    )
+    body_markdown: str = Field(
+        min_length=1,
+        max_length=MAX_NOTE_BODY_LENGTH,
+        description=(
+            "Section content as concise Markdown for students. Use $...$ for inline math and "
+            "$$...$$ for display math (KaTeX-compatible LaTeX). No HTML."
+        ),
+    )
+    has_figure: bool = Field(
+        description=(
+            "True only when this section depends on a diagram, graph, or drawing that the "
+            "text cannot convey; the client then attaches a snapshot."
+        ),
+    )
+    figure_box_2d: Box2D | None = Field(
+        default=None,
+        description=(
+            "When has_figure is true: tight box [ymin, xmin, ymax, xmax] in 0..1000 around the "
+            "diagram/graph/drawing in the provided image (include labels, exclude surrounding "
+            "text), else null. The server converts it to source-image coordinates."
+        ),
+    )
+    after_section_id: NoteId | None = Field(
+        default=None,
+        description=(
+            "For a NEW section: id of the section it should follow, or null to append at the "
+            "end. Ignored when rewriting an existing section."
+        ),
+    )
+
+    @field_validator("figure_box_2d", mode="before")
+    @classmethod
+    def _check_figure_box(cls, value: object) -> list[int] | None:
+        if value is None:
+            return None
+        if not isinstance(value, list):
+            raise ValueError("figure_box_2d must be a list of four integers or null.")
+        return _validate_box_order(value)
+
+    @field_validator("heading", "body_markdown")
+    @classmethod
+    def _strip_nonempty(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Text must not be empty.")
+        return cleaned
+
+
+class BoardNotesResult(StrictModel):
+    """Structured model output: only the sections that changed for this snapshot."""
+
+    lecture_title: str = Field(
+        default="",
+        max_length=MAX_NOTES_TITLE_LENGTH,
+        description="Short lecture title if evident from the board, else empty string.",
+    )
+    updates: list[NoteSectionUpdate] = Field(
+        default_factory=list,
+        max_length=MAX_NOTES_UPDATES,
+        description=(
+            "At most 8 create-or-replace section updates; empty when the board adds nothing "
+            "new to the notes."
+        ),
+    )
+
+    @field_validator("lecture_title")
+    @classmethod
+    def _trim_title(cls, value: str) -> str:
+        return value.strip()
+
+
+class NotesResponse(StrictModel):
+    """HTTP response for an incremental notes update."""
+
+    request_id: str
+    lecture_title: str = Field(max_length=MAX_NOTES_TITLE_LENGTH)
+    updates: list[NoteSectionUpdate] = Field(max_length=MAX_NOTES_UPDATES)
+    latency_ms: int = Field(ge=0)
 
 
 class SpeechVoiceOption(StrictModel):

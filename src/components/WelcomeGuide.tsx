@@ -332,6 +332,10 @@ export function WelcomeGuide({
           </ol>
 
           <div className="border-t border-line p-4">
+            <p className="mb-2 text-xs text-zinc-600">
+              When configured, Gemini processes board snapshots for corrections and lecture notes.
+              You can pause notes separately in the Notes panel.
+            </p>
             <input
               ref={fileRef}
               type="file"

@@ -1,9 +1,15 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "build": {
+    "env": {
+      "VERCEL_SUPPORT_LARGE_FUNCTIONS": "1"
+    }
+  },
   "rewrites": [{ "source": "/api/(.*)", "destination": "/api/index" }],
   "functions": {
     "api/index.py": {
-      "excludeFiles": "{node_modules/**,.next/**,src/**,public/**,experiments/**,server/tests/**,.venv/**,.claude/**,.git/**}"
+      "maxDuration": 60,
+      "excludeFiles": "{node_modules/**,.next/**,src/**,public/**,experiments/**,server/tests/**,.venv/**,.env*,server/.env*,.claude/**,.github/**,.git/**}"
     }
   }
 }

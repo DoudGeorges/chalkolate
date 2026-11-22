@@ -9,7 +9,6 @@ export interface TopBarProps {
   /** Close the current source and return to the welcome guide (shown when not onboarding). */
   onGoHome?: () => void
 }
-
 export function TopBar({
   mediaReady,
   monitoring,
@@ -44,6 +43,7 @@ export function TopBar({
             type="button"
             disabled={!mediaReady}
             aria-pressed={monitoring}
+            title={monitoring ? 'Stop mistake checks and spoken alerts' : 'Start mistake checks'}
             onClick={onToggleMonitoring}
             className={`inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-xs font-semibold leading-none transition duration-150 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
               monitoring
