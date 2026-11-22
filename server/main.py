@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -22,6 +23,7 @@ from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from admin_log import AdminLogMiddleware, build_admin_router, build_store
 from analyzer import (
     AnalysisTimeoutError,
     AnalyzerError,
@@ -35,7 +37,7 @@ from analyzer import (
     UpstreamUnavailableError,
     analyze_board_image,
 )
-from config import Settings, load_settings
+from config import REPO_ROOT, Settings, load_settings
 from notes import build_notes_update
 from schemas import (
     MAX_NOTES_METADATA_BYTES,
@@ -479,12 +481,21 @@ def create_app(
         60.0,
     )
     voice_catalog = VoiceCatalog()
+    # Opt-in debug logging (docs/admin.md). With the flag off, no store, middleware or routes
+    # exist, so nothing is recorded and /api/admin/* is a plain 404.
+    admin_store = build_store(
+        resolved_settings,
+        on_vercel=bool(os.environ.get("VERCEL")),
+        root=REPO_ROOT / ".admin-logs",
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with AsyncExitStack() as stack:
             app.state.genai_client = None
             app.state.speech_client = None
+            if admin_store is not None:
+                stack.push_async_callback(admin_store.aclose)
             if resolved_settings.analysis_configured:
                 client = resolved_factory(resolved_settings)
                 stack.callback(client.close)
@@ -523,9 +534,27 @@ def create_app(
             CORSMiddleware,
             allow_origins=list(resolved_settings.cors_allowed_origins),
             allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Content-Type"],
+            allow_headers=["Content-Type", "X-Chalkolate-Session"],
             expose_headers=["Retry-After", PARTIAL_ANALYSIS_HEADER],
         )
+
+    if resolved_settings.admin_enabled:
+        app.include_router(
+            build_admin_router(
+                resolved_settings,
+                admin_store,
+                rate_limiter=SlidingWindowRateLimiter(10, 60.0),
+                client_key=_client_key,
+            )
+        )
+        if admin_store is not None:
+            # Added last so it is the outermost middleware and also sees 4xx/413 rejections.
+            app.add_middleware(
+                AdminLogMiddleware,
+                store=admin_store,
+                settings=resolved_settings,
+                max_request_bytes=upload_limit + MAX_NOTES_METADATA_BYTES,
+            )
 
     @app.exception_handler(RequestValidationError)
     async def handle_request_validation(
@@ -786,6 +815,8 @@ def create_app(
             )
             if isinstance(prepared, JSONResponse):
                 return prepared
+            if resolved_settings.admin_enabled:
+                request.state.admin_model_image = prepared.jpeg_bytes
 
             try:
                 model_result = await analyze_board_image(
@@ -903,6 +934,8 @@ def create_app(
             )
             if isinstance(prepared, JSONResponse):
                 return prepared
+            if resolved_settings.admin_enabled:
+                request.state.admin_model_image = prepared.jpeg_bytes
 
             try:
                 result = await build_notes_update(

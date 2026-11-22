@@ -81,13 +81,20 @@ async function parseErrorResponse(response: Response): Promise<ApiClientError> {
   )
 }
 
+/** Random per-page-load id sent on every request so the owner-only debug log can group a session. */
+const SESSION_ID =
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : Math.random().toString(16).slice(2)
+const SESSION_HEADERS = { 'X-Chalkolate-Session': SESSION_ID }
+
 export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
   let response: Response
   try {
     response = await fetch('/api/health', {
       method: 'GET',
       signal,
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', ...SESSION_HEADERS },
     })
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
@@ -138,6 +145,7 @@ export async function analyzeSnapshot(
       method: 'POST',
       body: formData,
       signal,
+      headers: SESSION_HEADERS,
     })
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
@@ -199,6 +207,7 @@ export async function detectBoardCorners(
       method: 'POST',
       body: formData,
       signal,
+      headers: SESSION_HEADERS,
     })
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
@@ -246,6 +255,7 @@ export async function requestSpeechStream(
       headers: {
         'Content-Type': 'application/json',
         Accept: 'audio/mpeg',
+        ...SESSION_HEADERS,
       },
       body: JSON.stringify({ text }),
       signal,
@@ -287,7 +297,12 @@ export async function requestNotesUpdate(
 
   let response: Response
   try {
-    response = await fetch('/api/notes', { method: 'POST', body: formData, signal })
+    response = await fetch('/api/notes', {
+      method: 'POST',
+      body: formData,
+      signal,
+      headers: SESSION_HEADERS,
+    })
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
       throw err
