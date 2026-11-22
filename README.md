@@ -11,7 +11,7 @@ npm ci
 uv sync --locked
 ~~~
 
-For live analysis, copy .env.example to .env and set GEMINI_API_KEY. Add ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID for ElevenLabs speech, or use your browser's speech synthesis. Source preview, board detection, and tests work without provider keys.
+For live analysis, copy .env.example to .env and set GEMINI_API_KEY. Add ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID for ElevenLabs speech, or use your browser's speech synthesis. Source preview and board detection work without provider keys.
 
 Start FastAPI and Next.js in separate terminals.
 
@@ -48,13 +48,11 @@ Start changes from current main, keep both lockfiles synchronized, and open a pu
 ~~~sh
 npm run lint
 npm run typecheck
-npm test
 npm run build
 
 uv run --locked ruff check .
 uv run --locked ruff format --check .
 uv run --locked mypy
-uv run --locked pytest
 ~~~
 
 The standalone [board detection lab](experiments/board-detect-lab.html) helps tune OpenCV heuristics. It loads OpenCV.js from a CDN and processes the selected image in the browser.
