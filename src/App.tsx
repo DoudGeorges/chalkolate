@@ -1,18 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { detectBoardCorners, fetchHealth, fetchVoices } from './api/client'
+import { detectBoardCorners, fetchHealth } from './api/client'
 import {
   AnswerFormat,
   AnswerFormatSchema,
   CalibrationCorners,
   HealthResponse,
-  SpeechVoiceOption,
 } from './api/schemas'
 import { CalibrationDetectStatus } from './components/CalibrationOverlay'
 import { FindingsPanel, SidePanelTab } from './components/FindingsPanel'
 import { NotesPanel } from './components/NotesPanel'
 import { SettingsContent } from './components/SettingsContent'
 import { Stage } from './components/Stage'
-import { VoiceSettings } from './components/VoiceSettings'
 import { WelcomeGuide, WelcomeSource } from './components/WelcomeGuide'
 import { ToastItem, Toasts } from './components/Toasts'
 import { TopBar } from './components/TopBar'
@@ -21,7 +19,6 @@ import { useMediaSource } from './hooks/useMediaSource'
 import { useNotesBuilder } from './hooks/useNotesBuilder'
 import { useSpeechAlerts } from './hooks/useSpeechAlerts'
 import { AlertMode } from './lib/categoryColors'
-import { parseVoiceLabel } from './lib/voiceLabels'
 import {
   VoicePreferences,
   loadVoicePreferences,
@@ -63,8 +60,6 @@ export function App() {
   }
   const [voicePreferences, setVoicePreferences] =
     useState<VoicePreferences>(loadVoicePreferences)
-  const [elevenLabsVoices, setElevenLabsVoices] = useState<SpeechVoiceOption[]>([])
-  const [voicesError, setVoicesError] = useState<string | null>(null)
 
   const handleChangeVoicePreferences = useCallback((patch: Partial<VoicePreferences>) => {
     setVoicePreferences((prev) => {
@@ -87,14 +82,9 @@ export function App() {
 
   // One right-side panel hosts both Findings and Settings as tabs.
   const [panelOpen, setPanelOpen] = useState(false)
-  // Notes build automatically once a source is live; the professor can pause them.
-  const [notesPaused, setNotesPaused] = useState(false)
+  // Notes build automatically once a source is live.
   const [notesOpen, setNotesOpen] = useState(false)
   const [sidebarTab, setSidebarTab] = useState<SidePanelTab>('findings')
-  const openSettings = useCallback(() => {
-    setSidebarTab('settings')
-    setPanelOpen(true)
-  }, [])
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null)
   const [hoveredIssueId, setHoveredIssueId] = useState<string | null>(null)
   const [pulseBadge, setPulseBadge] = useState(false)
@@ -157,60 +147,14 @@ export function App() {
     return () => controller.abort()
   }, [])
 
-  // A saved voice the backend no longer offers falls back to the configured default.
-  const effectiveVoicePreferences = useMemo<VoicePreferences>(() => {
-    return elevenLabsVoices.some((v) => v.id === voicePreferences.elevenLabsVoice)
-      ? voicePreferences
-      : { ...voicePreferences, elevenLabsVoice: 'default' }
-  }, [elevenLabsVoices, voicePreferences])
-
   const speechConfigured = health?.speech_configured ?? false
-  const [voicesLoading, setVoicesLoading] = useState(false)
-  const [voicesReloadKey, setVoicesReloadKey] = useState(0)
-  const retryVoices = useCallback(() => setVoicesReloadKey((k) => k + 1), [])
-
-  useEffect(() => {
-    if (!speechConfigured) {
-      setElevenLabsVoices([])
-      setVoicesError(null)
-      setVoicesLoading(false)
-      return
-    }
-    const controller = new AbortController()
-    setVoicesLoading(true)
-    setVoicesError(null)
-    fetchVoices(controller.signal)
-      .then((res) => {
-        setElevenLabsVoices(res.voices)
-        setVoicesError(null)
-      })
-      .catch((err) => {
-        if (err instanceof DOMException && err.name === 'AbortError') return
-        setVoicesError(
-          err instanceof Error && err.message
-            ? `Couldn't load voices: ${err.message}`
-            : "Couldn't load ElevenLabs voices.",
-        )
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setVoicesLoading(false)
-      })
-    return () => controller.abort()
-  }, [speechConfigured, voicesReloadKey])
-
-  const selectedVoiceName = useMemo(() => {
-    if (!speechConfigured) return 'Browser voice'
-    const option = elevenLabsVoices.find((v) => v.id === effectiveVoicePreferences.elevenLabsVoice)
-    return option ? parseVoiceLabel(option).name : 'Default voice'
-  }, [effectiveVoicePreferences.elevenLabsVoice, elevenLabsVoices, speechConfigured])
 
   const markSpokenRef = useRef<(id: string) => void>(() => {})
   const speech = useSpeechAlerts({
-    elevenLabsConfigured: health?.speech_configured ?? false,
-    preferences: effectiveVoicePreferences,
+    elevenLabsConfigured: speechConfigured,
+    preferences: voicePreferences,
     onUtteranceStarted: (id) => markSpokenRef.current(id),
-    // The hook already deduplicates: once per session for account-wide failures and
-    // once per voice for voices the account cannot use.
+    // The hook already deduplicates: once per session.
     onProviderFallback: (reason) => {
       pushToast({ message: `${reason} Using browser voice.`, tone: 'info' }, 6000)
     },
@@ -380,7 +324,7 @@ export function App() {
     onVerificationResult: handleVerificationResult,
   })
 
-  const notesActive = !notesPaused && (health?.analysis_configured ?? false)
+  const notesActive = health?.analysis_configured ?? false
   const notesBuilder = useNotesBuilder({
     mediaSource: activeMediaElement,
     mediaReady: media.state.ready,
@@ -670,43 +614,12 @@ export function App() {
             <WelcomeGuide
               onLaunch={handleWelcomeLaunch}
               launching={launchPending && media.state.kind === 'none'}
-              voiceName={alertMode === 'visual_only' ? null : selectedVoiceName}
-              talkativeness={effectiveVoicePreferences.talkativeness}
+              talkativeness={voicePreferences.talkativeness}
               onChangeTalkativeness={(talkativeness) =>
                 handleChangeVoicePreferences({ talkativeness })
               }
               alertMode={alertMode}
               onChangeAlertMode={handleChangeAlertMode}
-              onOpenSettings={openSettings}
-              onPreviewVoice={speech.isSupported ? () => speech.previewVoice() : undefined}
-              previewing={speech.previewingVoice !== null}
-              onStopPreview={speech.cancelAll}
-              renderVoiceMenu={(close) => (
-                <div className="space-y-3">
-                  <VoiceSettings
-                    voiceOnly
-                    preferences={effectiveVoicePreferences}
-                    onChange={handleChangeVoicePreferences}
-                    elevenLabsConfigured={speechConfigured}
-                    voices={elevenLabsVoices}
-                    voicesLoading={voicesLoading}
-                    voicesError={voicesError}
-                    onRetryVoices={retryVoices}
-                    previewingVoice={speech.previewingVoice}
-                    onPreviewVoice={speech.isSupported ? speech.previewVoice : undefined}
-                    onStopPreview={speech.cancelAll}
-                  />
-                  <div className="flex justify-end">
-                    <button
-                      type="button"
-                      onClick={close}
-                      className="inline-flex h-7 items-center rounded-md bg-accent px-3 text-[11px] font-semibold text-white transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 focus-visible:ring-offset-2"
-                    >
-                      Done
-                    </button>
-                  </div>
-                </div>
-              )}
             />
           }
         />
@@ -715,14 +628,10 @@ export function App() {
           open={notesOpen}
           active={notesActive && media.state.ready && !calibrationEditing}
           configured={health?.analysis_configured ?? false}
-          paused={notesPaused}
-          mediaReady={media.state.ready && !calibrationEditing}
           phase={notesBuilder.phase}
           error={notesBuilder.error}
           notes={notesBuilder.notes}
           onToggleOpen={() => setNotesOpen((prev) => !prev)}
-          onTogglePaused={() => setNotesPaused((prev) => !prev)}
-          onSnapshotNow={() => void notesBuilder.snapshotNow()}
           onExportMarkdown={handleExportMarkdown}
           onExportLatex={handleExportLatex}
           onExportPrint={handleExportPrint}
@@ -744,16 +653,10 @@ export function App() {
                 onChangeAlertMode={handleChangeAlertMode}
                 answerFormat={answerFormat}
                 onChangeAnswerFormat={handleChangeAnswerFormat}
-                voicePreferences={effectiveVoicePreferences}
-                onChangeVoicePreferences={handleChangeVoicePreferences}
-                elevenLabsConfigured={speechConfigured}
-                voices={elevenLabsVoices}
-                voicesLoading={voicesLoading}
-                voicesError={voicesError}
-                onRetryVoices={retryVoices}
-                previewingVoice={speech.previewingVoice}
-                onPreviewVoice={speech.isSupported ? speech.previewVoice : undefined}
-                onStopPreview={speech.cancelAll}
+                talkativeness={voicePreferences.talkativeness}
+                onChangeTalkativeness={(talkativeness) =>
+                  handleChangeVoicePreferences({ talkativeness })
+                }
               />
             }
             monitoring={monitoring}

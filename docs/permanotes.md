@@ -1,6 +1,6 @@
 # Permanotes
 
-Permanotes builds lecture notes from board snapshots. It starts once the user opens a source and Gemini is configured. Use **Pause notes** to abort the current notes request and discard queued captures. **Add board now** sends a single snapshot while a source is available, including while automatic notes are paused. The mistake monitor has its own Start and Stop controls.
+Permanotes builds lecture notes from board snapshots. It starts once the user opens a source and Gemini is configured. The notes panel has no pause or manual snapshot controls. The mistake monitor has its own Start and Stop controls.
 
 ## Capture and requests
 
