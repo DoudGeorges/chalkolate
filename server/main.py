@@ -108,6 +108,39 @@ class ConcurrencyGate:
         return self._active
 
 
+class PerClientGate:
+    """Caps in-flight requests per client key so one user cannot hold every global slot."""
+
+    def __init__(self, limit: int) -> None:
+        self._limit = limit
+        self._active: dict[str, int] = {}
+
+    def try_acquire(self, key: str) -> bool:
+        current = self._active.get(key, 0)
+        if current >= self._limit:
+            return False
+        self._active[key] = current + 1
+        return True
+
+    def release(self, key: str) -> None:
+        current = self._active.get(key, 0)
+        if current <= 1:
+            self._active.pop(key, None)
+        else:
+            self._active[key] = current - 1
+
+
+def _client_key(request: Request) -> str:
+    """Best-effort client identity; behind Vercel the first X-Forwarded-For hop is the caller."""
+    forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    if forwarded:
+        return forwarded[:64]
+    real_ip = request.headers.get("x-real-ip", "").strip()
+    if real_ip:
+        return real_ip[:64]
+    return request.client.host if request.client else "unknown"
+
+
 class SpeechStreamingResponse(StreamingResponse):
     def __init__(self, opened: OpenedSpeechStream, gate: ConcurrencyGate) -> None:
         super().__init__(
@@ -439,6 +472,8 @@ def create_app(
     detection_gate = ConcurrencyGate(resolved_settings.analysis_max_concurrency)
     speech_gate = ConcurrencyGate(resolved_settings.speech_max_concurrency)
     notes_gate = ConcurrencyGate(resolved_settings.notes_max_concurrency)
+    analysis_client_gate = PerClientGate(resolved_settings.per_client_max_concurrency)
+    notes_client_gate = PerClientGate(resolved_settings.per_client_max_concurrency)
     speech_rate_limiter = SlidingWindowRateLimiter(
         resolved_settings.speech_rate_limit_per_minute,
         60.0,
@@ -617,8 +652,7 @@ def create_app(
         request: Request,
         payload: SpeechRequest,
     ) -> StreamingResponse | JSONResponse:
-        client_key = request.client.host if request.client else "unknown"
-        allowed, retry_after = speech_rate_limiter.try_acquire(client_key)
+        allowed, retry_after = speech_rate_limiter.try_acquire(_client_key(request))
         if not allowed:
             return _error_response(
                 status_code=429,
@@ -727,7 +761,17 @@ def create_app(
                 request_id=request_id_str,
             )
 
+        caller = _client_key(request)
+        if not analysis_client_gate.try_acquire(caller):
+            return _error_response(
+                status_code=429,
+                code="CLIENT_CAPACITY_EXCEEDED",
+                message="Too many analysis requests in flight from your connection.",
+                request_id=request_id_str,
+                headers={"Retry-After": "2"},
+            )
         if not gate.try_acquire():
+            analysis_client_gate.release(caller)
             return _error_response(
                 status_code=503,
                 code="CAPACITY_EXCEEDED",
@@ -778,6 +822,7 @@ def create_app(
             )
         finally:
             gate.release()
+            analysis_client_gate.release(caller)
 
     @app.post("/api/notes", response_model=NotesResponse)
     async def post_notes(
@@ -833,7 +878,17 @@ def create_app(
                 request_id=request_id_str,
             )
 
+        caller = _client_key(request)
+        if not notes_client_gate.try_acquire(caller):
+            return _error_response(
+                status_code=429,
+                code="CLIENT_CAPACITY_EXCEEDED",
+                message="Too many notes requests in flight from your connection.",
+                request_id=request_id_str,
+                headers={"Retry-After": "2"},
+            )
         if not notes_gate.try_acquire():
+            notes_client_gate.release(caller)
             return _error_response(
                 status_code=503,
                 code="CAPACITY_EXCEEDED",
@@ -875,6 +930,7 @@ def create_app(
             )
         finally:
             notes_gate.release()
+            notes_client_gate.release(caller)
 
     return app
 

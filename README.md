@@ -1,6 +1,6 @@
 # Chalkolate
 
-Chalkolate monitors lecture boards from a camera, screen share, image, or video. It highlights supported errors, can announce corrections aloud, and builds lecture notes from snapshots. Your media source and findings stay in the browser. Gemini receives selected board snapshots and context when enabled. ElevenLabs receives alert text when its speech service is configured.
+Chalkolate monitors lecture boards from a camera or screen share. It highlights supported errors, can announce corrections aloud, and builds lecture notes from snapshots. Your media source and findings stay in the browser. Gemini receives selected board snapshots and context when enabled. ElevenLabs receives alert text when its speech service is configured.
 
 ## Local setup
 
@@ -28,8 +28,8 @@ Open http://localhost:5173. Next.js proxies /api requests to FastAPI in developm
 ## Using the studio
 
 1. Choose a source and an alert mode, then select **Start**. The browser asks for camera or screen permissions at this point.
-2. Use **Crop board** to detect or adjust corners for a camera or upload. Screen shares use the full selected surface. Share the lecture tab or window to avoid capturing the studio preview.
-3. Open the side panel to inspect findings, dismiss them, ask Chalkolate to verify a correction, or change settings. **Stop** pauses mistake checks and spoken alerts while keeping the source open.
+2. Use **Crop board** to detect or adjust corners for a camera. Screen shares use the full selected surface. Share the lecture tab or window to avoid capturing the studio preview.
+3. Mistakes appear as highlights with corrections on the board. Open **Settings** to change alert mode, spoken detail, or answer format. **Stop** pauses mistake checks and spoken alerts while keeping the source open.
 4. Open **Notes** to pause automatic notes, capture a board manually, or download the lecture. Notes are stored in this browser and can survive reloads. Clear them when starting a separate lecture.
 
 Only use captures you have permission to share with the configured providers. Avoid capturing unrelated windows and sensitive information.

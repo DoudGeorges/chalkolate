@@ -96,7 +96,7 @@ function formatCaptureError(err: unknown, mode: 'camera' | 'screen'): string {
         : 'Screen share cancelled or denied.'
     }
     if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-      return 'No camera found. Connect a camera or upload a video.'
+      return 'No camera found. Connect a camera or share a screen.'
     }
     if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
       return 'Camera is in use by another app or failed to start. Close other apps using it and retry.'
@@ -395,7 +395,7 @@ export function useMediaSource(options: UseMediaSourceOptions) {
             const preferredCam = permittedCams[0]
             if (!preferredCam) {
               throw new Error(
-                'No supported camera found. Connect an integrated or external webcam or upload a video.',
+                'No supported camera found. Connect an integrated or external webcam or share a screen.',
               )
             }
             targetDeviceId = preferredCam.deviceId
