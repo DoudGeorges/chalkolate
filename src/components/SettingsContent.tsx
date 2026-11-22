@@ -1,36 +1,46 @@
-import { Check } from 'lucide-react'
 import { AlertMode } from '../lib/categoryColors'
-import { ALERT_MODE_OPTIONS } from './alertModeOptions'
-import { VoiceSettings, VoiceSettingsProps } from './VoiceSettings'
+import { Talkativeness } from '../lib/voicePreferences'
 import { AnswerFormat } from '../api/schemas'
+import { ALERT_MODE_OPTIONS } from './alertModeOptions'
+import { TalkativenessPicker } from './TalkativenessPicker'
 
-export interface SettingsContentProps
-  extends Omit<VoiceSettingsProps, 'preferences' | 'onChange' | 'voiceOnly'> {
+export interface SettingsContentProps {
   alertMode: AlertMode
   onChangeAlertMode: (mode: AlertMode) => void
-  voicePreferences: VoiceSettingsProps['preferences']
-  onChangeVoicePreferences: VoiceSettingsProps['onChange']
-  answerFormat?: AnswerFormat
-  onChangeAnswerFormat?: (format: AnswerFormat) => void
+  talkativeness: Talkativeness
+  onChangeTalkativeness: (value: Talkativeness) => void
+  answerFormat: AnswerFormat
+  onChangeAnswerFormat: (format: AnswerFormat) => void
 }
 
-/** Settings tab body of the right side panel: alert mode, voice, and how much it talks. */
+const ANSWER_FORMATS = [
+  ['exact', 'Exact', '√2/2'],
+  ['fraction', 'Fractions', '3/8'],
+  ['decimal3', '3 decimals', '0.375'],
+] as const
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+      {children}
+    </span>
+  )
+}
+
+/** Settings tab body of the right side panel: alert mode, how much is said, answer format. */
 export function SettingsContent({
   alertMode,
   onChangeAlertMode,
-  voicePreferences,
-  onChangeVoicePreferences,
-  answerFormat = 'exact',
+  talkativeness,
+  onChangeTalkativeness,
+  answerFormat,
   onChangeAnswerFormat,
-  ...voiceProps
 }: SettingsContentProps) {
   return (
     <div className="space-y-5">
       <section className="space-y-2">
-        <span className="block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-          Alert mode
-        </span>
-        <div role="radiogroup" aria-label="Alert mode" className="space-y-1.5">
+        <SectionLabel>Alert mode</SectionLabel>
+        <div role="radiogroup" aria-label="Alert mode" className="grid grid-cols-3 gap-1.5">
           {ALERT_MODE_OPTIONS.map((option) => {
             const Icon = option.icon
             const selected = alertMode === option.id
@@ -41,78 +51,52 @@ export function SettingsContent({
                 role="radio"
                 aria-checked={selected}
                 onClick={() => onChangeAlertMode(option.id)}
-                className={`flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
+                className={`flex flex-col items-center gap-1.5 rounded-lg border px-1 py-2.5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
                   selected
                     ? 'border-accent bg-accent/[0.06] text-zinc-900'
-                    : 'border-line bg-white text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50'
+                    : 'border-line bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50'
                 }`}
               >
                 <Icon
-                  className={`mt-0.5 h-4 w-4 shrink-0 ${selected ? 'text-accent' : 'text-zinc-500'}`}
+                  className={`h-4 w-4 ${selected ? 'text-accent' : 'text-zinc-500'}`}
                   aria-hidden="true"
                 />
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-medium">{option.label}</span>
-                    {selected && (
-                      <Check className="h-3.5 w-3.5 shrink-0 text-accent" aria-hidden="true" />
-                    )}
-                  </div>
-                  <p className="mt-0.5 text-[11px] leading-snug text-zinc-500">
-                    {option.description}
-                  </p>
-                </div>
+                <span className="text-[11px] font-medium leading-none">{option.label}</span>
               </button>
             )
           })}
         </div>
       </section>
 
+      {alertMode !== 'visual_only' && (
+        <section className="space-y-2 border-t border-line pt-4">
+          <SectionLabel>Spoken detail</SectionLabel>
+          <TalkativenessPicker value={talkativeness} onChange={onChangeTalkativeness} />
+        </section>
+      )}
+
       <section className="space-y-2 border-t border-line pt-4">
-        <span className="block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
-          Answer format
-        </span>
+        <SectionLabel>Answer format</SectionLabel>
         <div role="radiogroup" aria-label="Answer format" className="grid grid-cols-3 gap-1.5">
-          {([
-            ['exact', 'Exact', '√2/2'],
-            ['fraction', 'Fractions', '3/8'],
-            ['decimal3', '3 decimals', '0.375'],
-          ] as const).map(([format, label, example]) => (
+          {ANSWER_FORMATS.map(([format, label, example]) => (
             <button
               key={format}
               type="button"
               role="radio"
               aria-checked={answerFormat === format}
-              onClick={() => onChangeAnswerFormat?.(format)}
-              className={`rounded-lg border px-2 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
+              onClick={() => onChangeAnswerFormat(format)}
+              className={`flex flex-col items-center gap-1 rounded-lg border px-1 py-2.5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
                 answerFormat === format
-                  ? 'border-accent bg-accent/[0.06]'
-                  : 'border-line bg-white hover:border-zinc-300'
+                  ? 'border-accent bg-accent/[0.06] text-zinc-900'
+                  : 'border-line bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50'
               }`}
             >
-              <span className="block text-[11px] font-medium">{label}</span>
-              <span className="block text-[10px] text-zinc-500">{example}</span>
+              <span className="text-[11px] font-medium leading-none">{label}</span>
+              <span className="text-[10px] leading-none text-zinc-500">{example}</span>
             </button>
           ))}
         </div>
-        <p className="text-[11px] leading-snug text-zinc-500">
-          How numbers are written in corrections. Lecture notes copy the board as written.
-        </p>
       </section>
-
-      {alertMode === 'visual_only' ? (
-        <p className="rounded-lg border border-line bg-zinc-50 px-3 py-2.5 text-[11px] leading-snug text-zinc-500">
-          Voice settings are hidden while alerts are visual only.
-        </p>
-      ) : (
-        <div className="border-t border-line pt-4">
-          <VoiceSettings
-            preferences={voicePreferences}
-            onChange={onChangeVoicePreferences}
-            {...voiceProps}
-          />
-        </div>
-      )}
     </div>
   )
 }

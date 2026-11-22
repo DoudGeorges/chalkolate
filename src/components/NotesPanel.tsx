@@ -1,4 +1,4 @@
-import { Camera, Download, FileText, Printer, Trash2, X } from 'lucide-react'
+import { Download, FileText, Printer, Trash2, X } from 'lucide-react'
 import { useMemo } from 'react'
 import { NotesPhase } from '../hooks/useNotesBuilder'
 import { NotesDocument, renderNotesBodyHtml } from '../lib/notes'
@@ -8,14 +8,10 @@ export interface NotesPanelProps {
   /** Notes are being built automatically right now (source live and not paused). */
   active: boolean
   configured: boolean
-  paused: boolean
-  mediaReady: boolean
   phase: NotesPhase
   error: string | null
   notes: NotesDocument
   onToggleOpen: () => void
-  onTogglePaused: () => void
-  onSnapshotNow: () => void
   onExportMarkdown: () => void
   onExportLatex: () => void
   onExportPrint: () => void
@@ -37,14 +33,10 @@ export function NotesPanel({
   open,
   active,
   configured,
-  paused,
-  mediaReady,
   phase,
   error,
   notes,
   onToggleOpen,
-  onTogglePaused,
-  onSnapshotNow,
   onExportMarkdown,
   onExportLatex,
   onExportPrint,
@@ -54,11 +46,11 @@ export function NotesPanel({
   const status =
     phase === 'building'
       ? 'Updating notes…'
-      : paused
-        ? 'Paused'
-        : active
-          ? 'Automatic — notes update as the board settles'
-          : configured ? 'Waiting for a camera, screen, or video' : 'Board analysis unavailable'
+      : !configured
+        ? 'Board analysis unavailable'
+        : !active
+          ? 'Waiting for a camera, screen, or video'
+          : null
 
   return (
     <>
@@ -93,26 +85,11 @@ export function NotesPanel({
             </button>
           </header>
 
-          <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2 text-xs">
-            <button
-              type="button"
-              onClick={onTogglePaused}
-              className="rounded border border-line px-2 py-1 text-zinc-900 hover:bg-zinc-100 disabled:opacity-40"
-            >
-              {paused ? 'Resume notes' : 'Pause notes'}
-            </button>
-            <button
-              type="button"
-              onClick={onSnapshotNow}
-              disabled={!mediaReady || !configured}
-              className="flex items-center gap-1 rounded border border-line px-2 py-1 text-zinc-700 hover:bg-zinc-100 disabled:opacity-40"
-            >
-              <Camera className="h-3 w-3" aria-hidden /> Add board now
-            </button>
-            <span className="text-zinc-600" role="status">
+          {status && (
+            <p role="status" className="border-b border-line px-3 py-2 text-xs text-zinc-600">
               {status}
-            </span>
-          </div>
+            </p>
+          )}
 
           {error && (
             <div role="alert" className="border-b border-amber-500/20 bg-amber-50 px-3 py-1.5 text-xs text-amber-800">

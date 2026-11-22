@@ -10,7 +10,7 @@ export default defineConfig([
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
       // The monitor/speech hooks intentionally mirror latest props into refs during render and
-      // sync state from effects; behavior is covered by the hook tests. Keep the classic
+      // sync state from effects; keep the classic
       // rules-of-hooks / exhaustive-deps checks while skipping React Compiler-era strictness.
       'react-hooks/refs': 'off',
       'react-hooks/set-state-in-effect': 'off',

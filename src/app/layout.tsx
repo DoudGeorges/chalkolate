@@ -4,7 +4,7 @@ import 'katex/dist/katex.min.css'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Chalkolate — Lecture Board Monitor',
+  title: 'Chalkolate',
 }
 
 export const viewport: Viewport = {
