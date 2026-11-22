@@ -121,13 +121,13 @@ export function CalibrationOverlay({
     statusText = 'Detecting board corners…'
     statusTone = 'text-zinc-800'
   } else if (detectStatus === 'detected') {
-    statusText = 'Board detected — drag handles to refine'
+    statusText = 'Board detected. Drag handles to refine'
     statusTone = 'text-emerald-700'
   } else if (detectStatus === 'fallback') {
-    statusText = 'Could not detect board edges — drag handles manually'
+    statusText = 'Could not detect board edges. Drag handles manually'
     statusTone = 'text-zinc-700'
   } else if (detectStatus === 'error') {
-    statusText = 'Auto-detect unavailable — drag handles manually'
+    statusText = 'Auto-detect unavailable. Drag handles manually'
     statusTone = 'text-amber-700'
   }
 
