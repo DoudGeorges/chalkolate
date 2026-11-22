@@ -13,7 +13,7 @@ are never stored. While enabled, other users' board photos, spoken alerts and mo
 written to the log store. It is therefore strictly opt-in and meant for short debugging windows:
 
 - Off unless `ADMIN_DEBUG_LOGGING=1` **and** `ADMIN_TOKEN` (>= 16 chars, server-only secret) are
-  set. A missing/short token keeps it off. When off: no middleware, no store, no routes — the
+  set. A missing/short token keeps it off. When off: no middleware, no store, no routes. The
   backend answers `/api/admin/*` with 404 and `/admin` renders a real Next.js 404.
 - Turn it off (unset the flag) and clear the logs (`Clear` button) when finished.
 - Never stored: provider API keys, the admin token, request headers other than an allowlist

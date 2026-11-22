@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Chalkolate — Board Detect Lab</title>
+<title>Chalkolate</title>
 <style>
   :root { --bg:#0b0b0d; --panel:#16161a; --line:#2a2a31; --text:#ececf0; --dim:#9a9aa6; --accent:#e7b27a; --good:#6ee7a8; --bad:#f87171; --sky:#38bdf8; color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -38,7 +38,7 @@
 <body>
 <header>
   <h1>Chalkolate · Board Detect Lab</h1>
-  <span>Edge-only experiment: find the 4 board corners (blackboard / whiteboard / screen) — or recognise that the board fills the whole frame. No text analysis.</span>
+  <span>Edge-only experiment: find the 4 board corners (blackboard / whiteboard / screen), or recognise that the board fills the whole frame. No text analysis.</span>
 </header>
 <main>
 <aside>
@@ -349,7 +349,7 @@ function finalize(cands, an, accept, covThr, coverage, covKind, allowFull) {
   scored.sort((a, b) => b.score - a.score); const best = scored[0], quadOK = best && best.score >= accept;
   if (allowFull && coverage >= covThr && (!quadOK || best.score < 0.75)) return { kind: 'fullFrame', corners: FULL(), score: coverage, method: `uniform ${covKind} region`, coverage, cands: scored.slice(0, 6) };
   if (quadOK) return { kind: 'quad', corners: best.norm.map((c) => c.map((v) => Math.round(clamp(v, 0, 1000) * 10) / 10)), score: best.score, method: best.method, coverage, cands: scored.slice(0, 6) };
-  return { kind: 'none', corners: null, score: best ? best.score : 0, method: '—', coverage, cands: scored.slice(0, 6) };
+  return { kind: 'none', corners: null, score: best ? best.score : 0, method: '-', coverage, cands: scored.slice(0, 6) };
 }
 function detectJS(item) {
   const o = readOpts(), ms = {}; let t = performance.now();
@@ -421,7 +421,7 @@ document.addEventListener('paste', (e) => [...(e.clipboardData?.files || [])].fi
 let camStream = null; const closeCam = () => { camStream?.getTracks().forEach((t) => t.stop()); camStream = null; $('camWrap').style.display = 'none'; };
 $('btnCam').onclick = async () => { try { camStream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }); $('camVideo').srcObject = camStream; await $('camVideo').play(); $('camWrap').style.display = 'flex'; } catch (e) { setStatus('Camera unavailable: ' + e.message); } };
 $('btnCamStop').onclick = closeCam; $('btnSnap').onclick = () => {
-  const v = $('camVideo'); if (!v.videoWidth) { setStatus('Camera has no frame yet — wait a moment and try again.'); return; }
+  const v = $('camVideo'); if (!v.videoWidth) { setStatus('Camera has no frame yet. Wait a moment and try again.'); return; }
   const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight; c.getContext('2d').drawImage(v, 0, 0);
   addItem(c, 'camera ' + (S.items.length + 1));
 }; window.addEventListener('pagehide', closeCam);
@@ -453,18 +453,18 @@ function drawMain() {
   if (it.js?.corners) drawPoly(x, it.js.corners, W, H, COL.js, it.js.kind === 'fullFrame' ? [8, 5] : [], 2.5);
   if (it.truth) { drawPoly(x, it.truth, W, H, COL.truth, [6, 4], 2); if ($('oEdit').checked) it.truth.forEach(([px, py], i) => { x.fillStyle = COL.truth; x.beginPath(); x.arc(px / 1000 * W, py / 1000 * H, 7, 0, 7); x.fill(); x.fillStyle = '#052'; x.font = 'bold 9px sans-serif'; x.textAlign = 'center'; x.fillText(['TL', 'TR', 'BR', 'BL'][i], px / 1000 * W, py / 1000 * H + 3); x.textAlign = 'start'; }); }
 }
-function kindTag(r) { if (!r) return '<span class="muted">—</span>'; if (r.kind === 'error') return `<span class="tag bad">error</span> ${r.error}`; if (r.kind === 'quad') return '<span class="tag good">quad</span>'; if (r.kind === 'fullFrame') return '<span class="tag ff">full frame</span>'; return '<span class="tag bad">not found</span>'; }
-const fmtIoU = (it, r) => (it.truth && r?.corners ? iou(r.corners, it.truth).toFixed(3) : it.truth && r && r.kind === 'none' ? '0.000' : '—');
+function kindTag(r) { if (!r) return '<span class="muted">-</span>'; if (r.kind === 'error') return `<span class="tag bad">error</span> ${r.error}`; if (r.kind === 'quad') return '<span class="tag good">quad</span>'; if (r.kind === 'fullFrame') return '<span class="tag ff">full frame</span>'; return '<span class="tag bad">not found</span>'; }
+const fmtIoU = (it, r) => (it.truth && r?.corners ? iou(r.corners, it.truth).toFixed(3) : it.truth && r && r.kind === 'none' ? '0.000' : '-');
 function renderTables() {
   const it = S.items[S.sel]; const rt = $('resTable');
   if (!it) { rt.innerHTML = ''; $('sumTable').innerHTML = ''; return; }
-  const row = (name, col, r) => `<tr><td><i class="sw" style="background:${col}"></i>${name}</td><td>${kindTag(r)}</td><td>${r?.method ?? '—'}</td><td class="mono">${r && r.kind !== 'error' ? r.score.toFixed(3) : '—'}</td><td class="mono">${fmtIoU(it, r)}</td><td class="mono">${r?.total != null && r.kind !== 'error' ? r.total.toFixed(0) + ' ms' : '—'}</td><td class="mono muted">${r?.ms?.edges != null ? `edges ${r.ms.edges.toFixed(0)} · hough ${r.ms.hough.toFixed(0)} · seg ${r.ms.seg.toFixed(0)} · score ${r.ms.score.toFixed(0)}${r.ms.prep ? ' · prep ' + r.ms.prep.toFixed(0) : ''}` : r?.nCands != null ? r.nCands + ' candidates' : ''}</td></tr>`;
+  const row = (name, col, r) => `<tr><td><i class="sw" style="background:${col}"></i>${name}</td><td>${kindTag(r)}</td><td>${r?.method ?? '-'}</td><td class="mono">${r && r.kind !== 'error' ? r.score.toFixed(3) : '-'}</td><td class="mono">${fmtIoU(it, r)}</td><td class="mono">${r?.total != null && r.kind !== 'error' ? r.total.toFixed(0) + ' ms' : '-'}</td><td class="mono muted">${r?.ms?.edges != null ? `edges ${r.ms.edges.toFixed(0)} · hough ${r.ms.hough.toFixed(0)} · seg ${r.ms.seg.toFixed(0)} · score ${r.ms.score.toFixed(0)}${r.ms.prep ? ' · prep ' + r.ms.prep.toFixed(0) : ''}` : r?.nCands != null ? r.nCands + ' candidates' : ''}</td></tr>`;
   rt.innerHTML = '<tr><th>Method</th><th>Result</th><th>Source</th><th>Score</th><th>IoU vs truth</th><th>Time</th><th>Breakdown</th></tr>' + row('Pure JS', COL.js, it.js) + (S.cvReady ? row('OpenCV port', COL.cv, it.cvr) : '');
   const cov = it.js && it.js.coverage != null ? `Uniform-region coverage: ${(it.js.coverage * 100).toFixed(0)}% · candidates: ${it.js.nCands}` : ''; setStatus(cov);
   let html = '<tr><th>Image</th><th>Truth</th><th>JS result</th><th>JS IoU</th><th>JS ms</th>' + (S.cvReady ? '<th>CV result</th><th>CV IoU</th><th>CV ms</th>' : '') + '</tr>', sj = 0, sc = 0, n = 0;
   for (const m of S.items) { const a = m.truth && m.js?.corners ? iou(m.js.corners, m.truth) : m.truth && m.js ? 0 : null, b = m.truth && m.cvr?.corners ? iou(m.cvr.corners, m.truth) : m.truth && m.cvr ? 0 : null;
     if (a != null) { sj += a; n++; if (b != null) sc += b; }
-    html += `<tr><td>${m.name}</td><td>${m.truth ? '✓' : '<span class="muted">—</span>'}</td><td>${kindTag(m.js)}</td><td class="mono">${a != null ? a.toFixed(3) : '—'}</td><td class="mono">${m.js?.total ? m.js.total.toFixed(0) : '—'}</td>` + (S.cvReady ? `<td>${kindTag(m.cvr)}</td><td class="mono">${b != null ? b.toFixed(3) : '—'}</td><td class="mono">${m.cvr?.total ? m.cvr.total.toFixed(0) : '—'}</td>` : '') + '</tr>'; }
+    html += `<tr><td>${m.name}</td><td>${m.truth ? '✓' : '<span class="muted">-</span>'}</td><td>${kindTag(m.js)}</td><td class="mono">${a != null ? a.toFixed(3) : '-'}</td><td class="mono">${m.js?.total ? m.js.total.toFixed(0) : '-'}</td>` + (S.cvReady ? `<td>${kindTag(m.cvr)}</td><td class="mono">${b != null ? b.toFixed(3) : '-'}</td><td class="mono">${m.cvr?.total ? m.cvr.total.toFixed(0) : '-'}</td>` : '') + '</tr>'; }
   if (n) html += `<tr><td><b>Mean IoU (${n} with truth)</b></td><td></td><td></td><td class="mono"><b>${(sj / n).toFixed(3)}</b></td><td></td>` + (S.cvReady ? `<td></td><td class="mono"><b>${(sc / n).toFixed(3)}</b></td><td></td>` : '') + '</tr>';
   $('sumTable').innerHTML = html;
 }
@@ -491,7 +491,7 @@ $('btnCv').onclick = () => {
   next(0);
 };
 
-/* ════════════════ synthetic scenes (shapes only — no text) ════════════════ */
+/* ════════════════ synthetic scenes (shapes only, no text) ════════════════ */
 function rng(seed) { return () => { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 function solveH(P, Q) {
   const A = [], b = []; for (let i = 0; i < 4; i++) { const [x, y] = P[i], [u, v] = Q[i]; A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.push(u); A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); b.push(v); }
