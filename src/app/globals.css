@@ -18,6 +18,22 @@ body {
   color: #18181b;
 }
 
+/* Tailwind v4 resets buttons to the default cursor; restore the pointer on clickable controls.
+   Kept in the base layer so utilities like cursor-not-allowed / cursor-grab still win. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="tab"],
+  [role="radio"],
+  [role="option"],
+  [role="menuitem"],
+  select:not(:disabled),
+  label[for],
+  summary {
+    cursor: pointer;
+  }
+}
+
 .tabular-nums {
   font-feature-settings: "tnum" 1;
   font-variant-numeric: tabular-nums;
