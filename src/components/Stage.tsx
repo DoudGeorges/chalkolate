@@ -122,7 +122,6 @@ export function Stage({
   // mode it becomes the board rectangle and clips everything outside the board.
   const mediaWrapperStyle: React.CSSProperties | undefined = cropView
     ? {
-        inset: 'auto',
         left: `${cropView.rect.left}px`,
         top: `${cropView.rect.top}px`,
         width: `${cropView.rect.width}px`,
