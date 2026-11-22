@@ -80,6 +80,13 @@ async function parseErrorResponse(response: Response): Promise<ApiClientError> {
   )
 }
 
+/** Random per-page-load id sent on every request so the owner-only debug log can group a session. */
+const SESSION_ID =
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : Math.random().toString(16).slice(2)
+const SESSION_HEADERS = { 'X-Chalkolate-Session': SESSION_ID }
+
 /**
  * Sends one API request and returns the successful response. Responses are per-user data, so
  * the browser HTTP cache is bypassed (the backend also replies `Cache-Control: no-store`).
@@ -91,7 +98,11 @@ async function sendRequest(
 ): Promise<Response> {
   let response: Response
   try {
-    response = await fetch(url, { ...init, cache: 'no-store' })
+    response = await fetch(url, {
+      ...init,
+      cache: 'no-store',
+      headers: { ...(init.headers as Record<string, string> | undefined), ...SESSION_HEADERS },
+    })
   } catch (err) {
     if (isAbortError(err)) {
       throw err
@@ -224,6 +235,7 @@ export async function requestSpeechStream(
       headers: {
         'Content-Type': 'application/json',
         Accept: 'audio/mpeg',
+        ...SESSION_HEADERS,
       },
       body: JSON.stringify({ text }),
       signal,
