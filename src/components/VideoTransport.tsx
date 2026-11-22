@@ -78,7 +78,7 @@ export function VideoTransport({
         onClick={onTogglePlayback}
         aria-label={playing ? 'Pause video' : 'Play video'}
         title={playing ? 'Pause video' : 'Play video'}
-        className="ui-icon rounded-full bg-accent text-white hover:bg-accent-hover hover:text-white"
+        className="ui-icon rounded-full bg-accent text-surface hover:bg-accent-hover hover:text-surface"
       >
         {playing ? (
           <Pause className="size-3.5" aria-hidden="true" />

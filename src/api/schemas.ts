@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { SpeechStyle } from '../lib/voicePreferences'
 
 /** Match Pydantic's character limits for strings containing supplementary Unicode characters. */
 export function textWithLimit(limit: number, nonEmpty = false) {
@@ -111,6 +112,7 @@ export type AnswerFormat = z.infer<typeof AnswerFormatSchema>
 export interface AnalysisMetadataPayload {
   request_id: string
   answer_format: AnswerFormat
+  speech_style?: SpeechStyle
   previous_board_summary: string
   corners: CalibrationCorners | null
 }

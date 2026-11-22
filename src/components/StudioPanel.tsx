@@ -18,37 +18,42 @@ export function StudioPanel({
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null)
   useEffect(() => {
-    if (open) headingRef.current?.focus()
+    if (open) headingRef.current?.focus({ preventScroll: true })
   }, [open])
 
   return (
-    <aside
-      id={id}
-      hidden={!open}
-      data-side={side}
-      aria-labelledby={id + '-heading'}
-      className={open ? 'studio-panel rounded-xl border border-line' : undefined}
-      onKeyDown={(event) => {
-        if (event.key === 'Escape' && !event.defaultPrevented) {
-          event.preventDefault()
-          event.stopPropagation()
-          onClose()
-        }
-      }}
+    <div
+      inert={!open}
+      aria-hidden={!open}
+      className={
+        open
+          ? 'studio-drawer h-[min(44dvh,25rem)] w-full opacity-100 visible lg:h-auto lg:w-88'
+          : 'studio-drawer pointer-events-none h-0 w-full opacity-0 invisible lg:h-auto lg:w-0'
+      }
     >
-      {open && (
-        <>
-          <header className="panel-heading">
-            <h2 ref={headingRef} id={id + '-heading'} tabIndex={-1} className="focus:outline-none">
-              {title}
-            </h2>
-            <button type="button" onClick={onClose} aria-label={'Close ' + title.toLowerCase()} className="ui-icon">
-              <X aria-hidden="true" />
-            </button>
-          </header>
-          {children}
-        </>
-      )}
-    </aside>
+      <aside
+        id={id}
+        data-side={side}
+        aria-labelledby={id + '-heading'}
+        className="studio-panel"
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && !event.defaultPrevented) {
+            event.preventDefault()
+            event.stopPropagation()
+            onClose()
+          }
+        }}
+      >
+        <header className="panel-heading">
+          <h2 ref={headingRef} id={id + '-heading'} tabIndex={-1} className="focus:outline-none">
+            {title}
+          </h2>
+          <button type="button" onClick={onClose} aria-label={'Close ' + title.toLowerCase()} className="ui-icon">
+            <X aria-hidden="true" />
+          </button>
+        </header>
+        {children}
+      </aside>
+    </div>
   )
 }

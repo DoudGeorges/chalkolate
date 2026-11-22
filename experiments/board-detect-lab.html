@@ -64,9 +64,9 @@
   </section>
 
   <section class="box">
-    <h2>Reference: backend algorithm (OpenCV.js)</h2>
+    <h2>OpenCV.js reference detector</h2>
     <div class="row"><button id="btnCv">Load OpenCV.js 4.10</button></div>
-    <div class="note" id="cvStatus" style="margin-top:6px">Ports the backend's candidate generation (multi-Canny + contours + Otsu + HoughLinesP) using the same scorer, to compare against the pure-JS detector. Optional; needs network.</div>
+    <div class="note" id="cvStatus" style="margin-top:6px">Compare the JavaScript detector with an earlier board detector that uses contours and Hough lines. Loading OpenCV.js requires a network connection.</div>
   </section>
 
   <section class="box">
@@ -207,7 +207,7 @@ function validQuadNorm(c) { // strict TL,TR,BR,BL convexity
 }
 const isBorderSide = (a, b, w, h, tol = 2) => (a[1] <= tol && b[1] <= tol) || (a[1] >= h - 1 - tol && b[1] >= h - 1 - tol) || (a[0] <= tol && b[0] <= tol) || (a[0] >= w - 1 - tol && b[0] >= w - 1 - tol);
 
-// Port of backend _score_board_quad. Sides lying on the frame border get a neutral score (board may extend past the frame).
+// Reference scorer. Sides lying on the frame border get a neutral score (board may extend past the frame).
 function scoreQuad(p, an, areaFrac, maxDev) {
   const { w, h, gx, gy, mag, L, A, B } = an, T = 40, sup = [], con = []; let realSides = 0;
   for (let i = 0; i < 4; i++) {
@@ -361,7 +361,7 @@ function detectJS(item) {
   const res = finalize(cands, an, o.accept, o.cov, seg.coverage, seg.covKind, true); ms.score = performance.now() - t; res.ms = ms; res.total = ms.prep + ms.edges + ms.hough + ms.seg + ms.score; res.nCands = cands.length; return res;
 }
 
-/* ──────── OpenCV.js port of backend candidate generation (shares the scorer) ──────── */
+/* OpenCV.js reference candidate generation using the same lab scorer */
 function detectCV(item) {
   const cv = window.cv, o = readOpts(), an = analyze(item, o.size), { w, h } = an, t0 = performance.now(), mats = [], track = (m) => { mats.push(m); return m; };
   try {

@@ -1,4 +1,4 @@
-import { Crop, LoaderCircle, NotebookPen, Play, SlidersHorizontal, Square } from 'lucide-react'
+import { Crop, LoaderCircle, Play, Settings, Square } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { Brand } from './Brand'
 
@@ -8,11 +8,8 @@ export interface TopBarProps {
   onToggleMonitoring: () => void
   onboarding?: boolean
   onGoHome: () => void
-  notesOpen: boolean
-  notesCount: number
   settingsOpen: boolean
   onToggleSettings: () => void
-  onToggleNotes: () => void
   canCrop: boolean
   cropped: boolean
   calibrationEditing: boolean
@@ -25,11 +22,8 @@ export function TopBar({
   onToggleMonitoring,
   onboarding = false,
   onGoHome,
-  notesOpen,
-  notesCount,
   settingsOpen,
   onToggleSettings,
-  onToggleNotes,
   canCrop,
   cropped,
   calibrationEditing,
@@ -57,49 +51,24 @@ export function TopBar({
 
           {!onboarding && (
             <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
-              <button
-                type="button"
-                id="notes-toggle"
-                onClick={onToggleNotes}
-                aria-expanded={notesOpen}
-                aria-controls="lecture-notes-panel"
-                className="ui-button px-2.5 sm:px-3"
-              >
-                <NotebookPen aria-hidden="true" />
-                Notes
-                {notesCount > 0 && (
-                  <span className="ui-badge">{notesCount}<span className="sr-only">{notesCount === 1 ? ' section' : ' sections'}</span></span>
-                )}
-              </button>
-              <button
-                type="button"
-                id="settings-toggle"
-                onClick={onToggleSettings}
-                aria-label="Settings"
-                title="Settings"
-                aria-expanded={settingsOpen}
-                aria-controls="studio-settings-panel"
-                className="ui-button px-2.5 sm:px-3"
-              >
-                <SlidersHorizontal aria-hidden="true" />
-                <span className="hidden min-[360px]:inline">Settings</span>
-              </button>
               {canCrop && (
-                <button
-                  type="button"
-                  id="crop-toggle"
-                  onClick={onToggleCrop}
-                  title={cropLabel}
-                  aria-label={cropLabel}
-                  aria-expanded={calibrationEditing}
-                  className="ui-button px-2.5 sm:px-3"
-                  data-selected={cropped}
-                >
-                  <Crop aria-hidden="true" />
-                  <span className="hidden lg:inline">{cropLabel}</span>
-                </button>
+                <>
+                  <button
+                    type="button"
+                    id="crop-toggle"
+                    onClick={onToggleCrop}
+                    title={cropLabel}
+                    aria-label={cropLabel}
+                    aria-expanded={calibrationEditing}
+                    className="ui-button px-2.5 sm:px-3"
+                    data-selected={cropped}
+                  >
+                    <Crop aria-hidden="true" />
+                    <span className="hidden lg:inline">{cropLabel}</span>
+                  </button>
+                  <span aria-hidden="true" className="mx-1 hidden h-5 w-px bg-line sm:block" />
+                </>
               )}
-              <span aria-hidden="true" className="mx-1 hidden h-5 w-px bg-line sm:block" />
               <button
                 type="button"
                 ref={startButton}
@@ -118,6 +87,18 @@ export function TopBar({
                   <Play className="fill-current" aria-hidden="true" />
                 )}
                 {starting ? 'Starting…' : monitoring ? 'Stop' : 'Start'}
+              </button>
+              <button
+                type="button"
+                id="settings-toggle"
+                onClick={onToggleSettings}
+                aria-label="Settings"
+                title="Settings"
+                aria-expanded={settingsOpen}
+                aria-controls="studio-settings-panel"
+                className="ui-button w-10 px-0"
+              >
+                <Settings aria-hidden="true" />
               </button>
             </div>
           )}

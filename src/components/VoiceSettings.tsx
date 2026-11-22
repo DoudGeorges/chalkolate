@@ -182,7 +182,7 @@ export function VoiceSettings({
                       onClick={() => onChange({ elevenLabsVoice: voice.id })}
                       className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1 text-left"
                     >
-                      <span className="grid size-7 shrink-0 place-items-center rounded-full bg-sunken text-xs font-semibold text-accent" aria-hidden="true">
+                      <span className="grid size-7 shrink-0 place-items-center rounded-full bg-accent-soft text-xs font-semibold text-accent" aria-hidden="true">
                         {voice.name.charAt(0).toUpperCase()}
                       </span>
                       <span className="min-w-0 flex-1">
@@ -200,7 +200,7 @@ export function VoiceSettings({
                         aria-label={(previewing ? 'Stop' : 'Play') + ' voice sample for ' + sampleName}
                         title={previewing ? 'Stop sample' : 'Play sample'}
                         onClick={() => togglePreview(voice.id)}
-                        className={previewing ? 'ui-icon mr-0.5 size-8 bg-accent text-white hover:bg-accent-hover hover:text-white' : 'ui-icon mr-0.5 size-8'}
+                        className={previewing ? 'ui-icon mr-0.5 size-8 bg-accent text-surface hover:bg-accent-hover hover:text-surface' : 'ui-icon mr-0.5 size-8'}
                       >
                         {previewing ? <Square aria-hidden="true" /> : <Play aria-hidden="true" />}
                       </button>

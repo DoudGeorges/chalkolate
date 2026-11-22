@@ -1,9 +1,9 @@
-import { ArrowRight, LoaderCircle, Play, ScanLine, X } from 'lucide-react'
+import { ArrowRight, LoaderCircle, Play, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { CalibrationCorners } from '../api/schemas'
 import { MonitorPhase } from '../hooks/useBoardMonitor'
 import { MediaSourceState } from '../hooks/useMediaSource'
-import { CATEGORY_COLORS, CATEGORY_LABELS } from '../lib/categoryColors'
+import { CATEGORY_LABELS } from '../lib/categoryColors'
 import {
   ContainedImageRect,
   computeContainedImageRect,
@@ -208,21 +208,6 @@ export function Stage({
           </div>
         )}
 
-        {!selectedIssue &&
-          mediaState.kind !== 'none' &&
-          mediaState.ready &&
-          canMonitor && !mediaState.previewNeedsGesture &&
-          !monitoring && !starting &&
-          !calibrationEditing && (
-            <div
-              role="status"
-              className="pointer-events-none absolute top-3 left-3 z-20 flex items-center gap-2 rounded-lg bg-panel px-3 py-2 text-xs text-ink shadow-soft animate-rise-in sm:top-4 sm:left-4"
-            >
-              <ScanLine className="size-4 text-accent" aria-hidden="true" />
-              <span>Select <strong>Start</strong> to {mediaState.videoPlaying ? 'check for mistakes.' : 'play the preview and check for mistakes.'}</span>
-            </div>
-          )}
-
         <div
           style={mediaWrapperStyle}
           className={`pointer-events-none absolute inset-0 overflow-hidden ${
@@ -280,11 +265,6 @@ export function Stage({
         {selectedIssue && (
           <div id="finding-explanation" className="absolute inset-x-3 top-3 z-20 max-h-[calc(100%-1.5rem)] max-w-sm overflow-auto rounded-xl border border-line bg-panel p-3 shadow-pop animate-rise-in sm:inset-x-auto sm:top-4 sm:left-4">
             <div className="flex items-center gap-2">
-              <span
-                className="size-2 shrink-0 rounded-full"
-                style={{ backgroundColor: CATEGORY_COLORS[selectedIssue.category] }}
-                aria-hidden="true"
-              />
               <span className="text-xs font-semibold text-muted">
                 {CATEGORY_LABELS[selectedIssue.category]} correction
               </span>

@@ -106,6 +106,10 @@ class AnalysisMetadata(StrictModel):
         ),
     )
 
+    speech_style: Literal["student", "professor"] = Field(
+        default="student", description="Wording of spoken corrections for this snapshot."
+    )
+
     @model_validator(mode="before")
     @classmethod
     def _discard_legacy_role(cls, data: object) -> object:
@@ -175,12 +179,12 @@ class _FindingBase(StrictModel):
     detected_text: str = Field(
         min_length=1,
         max_length=MAX_DETECTED_TEXT_LENGTH,
-        description="Exact visible erroneous span, including the whole assertion if needed.",
+        description="Exact visible span inside box_2d that the replacement corrects.",
     )
     correction_text: str = Field(
         min_length=1,
         max_length=MAX_CORRECTION_TEXT_LENGTH,
-        description="Plain-text replacement that fixes the error or states the corrected claim.",
+        description="Plain-text replacement for exactly detected_text, omitting unchanged context.",
     )
     correction_latex: str | None = Field(
         default=None,
@@ -270,8 +274,8 @@ class DetectedError(_FindingBase):
 
     box_2d: Box2D = Field(
         description=(
-            "Model-space bounding box [ymin, xmin, ymax, xmax] in 0..1000 relative to the "
-            "exact processed image provided to the model."
+            "Tight box around the actual erroneous ink in detected_text. Exclude correct "
+            "neighbors. Use [ymin, xmin, ymax, xmax] in 0..1000 on the provided image."
         ),
     )
 

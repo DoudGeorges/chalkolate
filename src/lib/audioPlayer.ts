@@ -1,8 +1,12 @@
 import { isAbortError } from './abort'
 
+/** Playback speed multiplier for streamed ElevenLabs audio (30% faster). */
+export const ELEVENLABS_PLAYBACK_RATE = 1.3
+
 export interface PlayAudioStreamOptions {
   signal: AbortSignal
   onStart: () => void
+  playbackRate?: number
 }
 
 export class AudioAutoplayBlockedError extends Error {
@@ -95,10 +99,17 @@ function waitForEvent(
   })
 }
 
+function applyPlaybackRate(audio: HTMLAudioElement, rate: number): void {
+  if (!Number.isFinite(rate) || rate <= 0) return
+  audio.defaultPlaybackRate = rate
+  audio.playbackRate = rate
+}
+
 async function waitForAudioCompletion(
   audio: HTMLAudioElement,
   signal: AbortSignal,
   notifyStarted: () => void,
+  playbackRate: number,
 ): Promise<void> {
   if (signal.aborted) {
     throw createAbortError()
@@ -146,6 +157,7 @@ async function waitForAudioCompletion(
     audio.addEventListener('error', handleError, { once: true })
     signal.addEventListener('abort', handleAbort, { once: true })
 
+    applyPlaybackRate(audio, playbackRate)
     audio
       .play()
       .then(() => {
@@ -190,6 +202,7 @@ async function playBlobObject(
   blob: Blob,
   signal: AbortSignal,
   notifyStarted: () => void,
+  playbackRate: number,
 ): Promise<void> {
   if (signal.aborted) {
     throw createAbortError()
@@ -207,6 +220,7 @@ async function playBlobObject(
   cleanupAudioElement(audio, null)
   const objectUrl = URL.createObjectURL(blob)
   audio.src = objectUrl
+  applyPlaybackRate(audio, playbackRate)
 
   const onAbortPlayback = () => {
     if (audio.getAttribute('src') !== objectUrl) return
@@ -219,7 +233,7 @@ async function playBlobObject(
   signal.addEventListener('abort', onAbortPlayback, { once: true })
 
   try {
-    await waitForAudioCompletion(audio, signal, notifyStarted)
+    await waitForAudioCompletion(audio, signal, notifyStarted, playbackRate)
   } finally {
     signal.removeEventListener('abort', onAbortPlayback)
     cleanupAudioElement(audio, objectUrl)
@@ -230,6 +244,7 @@ async function playWithMediaSourceOrFallbackBlob(
   response: Response,
   signal: AbortSignal,
   onStart: () => void,
+  playbackRate: number,
 ): Promise<void> {
   const body = response.body
   if (!body) {
@@ -246,6 +261,7 @@ async function playWithMediaSourceOrFallbackBlob(
   const mediaSource = new MediaSource()
   const objectUrl = URL.createObjectURL(mediaSource)
   audio.src = objectUrl
+  applyPlaybackRate(audio, playbackRate)
 
   const collectedChunks: BlobPart[] = []
   let didStart = false
@@ -310,7 +326,7 @@ async function playWithMediaSourceOrFallbackBlob(
 
       if (!playStarted) {
         playStarted = true
-        completionPromise = waitForAudioCompletion(audio, signal, notifyStartedOnce)
+        completionPromise = waitForAudioCompletion(audio, signal, notifyStartedOnce, playbackRate)
         completionPromise.catch((err: unknown) => {
           playError = err instanceof Error ? err : new Error('Audio playback failed.')
         })
@@ -332,7 +348,7 @@ async function playWithMediaSourceOrFallbackBlob(
     if (completionPromise) {
       await completionPromise
     } else if (audio.buffered.length > 0) {
-      await waitForAudioCompletion(audio, signal, notifyStartedOnce)
+      await waitForAudioCompletion(audio, signal, notifyStartedOnce, playbackRate)
     } else {
       throw new Error('Received empty audio stream.')
     }
@@ -383,12 +399,12 @@ async function playWithMediaSourceOrFallbackBlob(
   }
 
   if (fallbackToBufferedResponse) {
-    await playBufferedBlob(response, signal, notifyStartedOnce)
+    await playBufferedBlob(response, signal, notifyStartedOnce, playbackRate)
     return
   }
 
   if (fallbackBlob) {
-    await playBlobObject(fallbackBlob, signal, notifyStartedOnce)
+    await playBlobObject(fallbackBlob, signal, notifyStartedOnce, playbackRate)
   }
 }
 
@@ -396,6 +412,7 @@ async function playBufferedBlob(
   response: Response,
   signal: AbortSignal,
   notifyStarted: () => void,
+  playbackRate: number,
 ): Promise<void> {
   const onAbortWhileReading = () => {
     if (response.body) {
@@ -411,7 +428,7 @@ async function playBufferedBlob(
     signal.removeEventListener('abort', onAbortWhileReading)
   }
 
-  await playBlobObject(blob, signal, notifyStarted)
+  await playBlobObject(blob, signal, notifyStarted, playbackRate)
 }
 
 /**
@@ -423,7 +440,7 @@ export async function playAudioStreamResponse(
   response: Response,
   options: PlayAudioStreamOptions,
 ): Promise<void> {
-  const { signal, onStart } = options
+  const { signal, onStart, playbackRate = ELEVENLABS_PLAYBACK_RATE } = options
   if (signal.aborted) {
     throw createAbortError()
   }
@@ -443,9 +460,9 @@ export async function playAudioStreamResponse(
     response.body !== null
 
   if (canUseMse) {
-    await playWithMediaSourceOrFallbackBlob(response, signal, notifyStarted)
+    await playWithMediaSourceOrFallbackBlob(response, signal, notifyStarted, playbackRate)
     return
   }
 
-  await playBufferedBlob(response, signal, notifyStarted)
+  await playBufferedBlob(response, signal, notifyStarted, playbackRate)
 }

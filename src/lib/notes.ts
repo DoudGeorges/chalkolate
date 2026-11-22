@@ -289,10 +289,10 @@ export function renderNotesBodyHtml(markdown: string): string {
 }
 
 const PRINT_CSS = `
-body{font-family:"DM Sans",ui-sans-serif,system-ui,sans-serif;max-width:46rem;margin:2rem auto;padding:0 1rem;line-height:1.6;color:#1c2c25}
+body{font-family:"DM Sans",ui-sans-serif,system-ui,sans-serif;max-width:46rem;margin:2rem auto;padding:0 1rem;line-height:1.6;color:#401C07}
 h1,h2{font-weight:600;line-height:1.25}h1{font-size:2rem;margin-bottom:.25rem}h2{font-size:1.25rem;margin:1.5rem 0 .5rem;break-after:avoid}
-.meta{color:#4e6057;font-size:.875rem;margin-bottom:1.5rem}section{break-inside:avoid-page;margin-bottom:1rem}
-img{max-width:100%;border:1px solid #d4ded6;border-radius:8px;margin:.5rem 0}code{font-family:inherit;background:#edf1ed;padding:0 .25em;border-radius:4px}
+.meta{color:#7E401B;font-size:.875rem;margin-bottom:1.5rem}section{break-inside:avoid-page;margin-bottom:1rem}
+img{max-width:100%;border:1px solid #E6D2B8;border-radius:8px;margin:.5rem 0}code{font-family:inherit;background:#F6E8D5;padding:0 .25em;border-radius:4px}
 math[display=block]{margin:.8rem 0}@media print{body{margin:0;max-width:none}}
 `
 

@@ -1,27 +1,28 @@
 @import "tailwindcss";
 
 @theme {
-  --color-surface: #f4f6f2;
-  --color-panel: #ffffff;
-  --color-sunken: #edf1ed;
-  --color-stage: #dfe6e0;
-  --color-line: #d4ded6;
-  --color-control-line: #7e9184;
-  --color-accent: #245a47;
-  --color-accent-hover: #194634;
-  --color-accent-soft: #e8f2ec;
-  --color-ink: #1c2c25;
-  --color-muted: #4e6057;
-  --color-faint: #5c6c62;
-  --color-moss: #296148;
-  --color-moss-soft: #e7f4e9;
-  --color-danger: #a5364c;
-  --color-danger-soft: #fdf0f0;
-  --color-warn: #80501b;
-  --color-warn-soft: #fff5df;
-  --color-warn-line: #e5c996;
-  --shadow-pop: 0 2px 5px rgb(21 49 36 / 0.04), 0 12px 32px -12px rgb(21 49 36 / 0.17);
-  --shadow-soft: 0 1px 2px rgb(21 49 36 / 0.06);
+  --color-surface: #FFF5E8;
+  --color-panel: #FFFFFF;
+  --color-sunken: #F6E8D5;
+  --color-stage: #EFE0CC;
+  --color-line: #E6D2B8;
+  --color-control-line: #B77636;
+  --color-accent: #5D2B0B;
+  --color-accent-hover: #401D04;
+  --color-accent-soft: #FCEAD2;
+  --color-accent-light: #E9AB66;
+  --color-ink: #401C07;
+  --color-muted: #7E401B;
+  --color-faint: #965030;
+  --color-moss: #2F6649;
+  --color-moss-soft: #E9F3EC;
+  --color-danger: #A83232;
+  --color-danger-soft: #FDF0EE;
+  --color-warn: #884320;
+  --color-warn-soft: #FEF0DB;
+  --color-warn-line: #E9AB66;
+  --shadow-pop: 0 2px 5px rgb(64 28 7 / 0.06), 0 12px 32px -10px rgb(64 28 7 / 0.18);
+  --shadow-soft: 0 1px 2px rgb(64 28 7 / 0.06);
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
   --animate-fade-in: fade-in 180ms var(--ease-out-quint) both;
   --animate-rise-in: rise-in 240ms var(--ease-out-quint) both;
@@ -166,7 +167,7 @@ body {
   }
 
   .ui-button[data-variant='primary'] {
-    @apply border-accent bg-accent text-white shadow-soft;
+    @apply border-accent bg-accent text-surface shadow-soft;
   }
 
   .ui-button[data-variant='primary']:hover:not(:disabled) {
@@ -199,7 +200,7 @@ body {
 
   .ui-button[aria-expanded='true'],
   .ui-button[data-selected='true'] {
-    @apply border-control-line bg-accent-soft text-accent;
+    @apply border-accent-light bg-accent-soft text-accent;
   }
 
   .ui-icon {
@@ -211,7 +212,7 @@ body {
   }
 
   .ui-field {
-    @apply min-h-10 w-full min-w-0 rounded-lg border border-control-line bg-panel px-3 text-sm text-ink placeholder:text-muted transition-colors focus:border-accent focus:outline-2 focus:outline-offset-2 focus:outline-accent;
+    @apply min-h-10 w-full min-w-0 rounded-lg border border-line bg-panel px-3 text-sm text-ink placeholder:text-faint transition-colors hover:border-control-line focus:border-accent focus:outline-2 focus:outline-offset-2 focus:outline-accent;
   }
 
   .ui-label {
@@ -219,7 +220,7 @@ body {
   }
 
   .ui-badge {
-    @apply inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-accent-soft px-1.5 text-xs font-semibold tabular-nums text-accent;
+    @apply inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-accent-light px-1.5 text-xs font-semibold tabular-nums text-ink;
   }
 
   .option-card {
@@ -259,12 +260,12 @@ body {
     @apply text-accent;
   }
 
-  .studio-panel {
-    @apply relative z-30 flex h-[min(44dvh,25rem)] w-full shrink-0 flex-col overflow-hidden bg-panel shadow-soft animate-panel-in lg:h-auto lg:w-88;
+  .studio-drawer {
+    @apply relative flex flex-col overflow-hidden transition-[width,height,opacity,visibility] duration-[260ms] ease-[var(--ease-out-quint)] motion-reduce:transition-none;
   }
 
-  .studio-panel[data-side='right'] {
-    animation-name: panel-in-right;
+  .studio-panel {
+    @apply flex h-[min(44dvh,25rem)] w-full shrink-0 flex-col overflow-hidden rounded-xl rounded-tr-none border border-line bg-panel lg:h-full lg:w-88 lg:rounded-none lg:border-y-0 lg:border-r-0;
   }
 
   .panel-heading {

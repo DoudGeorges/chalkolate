@@ -111,7 +111,6 @@ export function DetectionOverlay({
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         {showPills && projected.map(({ issue, boxPx, label }) => {
           const pos = computeOverlayPillPosition(boxPx, clipRect, pillWidth)
-          const color = CATEGORY_COLORS[issue.category]
           const isHighlighted =
             issue.id === selectedIssueId || issue.id === hoveredIssueId
 
@@ -139,11 +138,6 @@ export function DetectionOverlay({
                   : 'z-10 border-line shadow-soft hover:border-control-line'
               }`}
             >
-              <span
-                className="inline-block h-2 w-2 shrink-0 rounded-full"
-                style={{ backgroundColor: color }}
-                aria-hidden="true"
-              />
               <span className="truncate font-medium text-ink">
                 <MathCorrection
                   correctionText={issue.correction_text}

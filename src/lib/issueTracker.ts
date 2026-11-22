@@ -193,6 +193,16 @@ function eitherContains(a: string, b: string): boolean {
 
 type FindingIdentity = Pick<SourceSpaceDetectedError, 'category' | 'box_2d' | 'detected_text' | 'correction_text'>
 
+// A one-character sign or exponent can occur several times on the same line.
+// Only equate the two spans when the local edit reproduces the corrected line.
+function reproducesEdit(line: string, fixed: string, term: string, replacement: string): boolean {
+  if (!term || term.length >= line.length) return false
+  for (let at = line.indexOf(term); at >= 0; at = line.indexOf(term, at + 1)) {
+    if (line.slice(0, at) + replacement + line.slice(at + term.length) === fixed) return true
+  }
+  return false
+}
+
 /**
  * Determines whether two findings describe the same conceptual mistake (e.g. a full
  * equation plus its erroneous RHS or LHS) while preserving genuinely distinct errors
@@ -214,6 +224,8 @@ export function areEquivalentFindings(
 
   // Overlapping or nested boxes (e.g. full equation enclosing wrong RHS or LHS).
   if (iou >= 0.45 || containment >= 0.65) {
+    if (reproducesEdit(detectedA, correctionA, detectedB, correctionB) ||
+        reproducesEdit(detectedB, correctionB, detectedA, correctionA)) return true
     const sameTarget = compactDetectedText(detectedA) === compactDetectedText(detectedB)
     return (sameTarget || eitherContains(detectedA, detectedB)) &&
       (sameCorrection || eitherContains(correctionA, correctionB))
@@ -236,10 +248,6 @@ function isUnchangedSideHighlight(finding: SourceSpaceDetectedError): boolean {
   return cor.length > det.length && containsNonTrivial(cor, det)
 }
 
-function hasClearBoxDimensions(box: Box2D): boolean {
-  return box[3] - box[1] >= 14 && box[2] - box[0] >= 10
-}
-
 function pickPreferredClusterFinding(
   cluster: readonly SourceSpaceDetectedError[],
 ): SourceSpaceDetectedError {
@@ -247,9 +255,7 @@ function pickPreferredClusterFinding(
 
   // Prefer findings targeting the actual erroneous side over unchanged LHS highlights.
   const actualErrors = cluster.filter((item) => !isUnchangedSideHighlight(item))
-  const pool = actualErrors.length > 0 ? actualErrors : cluster
-  const clearPool = pool.filter((item) => hasClearBoxDimensions(item.box_2d))
-  const candidates = clearPool.length > 0 ? clearPool : pool
+  const candidates = actualErrors.length > 0 ? actualErrors : cluster
 
   let best = candidates[0]!
   let bestArea = boxArea(best.box_2d)
@@ -329,7 +335,9 @@ export function reconcileAnalysis(
       if (existing.category === f.finding.category) {
         const iou = computeBoxIoU(existing.box_2d, f.finding.box_2d)
         const dist = computeBoxCenterDistance(existing.box_2d, f.finding.box_2d)
-        const spatiallyClose = iou >= MATCH_MIN_IOU || dist <= MATCH_MAX_CENTER_DIST
+        const spatiallyClose = iou >= MATCH_MIN_IOU || dist <= MATCH_MAX_CENTER_DIST ||
+          (existing.status === 'open' && existing.correction_text === f.finding.correction_text &&
+            computeBoxContainment(existing.box_2d, f.finding.box_2d) >= 0.85)
 
         if (existing.normalized_text === f.norm) {
           if (ctx.relaxSpatial || spatiallyClose) {
@@ -419,13 +427,12 @@ export function reconcileAnalysis(
       const nextStatus: IssueLifecycleStatus =
         existing.status === 'dismissed' ? 'dismissed' : 'open'
 
-      // On Tier 4 conceptual match, avoid expanding a focused box back out to a wide
-      // full-equation box when the existing box is already substantially tighter.
+      // Preserve a verified term box if the model later encloses it in the whole line.
       const keepTighterExistingBox =
-        match.tier === 4 &&
+        match.tier !== 3 &&
         existing.status === 'open' &&
         !ctx.relaxSpatial &&
-        hasClearBoxDimensions(existing.box_2d) &&
+        computeBoxContainment(existing.box_2d, f.finding.box_2d) >= 0.85 &&
         boxArea(existing.box_2d) < boxArea(f.finding.box_2d) * 0.75
 
       // On Tier 1/2 unchanged match, keep the existing box anchored unless the new box is
@@ -434,40 +441,29 @@ export function reconcileAnalysis(
         (match.tier === 1 || match.tier === 2) &&
         existing.status === 'open' &&
         !ctx.relaxSpatial &&
-        hasClearBoxDimensions(existing.box_2d) &&
         computeBoxIoU(existing.box_2d, f.finding.box_2d) >= 0.65 &&
         boxArea(f.finding.box_2d) >= boxArea(existing.box_2d) * 0.85
 
-      const updated: TrackedIssue = keepTighterExistingBox
-        ? {
-            ...existing,
-            confidence: Math.max(existing.confidence, f.finding.confidence),
-            status: nextStatus,
-            missCount: 0,
-            needsRecheck: false,
-            lastSeenSeq: nextSeq,
-            lastSeenSample: ctx.sample,
-            pendingVerification: false,
-          }
-        : {
-            ...existing,
-            category: f.finding.category,
-            detected_text: f.finding.detected_text,
-            normalized_text: f.norm,
-            compact_text: f.compact,
-            correction_text: f.finding.correction_text,
-            correction_latex: f.finding.correction_latex,
-            spoken_alert: f.finding.spoken_alert,
-            explanation: f.finding.explanation,
-            box_2d: keepAnchoredBox ? existing.box_2d : f.finding.box_2d,
-            confidence: f.finding.confidence,
-            status: nextStatus,
-            missCount: 0,
-            needsRecheck: false,
-            lastSeenSeq: nextSeq,
-            lastSeenSample: ctx.sample,
-            pendingVerification: false,
-          }
+      const keepTerm = keepTighterExistingBox && match.tier === 4
+      const updated: TrackedIssue = {
+        ...existing,
+        category: f.finding.category,
+        detected_text: keepTerm ? existing.detected_text : f.finding.detected_text,
+        normalized_text: keepTerm ? existing.normalized_text : f.norm,
+        compact_text: keepTerm ? existing.compact_text : f.compact,
+        correction_text: keepTerm ? existing.correction_text : f.finding.correction_text,
+        correction_latex: keepTerm ? existing.correction_latex : f.finding.correction_latex,
+        spoken_alert: f.finding.spoken_alert,
+        explanation: f.finding.explanation,
+        box_2d: keepTighterExistingBox || keepAnchoredBox ? existing.box_2d : f.finding.box_2d,
+        confidence: f.finding.confidence,
+        status: nextStatus,
+        missCount: 0,
+        needsRecheck: false,
+        lastSeenSeq: nextSeq,
+        lastSeenSample: ctx.sample,
+        pendingVerification: false,
+      }
 
       nextIssues.push(updated)
       if (existing.pendingVerification) {

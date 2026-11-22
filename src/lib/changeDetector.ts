@@ -11,7 +11,6 @@ export const CHANGED_TILE_FRACTION = 0.03
 export const MOVING_TILE_FRACTION = 0.06
 /** Number of consecutive calm ticks a tile must hold before changes there count as persistent. */
 export const STILL_TICKS_FOR_PERSISTENCE = 2
-/** Fraction of valid tiles persistently changed from baseline that indicates a full scene shift. */
 /** Minimum fraction of a tile's area inside the calibration mask for the tile to participate. */
 export const MIN_TILE_COVERAGE = 0.5
 /** Changed-pixel fraction inside a finding's bounding box needed to classify it as changed. */
@@ -48,20 +47,31 @@ export function computeMaskedBrightnessOffset(
   b: GrayscaleSample,
   mask: Uint8Array | null,
 ): number {
-  const len = Math.min(a.data.length, b.data.length)
-  if (len === 0) return 0
+  const len = a.width * a.height
+  if (a.width !== b.width || a.height !== b.height || !len || a.data.length !== len || b.data.length !== len) return 0
   const useMask = mask !== null && mask.length === len
 
-  let sumA = 0
-  let sumB = 0
+  // A presenter entering one part of the image should not shift the exposure
+  // estimate for every other tile. Sample across the board and use the median.
+  const histogram = new Uint32Array(511)
   let count = 0
-  for (let i = 0; i < len; i++) {
-    if (useMask && mask[i] === 0) continue
-    sumA += a.data[i] ?? 0
-    sumB += b.data[i] ?? 0
-    count++
+  const step = Math.min(a.width, a.height) >= 32 ? 4 : 1
+  for (let y = 0; y < a.height; y += step) {
+    const row = y * a.width
+    for (let x = (y / step) % step; x < a.width; x += step) {
+      const i = row + x
+      if (useMask && mask[i] === 0) continue
+      const bin = b.data[i]! - a.data[i]! + 255
+      histogram[bin] = histogram[bin]! + 1
+      count++
+    }
   }
-  return count > 0 ? (sumB - sumA) / count : 0
+  let cumulative = 0
+  for (let bin = 0; bin < histogram.length; bin++) {
+    cumulative += histogram[bin]!
+    if (cumulative > count / 2) return bin - 255
+  }
+  return 0
 }
 
 /**

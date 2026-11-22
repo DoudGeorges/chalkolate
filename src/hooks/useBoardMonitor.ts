@@ -22,6 +22,7 @@ import {
 } from '../lib/frameCapture'
 import { buildNormalizedQuadMask } from '../lib/geometry'
 import { createRequestId } from '../lib/requestId'
+import type { SpeechStyle } from '../lib/voicePreferences'
 import {
   IssueTrackerState,
   TrackedIssue,
@@ -192,6 +193,7 @@ export interface UseBoardMonitorOptions {
   committedCorners: CalibrationCorners | null
   clientDeadlineMs?: number
   answerFormat?: AnswerFormat
+  speechStyle?: SpeechStyle
   onNewFindings?: (newlyOpened: readonly TrackedIssue[]) => void
   onInvalidateSpeech?: () => void
   onVerificationResult?: (result: VerificationResultSummary) => void
@@ -208,6 +210,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     committedCorners,
     clientDeadlineMs = 30_000,
     answerFormat = 'exact',
+    speechStyle = 'student',
     onNewFindings,
     onInvalidateSpeech,
     onVerificationResult,
@@ -241,6 +244,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     committedCorners,
     clientDeadlineMs,
     answerFormat,
+    speechStyle,
     settingsSig,
     onNewFindings,
     onInvalidateSpeech,
@@ -256,6 +260,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     committedCorners,
     clientDeadlineMs,
     answerFormat,
+    speechStyle,
     settingsSig,
     onNewFindings,
     onInvalidateSpeech,
@@ -277,15 +282,16 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
   const changeFirstSeenAtRef = useRef<number | null>(null)
   const lastSettledAtRef = useRef<number>(0)
   const backoffUntilMsRef = useRef<number | null>(null)
+  const partialRecheckRef = useRef<'none' | 'pending' | 'deferred'>('none')
   const lastMovingFractionRef = useRef<number>(0)
   const lastPersistentCountRef = useRef<number>(0)
 
   const quadMaskRef = useRef<{
-    cornersKey: string
+    corners: CalibrationCorners | null
     width: number
     height: number
     mask: Uint8Array | null
-  }>({ cornersKey: '', width: 0, height: 0, mask: null })
+  }>({ corners: null, width: 0, height: 0, mask: null })
 
   const sampleCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const captureCanvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -304,10 +310,9 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
   const getMaskForSample = useCallback(
     (corners: CalibrationCorners | null, sample: GrayscaleSample): Uint8Array | null => {
       if (!corners) return null
-      const cornersKey = JSON.stringify(corners)
       const cached = quadMaskRef.current
       if (
-        cached.cornersKey === cornersKey &&
+        cached.corners === corners &&
         cached.width === sample.width &&
         cached.height === sample.height &&
         cached.mask !== null
@@ -316,7 +321,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
       }
       const mask = buildNormalizedQuadMask(corners, sample.width, sample.height)
       quadMaskRef.current = {
-        cornersKey,
+        corners,
         width: sample.width,
         height: sample.height,
         mask,
@@ -336,6 +341,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
   }, [])
 
   const resetDetectionState = useCallback(() => {
+    partialRecheckRef.current = 'none'
     detectorStateRef.current = createDetectorState()
     baselineRef.current = null
     lastSampleRef.current = null
@@ -388,7 +394,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     }
   }, [abortInFlightAndClearPending, calibrationEditing, monitoring])
 
-  const dispatchAnalysis = useCallback(async () => {
+  const dispatchAnalysis = useCallback(async (quietVerification = false) => {
       const rt = runtimeRef.current
       if (!rt.mediaSource || !rt.mediaReady) return
       if (!rt.monitoring || rt.calibrationEditing) return
@@ -444,6 +450,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
           request_id: snapshotRequestId,
           previous_board_summary: snapshotPrevSummary,
           answer_format: rt.answerFormat,
+          speech_style: runtimeRef.current.speechStyle,
           corners: snapshotCorners,
         }
 
@@ -464,6 +471,11 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
           baselineRef.current = commitSample
         }
         changeFirstSeenAtRef.current = null
+        // Another partial answer on the same board offers no new evidence. Keep
+        // the finding visible until a changed frame or explicit check arrives.
+        partialRecheckRef.current = response.incomplete
+          ? (quietVerification ? 'deferred' : 'pending')
+          : 'none'
         backoffUntilMsRef.current = null
         lastSettledAtRef.current = rt.deps.now()
 
@@ -618,7 +630,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     const det = updateDetector(
       detectorStateRef.current,
       sample,
-      baselineRef.current,
+      inFlightRef.current ? null : baselineRef.current,
       mask,
     )
     detectorStateRef.current = det.state
@@ -676,16 +688,18 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     // Quiet verification recheck: if an open finding was absent on the previous check
     // (either awaiting a second unchanged miss or previously obscured by motion), dispatch
     // one follow-up verification once its region is calm so fixed errors resolve automatically.
-    const pendingRecheck = getIssuesPendingRecheck(curState.tracker)
     if (
-      pendingRecheck.length > 0 &&
       !inBackoff &&
+      partialRecheckRef.current !== 'deferred' &&
       nowMs - lastSettledAtRef.current >= VERIFY_RECHECK_DELAY_MS &&
-      pendingRecheck.some((issue) =>
-        isRegionCalm(issue.box_2d, sample.width, sample.height, det.stillTicks, mask),
+      (
+        (partialRecheckRef.current === 'pending' && det.movingFraction <= CALM_MOVING_FRACTION) ||
+        getIssuesPendingRecheck(curState.tracker).some((issue) =>
+          isRegionCalm(issue.box_2d, sample.width, sample.height, det.stillTicks, mask),
+        )
       )
     ) {
-      void dispatchAnalysis()
+      void dispatchAnalysis(true)
       return
     }
 

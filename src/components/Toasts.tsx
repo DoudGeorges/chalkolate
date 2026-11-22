@@ -22,7 +22,7 @@ const TOAST_STYLE = {
 export function Toasts({ toasts, onDismiss }: ToastsProps) {
   if (!toasts.length) return null
   return (
-    <div className="pointer-events-none fixed inset-x-3 bottom-3 z-50 flex flex-col gap-2 pb-[env(safe-area-inset-bottom)] sm:inset-x-auto sm:right-5 sm:bottom-5 sm:w-[22rem]">
+    <div className="pointer-events-none fixed inset-x-3 bottom-3 z-[60] flex flex-col gap-2 pb-[env(safe-area-inset-bottom)] sm:inset-x-auto sm:right-5 sm:bottom-5 sm:w-[22rem]">
       {toasts.slice(0, 3).map((toast) => {
         const { icon: Icon, color } = TOAST_STYLE[toast.tone ?? 'info']
         return (

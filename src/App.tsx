@@ -91,9 +91,8 @@ export function App() {
   const detectAbortRef = useRef<AbortController | null>(null)
   const calibrationCanvasRef = useRef<HTMLCanvasElement | null>(null)
 
-  const [activePanel, setActivePanel] = useState<'notes' | 'settings' | null>(null)
-  const settingsOpen = activePanel === 'settings'
-  const notesOpen = activePanel === 'notes'
+  const [notesOpen, setNotesOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null)
   const [hoveredIssueId, setHoveredIssueId] = useState<string | null>(null)
   const [toasts, setToasts] = useState<ToastItem[]>([])
@@ -363,6 +362,7 @@ export function App() {
     calibrationEditing,
     committedCorners,
     answerFormat,
+    speechStyle: voicePreferences.speechStyle,
     onNewFindings: handleNewFindings,
     onInvalidateSpeech: speech.cancelAll,
     onVerificationResult: handleVerificationResult,
@@ -462,7 +462,7 @@ export function App() {
       if (!calibrationCanvasRef.current) {
         calibrationCanvasRef.current = document.createElement('canvas')
       }
-      const captured = await captureJpegBlob(mediaEl, calibrationCanvasRef.current, 1280)
+      const captured = await captureJpegBlob(mediaEl, calibrationCanvasRef.current, 640)
       if (controller.signal.aborted) return
 
       const result = await detectBoardCorners(captured.blob, controller.signal)
@@ -492,7 +492,8 @@ export function App() {
     launchSequenceRef.current += 1
     setLaunchPending(false)
     setSelectedSource('camera')
-    setActivePanel(null)
+    setNotesOpen(false)
+    setSettingsOpen(false)
     clearSource()
   }
 
@@ -609,11 +610,8 @@ export function App() {
         onToggleMonitoring={() => void handleToggleMonitoring()}
         onboarding={onboarding}
         onGoHome={handleGoHome}
-        notesOpen={notesOpen}
-        notesCount={notesBuilder.notes.sections.length}
-        onToggleNotes={() => setActivePanel((panel) => panel === 'notes' ? null : 'notes')}
         settingsOpen={settingsOpen}
-        onToggleSettings={() => setActivePanel((panel) => panel === 'settings' ? null : 'settings')}
+        onToggleSettings={() => setSettingsOpen((open) => !open)}
         canCrop={media.state.ready && media.state.kind !== 'screen'}
         cropped={committedCorners !== null}
         calibrationEditing={calibrationEditing}
@@ -634,24 +632,10 @@ export function App() {
 
       <Toasts toasts={toasts} onDismiss={dismissToast} />
 
-      <div data-panel-open={activePanel !== null && !onboarding} className={onboarding
+      <div data-panel-open={notesOpen && !onboarding} className={onboarding
         ? 'relative flex min-h-0 flex-1 overflow-hidden'
-        : 'group relative flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto p-2 sm:gap-3 sm:p-3 lg:flex-row lg:overflow-hidden'}
+        : 'group relative flex min-h-0 flex-1 flex-col overflow-x-hidden overflow-y-auto p-2 sm:p-3 lg:flex-row lg:overflow-hidden'}
       >
-        <NotesPanel
-          open={notesOpen && !onboarding}
-          active={analysisConfigured && !healthFailed && processingReady && !calibrationEditing}
-          configured={analysisConfigured && !healthFailed}
-          editingCrop={calibrationEditing}
-          phase={notesBuilder.phase}
-          error={notesBuilder.error}
-          notes={notesBuilder.notes}
-          onClose={() => setActivePanel(null)}
-          onExportMarkdown={handleExportMarkdown}
-          onExportLatex={handleExportLatex}
-          onExportPrint={handleExportPrint}
-          onClear={() => notesBuilder.clear()}
-        />
         <Stage
           mediaState={media.state}
           videoElRef={media.videoElRef}
@@ -692,9 +676,27 @@ export function App() {
         />
 
         {!onboarding && (
+          <NotesPanel
+            open={notesOpen}
+            active={analysisConfigured && !healthFailed && processingReady && !calibrationEditing}
+            configured={analysisConfigured && !healthFailed}
+            editingCrop={calibrationEditing}
+            phase={notesBuilder.phase}
+            error={notesBuilder.error}
+            notes={notesBuilder.notes}
+            onToggle={() => setNotesOpen((open) => !open)}
+            onClose={() => setNotesOpen(false)}
+            onExportMarkdown={handleExportMarkdown}
+            onExportLatex={handleExportLatex}
+            onExportPrint={handleExportPrint}
+            onClear={() => notesBuilder.clear()}
+          />
+        )}
+
+        {!onboarding && (
           <SettingsPanel
             open={settingsOpen}
-            onClose={() => setActivePanel(null)}
+            onClose={() => setSettingsOpen(false)}
             alertMode={alertMode}
             onChangeAlertMode={handleChangeAlertMode}
             answerFormat={answerFormat}

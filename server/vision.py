@@ -655,101 +655,118 @@ def _intersect_lines(
     return (px, py)
 
 
-def _extract_hough_quads(
-    edges: NDArray[np.uint8],
+Line = tuple[float, float, float, float]
+
+
+def _opposite_line_pairs(
+    segments: list[Line], cross_segments: list[Line], *, horizontal: bool, width: int, height: int
+) -> list[tuple[Line, Line]]:
+    """Keep distinct physical borders, including fragments on the same half of the frame."""
+    span, cross_span = (width, height) if horizontal else (height, width)
+    if not segments or not cross_segments:
+        return []
+    # A short line meeting the end of a long perpendicular border is often the only
+    # visible part of an occluded side. Long, unrelated presenter contours lack that junction.
+    cross = np.asarray(cross_segments).reshape(-1, 2, 2)
+    cross_lengths = np.linalg.norm(cross[:, 1] - cross[:, 0], axis=1)
+    longest = np.argsort(cross_lengths)[-24:]
+    endpoints = cross[longest[cross_lengths[longest] >= cross_span * 0.15]].reshape(-1, 2)
+    ranked = []
+    for segment in segments:
+        x1, y1, x2, y2 = segment
+        a, b, c, d = (x1, y1, x2, y2) if horizontal else (y1, x1, y2, x2)
+        slope = (d - b) / (c - a)
+        offset = b + (span * 0.5 - a) * slope
+        end_pair = np.asarray(segment).reshape(2, 2)
+        junction = bool(
+            endpoints.size and np.any(np.sum((end_pair[:, None] - endpoints) ** 2, axis=2) < 64)
+        )
+        ranked.append((abs(c - a) + (span * 0.65 if junction else 0.0), offset, slope, segment))
+
+    borders: list[tuple[float, float, float, Line]] = []
+    for item in sorted(ranked, reverse=True):
+        _, offset, slope, _ = item
+        if any(
+            abs(offset - pos) < 6 and abs(slope - angle) < 0.045 for _, pos, angle, _ in borders
+        ):
+            continue
+        borders.append(item)
+        if len(borders) == 8:
+            break
+
+    pairs = []
+    borders.sort(key=lambda item: item[1])
+    for i, (length, pos, _, first) in enumerate(borders):
+        for other_len, other_pos, _, second in borders[i + 1 :]:
+            separation = other_pos - pos
+            if separation >= 0.10 * cross_span:
+                # A wide pair with one partly visible side remains a viable proposal.
+                rank = (length + other_len) / span + separation / cross_span
+                pairs.append((rank, first, second))
+    return [(first, second) for _, first, second in sorted(pairs, reverse=True)[:8]]
+
+
+def _extract_line_quads(
+    luma: NDArray[np.uint8],
     width: int,
     height: int,
 ) -> list[PointArray]:
-    min_dim = min(width, height)
-    raw_lines = cv2.HoughLinesP(
-        edges,
-        rho=1.0,
-        theta=math.pi / 180.0,
-        threshold=max(36, min_dim // 10),
-        minLineLength=max(32, min_dim // 5),
-        maxLineGap=max(12, min_dim // 25),
+    # Python bindings return None for an empty frame despite the OpenCV type stub.
+    raw_lines = cast(
+        NDArray[np.float32] | None,
+        cv2.createLineSegmentDetector(cv2.LSD_REFINE_NONE).detect(luma)[0],
     )
     if raw_lines is None:
         return []
 
-    top_lines: list[tuple[float, tuple[float, float, float, float]]] = []
-    bottom_lines: list[tuple[float, tuple[float, float, float, float]]] = []
-    left_lines: list[tuple[float, tuple[float, float, float, float]]] = []
-    right_lines: list[tuple[float, tuple[float, float, float, float]]] = []
-
-    half_h = height * 0.5
-    half_w = width * 0.5
+    horizontal: list[Line] = []
+    vertical: list[Line] = []
     for row in raw_lines.reshape(-1, 4):
-        x1, y1, x2, y2 = (float(row[0]), float(row[1]), float(row[2]), float(row[3]))
-        dx = x2 - x1
-        dy = y2 - y1
-        length = math.hypot(dx, dy)
-        if length < 20.0:
-            continue
-        angle = abs(math.degrees(math.atan2(dy, dx)))
-        if angle > 90.0:
-            angle = 180.0 - angle
+        x1, y1, x2, y2 = map(float, row)
+        dx, dy = abs(x2 - x1), abs(y2 - y1)
+        if dx >= max(16, width * 0.025) and dy <= 0.5 * dx:
+            horizontal.append((x1, y1, x2, y2))
+        elif dy >= max(16, height * 0.025) and dx <= 0.5 * dy:
+            vertical.append((x1, y1, x2, y2))
 
-        seg = (x1, y1, x2, y2)
-        if angle <= 20.0:
-            mid_y = 0.5 * (y1 + y2)
-            if mid_y < half_h:
-                top_lines.append((length, seg))
-            else:
-                bottom_lines.append((length, seg))
-        elif angle >= 70.0:
-            mid_x = 0.5 * (x1 + x2)
-            if mid_x < half_w:
-                left_lines.append((length, seg))
-            else:
-                right_lines.append((length, seg))
-
-    if not (top_lines and bottom_lines and left_lines and right_lines):
-        return []
-
-    top_best = [seg for _, seg in sorted(top_lines, key=lambda item: item[0], reverse=True)[:2]]
-    bottom_best = [
-        seg for _, seg in sorted(bottom_lines, key=lambda item: item[0], reverse=True)[:2]
-    ]
-    left_best = [seg for _, seg in sorted(left_lines, key=lambda item: item[0], reverse=True)[:2]]
-    right_best = [seg for _, seg in sorted(right_lines, key=lambda item: item[0], reverse=True)[:2]]
-
+    rows = _opposite_line_pairs(horizontal, vertical, horizontal=True, width=width, height=height)
+    columns = _opposite_line_pairs(
+        vertical, horizontal, horizontal=False, width=width, height=height
+    )
     quads: list[PointArray] = []
-    for top_seg in top_best:
-        for bot_seg in bottom_best:
-            for left_seg in left_best:
-                for right_seg in right_best:
-                    tl = _intersect_lines(top_seg, left_seg)
-                    tr = _intersect_lines(top_seg, right_seg)
-                    br = _intersect_lines(bot_seg, right_seg)
-                    bl = _intersect_lines(bot_seg, left_seg)
-                    if tl is None or tr is None or br is None or bl is None:
-                        continue
-                    candidate = np.array([tl, tr, br, bl], dtype=np.float64)
-                    if (
-                        np.all(candidate[:, 0] >= -4.0)
-                        and np.all(candidate[:, 0] <= width + 4.0)
-                        and np.all(candidate[:, 1] >= -4.0)
-                        and np.all(candidate[:, 1] <= height + 4.0)
-                    ):
-                        candidate[:, 0] = np.clip(candidate[:, 0], 0.0, float(width))
-                        candidate[:, 1] = np.clip(candidate[:, 1], 0.0, float(height))
-                        quads.append(candidate)
+    for top_seg, bot_seg in rows:
+        for left_seg, right_seg in columns:
+            tl = _intersect_lines(top_seg, left_seg)
+            tr = _intersect_lines(top_seg, right_seg)
+            br = _intersect_lines(bot_seg, right_seg)
+            bl = _intersect_lines(bot_seg, left_seg)
+            if tl is None or tr is None or br is None or bl is None:
+                continue
+            candidate = np.array([tl, tr, br, bl], dtype=np.float64)
+            if (
+                np.all(candidate[:, 0] >= -4.0)
+                and np.all(candidate[:, 0] <= width + 4.0)
+                and np.all(candidate[:, 1] >= -4.0)
+                and np.all(candidate[:, 1] <= height + 4.0)
+            ):
+                candidate[:, 0] = np.clip(candidate[:, 0], 0.0, float(width))
+                candidate[:, 1] = np.clip(candidate[:, 1], 0.0, float(height))
+                quads.append(candidate)
     return quads
 
 
 def _compute_color_gradients(
     bgr_smooth: BGRImage,
-) -> tuple[NDArray[np.float64], NDArray[np.float64], NDArray[np.float64]]:
+) -> tuple[NDArray[np.float32], NDArray[np.float32], NDArray[np.float32]]:
     """Compute per-pixel dominant directional Sobel gradient across BGR channels."""
     channels = cv2.split(bgr_smooth)
-    best_gx = np.zeros(bgr_smooth.shape[:2], dtype=np.float64)
-    best_gy = np.zeros(bgr_smooth.shape[:2], dtype=np.float64)
-    best_mag_sq = np.zeros(bgr_smooth.shape[:2], dtype=np.float64)
+    best_gx = np.zeros(bgr_smooth.shape[:2], dtype=np.float32)
+    best_gy = np.zeros(bgr_smooth.shape[:2], dtype=np.float32)
+    best_mag_sq = np.zeros(bgr_smooth.shape[:2], dtype=np.float32)
 
     for channel in channels:
-        gx = cv2.Sobel(channel, cv2.CV_64F, 1, 0, ksize=3)
-        gy = cv2.Sobel(channel, cv2.CV_64F, 0, 1, ksize=3)
+        gx = cv2.Sobel(channel, cv2.CV_32F, 1, 0, ksize=3)
+        gy = cv2.Sobel(channel, cv2.CV_32F, 0, 1, ksize=3)
         mag_sq = gx * gx + gy * gy
         mask = mag_sq > best_mag_sq
         best_gx = np.where(mask, gx, best_gx)
@@ -759,98 +776,86 @@ def _compute_color_gradients(
     return best_gx, best_gy, np.sqrt(best_mag_sq)
 
 
+_SIDE_SAMPLES = np.linspace(0.015, 0.985, 56)[None, :, None]
+_EDGE_OFFSETS = np.arange(-2, 3, dtype=np.float32)[None, None, :, None]
+
+
 def _score_board_quad(
     pts: PointArray,
     *,
-    gx: NDArray[np.float64],
-    gy: NDArray[np.float64],
-    grad_mag: NDArray[np.float64],
-    lab_float: NDArray[np.float64],
+    gx: NDArray[np.float32],
+    gy: NDArray[np.float32],
+    grad_mag: NDArray[np.float32],
+    lab: NDArray[np.uint8],
     area_frac: float,
     max_angle_dev: float,
 ) -> float:
     """Score a board candidate in [0, 1] using aligned edge support, contrast, and geometry."""
     height, width = grad_mag.shape[:2]
-    t_vals = np.linspace(0.06, 0.94, 40)
-    band_offsets = (-2.0, -1.0, 0.0, 1.0, 2.0)
-
-    side_supports: list[float] = []
-    side_contrasts: list[float] = []
-
-    for i in range(4):
-        p0 = pts[i]
-        p1 = pts[(i + 1) % 4]
-        edge_vec = p1 - p0
-        edge_len = float(np.linalg.norm(edge_vec))
-        if edge_len <= 1.0:
-            return 0.0
-
-        tx = float(edge_vec[0]) / edge_len
-        ty = float(edge_vec[1]) / edge_len
-        # For clockwise vertices in image coordinates (x right, y down), (ty, -tx) points outward.
-        nx = ty
-        ny = -tx
-
-        base_x = p0[0] + t_vals * edge_vec[0]
-        base_y = p0[1] + t_vals * edge_vec[1]
-
-        best_aligned = np.zeros_like(t_vals, dtype=np.float64)
-        for off in band_offsets:
-            sx = np.rint(base_x + off * nx).astype(np.int64)
-            sy = np.rint(base_y + off * ny).astype(np.int64)
-            valid = (sx >= 2) & (sx <= width - 3) & (sy >= 2) & (sy <= height - 3)
-            if not np.any(valid):
-                continue
-            vx = sx[valid]
-            vy = sy[valid]
-            mag = grad_mag[vy, vx]
-            dot = np.abs(gx[vy, vx] * nx + gy[vy, vx] * ny)
-            cos_align = np.where(mag > 1e-6, dot / np.maximum(mag, 1e-6), 0.0)
-            # Divide 3x3 Sobel magnitude by 4 to normalize into approximate intensity-step units.
-            aligned_step = (mag * 0.25) * (cos_align * cos_align)
-            best_aligned[valid] = np.maximum(best_aligned[valid], aligned_step)
-
-        # Require meaningful step edges above sensor noise (~6 intensity units).
-        support_curve = np.clip((best_aligned - 5.0) / 18.0, 0.0, 1.0)
-        side_supports.append(float(np.mean(support_curve)))
-
-        in_x = np.rint(base_x - 6.0 * nx).astype(np.int64)
-        in_y = np.rint(base_y - 6.0 * ny).astype(np.int64)
-        out_x = np.rint(base_x + 6.0 * nx).astype(np.int64)
-        out_y = np.rint(base_y + 6.0 * ny).astype(np.int64)
-        pair_valid = (
-            (in_x >= 0)
-            & (in_x < width)
-            & (in_y >= 0)
-            & (in_y < height)
-            & (out_x >= 0)
-            & (out_x < width)
-            & (out_y >= 0)
-            & (out_y < height)
-        )
-        if np.any(pair_valid):
-            diff = (
-                lab_float[in_y[pair_valid], in_x[pair_valid]]
-                - lab_float[out_y[pair_valid], out_x[pair_valid]]
-            )
-            delta_e = np.linalg.norm(diff, axis=1)
-            side_contrasts.append(float(np.mean(np.clip((delta_e - 4.0) / 28.0, 0.0, 1.0))))
-        else:
-            side_contrasts.append(0.0)
-
-    mean_edge = sum(side_supports) / 4.0
+    edges = np.roll(pts, -1, axis=0) - pts
+    lengths = np.linalg.norm(edges, axis=1)
+    normals = np.column_stack((edges[:, 1], -edges[:, 0])) / lengths[:, None]
+    base = pts[:, None, :] + edges[:, None, :] * _SIDE_SAMPLES
+    # A false corner on a presenter frequently cuts through an otherwise continuous
+    # board border. Sample just beyond each intersection as well as inside it.
+    tangent = edges / lengths[:, None]
+    distances = np.array([6.0, 11.0, 17.0, 23.0])[None, :, None]
+    before = pts[:, None, :] - tangent[:, None] * distances
+    after = (pts + edges)[:, None, :] + tangent[:, None] * distances
+    samples = np.concatenate((base, before, after), axis=1)
+    band = np.rint(samples[:, :, None, :] + normals[:, None, None, :] * _EDGE_OFFSETS)
+    x, y = band.astype(np.intp).transpose(3, 0, 1, 2)
+    valid = (x >= 2) & (x < width - 2) & (y >= 2) & (y < height - 2)
+    np.clip(x, 0, width - 1, out=x)
+    np.clip(y, 0, height - 1, out=y)
+    dot = gx[y, x] * normals[:, 0, None, None] + gy[y, x] * normals[:, 1, None, None]
+    aligned = np.where(valid, dot**2 / np.maximum(grad_mag[y, x], 1e-6), 0.0)
+    support = np.clip((aligned.max(axis=2) * 0.25 - 5.0) / 18.0, 0.0, 1.0)
+    outside = np.stack((support[:, -8:-4], support[:, -4:]), axis=1).mean(axis=2)
+    support = support[:, :-8]
+    inside_ends = np.column_stack((support[:, :3].mean(axis=1), support[:, -3:].mean(axis=1)))
+    continuation = float(np.max(np.minimum(outside, inside_ends)))
+    side_supports = support.mean(axis=1)
+    # Allow one interrupted border only if there is a continuous visible fragment
+    # and the other three borders have substantial independent support.
+    weakest = int(np.argmin(side_supports))
+    visible = support[weakest] > 0.6
+    if side_supports[weakest] < 0.12 and not (
+        np.count_nonzero(side_supports > 0.55) >= 3
+        and np.any(visible[:-2] & visible[1:-1] & visible[2:])
+    ):
+        return 0.0
+    # Fragments that reach a corner are stronger evidence than isolated alignments
+    # along a person's outline. Limit the penalty to candidates with a weak side.
+    end_support = max(support[weakest, :3].mean(), support[weakest, -3:].mean())
+    fragment_penalty = max(0.0, 0.5 - side_supports[weakest]) * (1.0 - end_support)
+    mean_edge = float(side_supports.mean())
     min_edge = min(side_supports)
     strong_sides = sum(1 for val in side_supports if val >= 0.30)
-    if strong_sides < 3 or mean_edge < 0.38 or min_edge < 0.12:
+    if strong_sides < 3 or mean_edge < 0.38:
         return 0.0
 
-    mean_contrast = sum(side_contrasts) / 4.0
+    # Rows of text can align on four margins yet have no continuous border in
+    # the perpendicular direction. Require a short run on both axes, allowing a gap.
+    cumulative = np.pad(np.cumsum(support > 0.5, axis=1), ((0, 0), (1, 0)))
+    runs = np.max(cumulative[:, 10:] - cumulative[:, :-10], axis=1)
+    if max(runs[::2]) < 9 or max(runs[1::2]) < 9:
+        return 0.0
+
+    step = 6.0 * normals[:, None, :]
+    ix, iy = np.rint(base - step).astype(np.intp).T
+    ox, oy = np.rint(base + step).astype(np.intp).T
+    paired = (ix >= 0) & (ix < width) & (iy >= 0) & (iy < height)
+    paired &= (ox >= 0) & (ox < width) & (oy >= 0) & (oy < height)
+    inside = lab[iy[paired], ix[paired]].astype(np.float32)
+    delta = np.linalg.norm(inside - lab[oy[paired], ox[paired]], axis=1)
+    mean_contrast = float(np.clip((delta - 4.0) / 28.0, 0.0, 1.0).sum()) / paired.size
     area_prior = min(1.0, area_frac / 0.55)
     rect_score = max(0.0, 1.0 - max_angle_dev / 45.0)
     geom_score = 0.65 * area_prior + 0.35 * rect_score
 
     score = 0.55 * mean_edge + 0.15 * min_edge + 0.15 * mean_contrast + 0.15 * geom_score
-    return max(0.0, min(1.0, score))
+    return max(0.0, min(1.0, float(score - 0.20 * continuation - 0.35 * fragment_penalty)))
 
 
 def detect_board_corners(
@@ -878,10 +883,13 @@ def detect_board_corners(
     if work_w < 32 or work_h < 32:
         return BoardDetectionResult(detected=False, corners=None, confidence=0.0)
 
-    bgr_smooth = cast(BGRImage, cv2.bilateralFilter(work, 7, 50, 50))
-    lab = cv2.cvtColor(bgr_smooth, cv2.COLOR_BGR2LAB)
-    lab_float = lab.astype(np.float64)
-    l_channel = cast(NDArray[np.uint8], lab[:, :, 0])
+    channel_ranges = (cv2.minMaxLoc(channel)[:2] for channel in cv2.split(work))
+    if all(high - low < 6 for low, high in channel_ranges):
+        return BoardDetectionResult(detected=False, corners=None, confidence=0.0)
+
+    bgr_smooth = cast(BGRImage, cv2.GaussianBlur(work, (3, 3), 0))
+    lab = cast(BGRImage, cv2.cvtColor(bgr_smooth, cv2.COLOR_BGR2LAB))
+    l_channel = lab[:, :, 0]
 
     gx, gy, grad_mag = _compute_color_gradients(bgr_smooth)
 
@@ -900,11 +908,8 @@ def detect_board_corners(
         (l_clahe, 35, 110),
         (grad_u8, 25, 80),
     ]
-    primary_edges: NDArray[np.uint8] | None = None
-    for idx, (src_gray, low_t, high_t) in enumerate(edge_sources):
+    for src_gray, low_t, high_t in edge_sources:
         edges = cast(NDArray[np.uint8], cv2.Canny(src_gray, low_t, high_t))
-        if idx == 0:
-            primary_edges = edges
         closed = cast(NDArray[np.uint8], cv2.morphologyEx(edges, cv2.MORPH_CLOSE, close_kernel))
         raw_candidates.extend(_extract_contour_quads(closed, img_area))
 
@@ -922,8 +927,7 @@ def detect_board_corners(
             raw_candidates.extend(_extract_contour_quads(cleaned, img_area))
 
     # 3. Line-intersection fallback for boards partially occluded along one edge.
-    if primary_edges is not None:
-        raw_candidates.extend(_extract_hough_quads(primary_edges, work_w, work_h))
+    raw_candidates.extend(_extract_line_quads(l_channel, work_w, work_h))
 
     best_score = 0.0
     best_corners: list[tuple[float, float]] | None = None
@@ -933,20 +937,14 @@ def detect_board_corners(
         ordered = _order_quad_tl_tr_br_bl(raw_pts)
         if ordered is None:
             continue
-        geom = _quad_geometry_metrics(ordered, work_w, work_h)
-        if geom is None:
-            continue
-
         norm_corners = _pixel_quad_to_norm(ordered, work_w, work_h)
         dedupe_key = tuple((round(x / 8.0), round(y / 8.0)) for x, y in norm_corners)
         if dedupe_key in seen_keys:
             continue
-        seen_keys.add(dedupe_key)
-
-        try:
-            validate_calibration_corners(norm_corners)
-        except InvalidCalibrationError:
+        geom = _quad_geometry_metrics(ordered, work_w, work_h)
+        if geom is None:
             continue
+        seen_keys.add(dedupe_key)
 
         area_frac, max_angle_dev = geom
         score = _score_board_quad(
@@ -954,11 +952,15 @@ def detect_board_corners(
             gx=gx,
             gy=gy,
             grad_mag=grad_mag,
-            lab_float=lab_float,
+            lab=lab,
             area_frac=area_frac,
             max_angle_dev=max_angle_dev,
         )
         if score > best_score:
+            try:
+                validate_calibration_corners(norm_corners)
+            except InvalidCalibrationError:
+                continue
             best_score = score
             best_corners = norm_corners
 
