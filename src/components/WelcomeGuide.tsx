@@ -107,8 +107,8 @@ export function WelcomeGuide({
 
         <div className="rounded-xl border border-line bg-white shadow-sm">
           <ol className="divide-y divide-line">
-            <Step n={1} title="Choose what to watch">
-              <div role="radiogroup" aria-label="What to watch" className="grid grid-cols-2 gap-2">
+            <Step n={1} title="Choose a video source">
+              <div role="radiogroup" aria-label="Video source" className="grid grid-cols-2 gap-2">
                 {SOURCES.map((option) => (
                   <OptionCard
                     key={option.id}
