@@ -4,7 +4,7 @@
 
 _Smarter than the front row._
 
-Catches math, physics, spelling, and other mistakes as they happen during lectures by watching whiteboards, chalkboards, shared screens, and recorded videos in real time.
+Catches math, physics, spelling, and other mistakes as they happen during lectures by watching whiteboards, chalkboards, shared screens, and recorded videos in real time. Try it out at [chalkolate.edouardchasse.com](https://chalkolate.edouardchasse.com/).
 
 ## Problem
 
