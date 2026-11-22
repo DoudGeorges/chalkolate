@@ -1,18 +1,19 @@
-import { Camera, MonitorUp, Play, Upload } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { Camera, MonitorUp, Play } from 'lucide-react'
+import { useState } from 'react'
 import { AlertMode } from '../lib/categoryColors'
 import { Talkativeness } from '../lib/voicePreferences'
 import { ALERT_MODE_OPTIONS } from './alertModeOptions'
+import { optionCardClass } from './optionStyles'
 import { TalkativenessPicker } from './TalkativenessPicker'
 
-export type WelcomeSource = 'camera' | 'screen' | 'upload'
+export type WelcomeSource = 'camera' | 'screen'
 
 export interface WelcomeGuideProps {
   /**
    * Called only from the final Start button, after every choice is made. Opens the chosen
-   * source (camera/screen permission prompt or the picked file) and begins checking.
+   * source (camera/screen permission prompt) and begins checking.
    */
-  onLaunch: (source: WelcomeSource, file?: File) => void
+  onLaunch: (source: WelcomeSource) => void
   talkativeness: Talkativeness
   onChangeTalkativeness: (value: Talkativeness) => void
   alertMode: AlertMode
@@ -21,10 +22,13 @@ export interface WelcomeGuideProps {
   launching?: boolean
 }
 
-const SOURCES: ReadonlyArray<{ id: WelcomeSource; label: string; icon: typeof Camera }> = [
+const SOURCES: ReadonlyArray<{
+  id: WelcomeSource
+  label: string
+  icon: typeof Camera
+}> = [
   { id: 'camera', label: 'Camera', icon: Camera },
   { id: 'screen', label: 'Screen', icon: MonitorUp },
-  { id: 'upload', label: 'Upload', icon: Upload },
 ]
 
 function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
@@ -61,13 +65,12 @@ function OptionCard({
       role="radio"
       aria-checked={selected}
       onClick={onSelect}
-      className={`flex flex-col items-start gap-1.5 rounded-lg border px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
-        selected
-          ? 'border-accent bg-accent/[0.06]'
-          : 'border-line bg-white hover:border-zinc-300 hover:bg-zinc-50'
-      }`}
+      className={optionCardClass(selected)}
     >
-      <Icon className={`h-4 w-4 ${selected ? 'text-accent' : 'text-zinc-500'}`} aria-hidden="true" />
+      <Icon
+        className={`h-4 w-4 ${selected ? 'text-accent' : 'text-zinc-500'}`}
+        aria-hidden="true"
+      />
       <span className="text-xs font-medium text-zinc-900">{label}</span>
     </button>
   )
@@ -82,16 +85,10 @@ export function WelcomeGuide({
   onChangeAlertMode,
   launching = false,
 }: WelcomeGuideProps) {
-  const fileRef = useRef<HTMLInputElement | null>(null)
   const [source, setSource] = useState<WelcomeSource | null>(null)
 
   const handleStart = () => {
     if (!source || launching) return
-    if (source === 'upload') {
-      // The file picker must open from this click; launching happens once a file is chosen.
-      fileRef.current?.click()
-      return
-    }
     onLaunch(source)
   }
 
@@ -103,19 +100,15 @@ export function WelcomeGuide({
             Catch mistakes on the board as they&apos;re written
           </h1>
           <p className="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-zinc-500">
-            Chalkolate watches a whiteboard or lecture and points out math, physics, and spelling
-            mistakes on screen and out loud. Nothing turns on until you press Start.
+            Chalkolate watches a whiteboard or lecture and points out mistakes on screen and out
+            loud. Nothing turns on until you press Start.
           </p>
         </div>
 
         <div className="rounded-xl border border-line bg-white shadow-sm">
           <ol className="divide-y divide-line">
-            <Step n={1} title="Choose what to watch">
-              <div
-                role="radiogroup"
-                aria-label="What to watch"
-                className="grid grid-cols-1 gap-2 sm:grid-cols-3"
-              >
+            <Step n={1} title="Choose a video source">
+              <div role="radiogroup" aria-label="Video source" className="grid grid-cols-2 gap-2">
                 {SOURCES.map((option) => (
                   <OptionCard
                     key={option.id}
@@ -154,18 +147,6 @@ export function WelcomeGuide({
           </ol>
 
           <div className="space-y-2.5 border-t border-line p-4">
-            <input
-              ref={fileRef}
-              type="file"
-              accept="video/*,image/*"
-              aria-label="Upload lecture video or image"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) onLaunch('upload', file)
-                e.target.value = ''
-              }}
-              className="hidden"
-            />
             <button
               type="button"
               onClick={handleStart}
