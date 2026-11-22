@@ -28,7 +28,7 @@ Open http://localhost:5173. Next.js proxies /api requests to FastAPI in developm
 ## Using the studio
 
 1. Choose a source and an alert mode, then select **Start**. The browser asks for camera or screen permissions at this point.
-2. Use **Crop board** to detect or adjust corners for a camera. Screen shares use the full selected surface. Share the lecture tab or window to avoid capturing the studio preview.
+2. Use **Crop board** to detect or adjust corners for a camera. Apply the crop to straighten the board and fit it to the stage. Screen shares use the full selected surface. Share the lecture tab or window to avoid capturing the studio preview.
 3. Mistakes appear as highlights with corrections on the board. Open **Settings** to change alert mode, spoken detail, or answer format. **Stop** pauses mistake checks and spoken alerts while keeping the source open.
 4. Open **Notes** to read or download the lecture notes, which build automatically while a source is live. Notes are kept only for this browser tab: they survive reloads and are discarded when the tab closes, so export them first. Clear them when starting a separate lecture.
 
