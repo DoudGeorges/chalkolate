@@ -1,18 +1,18 @@
-import { Camera, MonitorUp, Play, Upload } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { Camera, MonitorUp, Play } from 'lucide-react'
+import { useState } from 'react'
 import { AlertMode } from '../lib/categoryColors'
 import { Talkativeness } from '../lib/voicePreferences'
 import { ALERT_MODE_OPTIONS } from './alertModeOptions'
 import { TalkativenessPicker } from './TalkativenessPicker'
 
-export type WelcomeSource = 'camera' | 'screen' | 'upload'
+export type WelcomeSource = 'camera' | 'screen'
 
 export interface WelcomeGuideProps {
   /**
    * Called only from the final Start button, after every choice is made. Opens the chosen
-   * source (camera/screen permission prompt or the picked file) and begins checking.
+   * source (camera/screen permission prompt) and begins checking.
    */
-  onLaunch: (source: WelcomeSource, file?: File) => void
+  onLaunch: (source: WelcomeSource) => void
   talkativeness: Talkativeness
   onChangeTalkativeness: (value: Talkativeness) => void
   alertMode: AlertMode
@@ -21,10 +21,13 @@ export interface WelcomeGuideProps {
   launching?: boolean
 }
 
-const SOURCES: ReadonlyArray<{ id: WelcomeSource; label: string; icon: typeof Camera }> = [
+const SOURCES: ReadonlyArray<{
+  id: WelcomeSource
+  label: string
+  icon: typeof Camera
+}> = [
   { id: 'camera', label: 'Camera', icon: Camera },
   { id: 'screen', label: 'Screen', icon: MonitorUp },
-  { id: 'upload', label: 'Upload', icon: Upload },
 ]
 
 function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
@@ -67,7 +70,10 @@ function OptionCard({
           : 'border-line bg-white hover:border-zinc-300 hover:bg-zinc-50'
       }`}
     >
-      <Icon className={`h-4 w-4 ${selected ? 'text-accent' : 'text-zinc-500'}`} aria-hidden="true" />
+      <Icon
+        className={`h-4 w-4 ${selected ? 'text-accent' : 'text-zinc-500'}`}
+        aria-hidden="true"
+      />
       <span className="text-xs font-medium text-zinc-900">{label}</span>
     </button>
   )
@@ -82,16 +88,10 @@ export function WelcomeGuide({
   onChangeAlertMode,
   launching = false,
 }: WelcomeGuideProps) {
-  const fileRef = useRef<HTMLInputElement | null>(null)
   const [source, setSource] = useState<WelcomeSource | null>(null)
 
   const handleStart = () => {
     if (!source || launching) return
-    if (source === 'upload') {
-      // The file picker must open from this click; launching happens once a file is chosen.
-      fileRef.current?.click()
-      return
-    }
     onLaunch(source)
   }
 
@@ -111,11 +111,7 @@ export function WelcomeGuide({
         <div className="rounded-xl border border-line bg-white shadow-sm">
           <ol className="divide-y divide-line">
             <Step n={1} title="Choose what to watch">
-              <div
-                role="radiogroup"
-                aria-label="What to watch"
-                className="grid grid-cols-1 gap-2 sm:grid-cols-3"
-              >
+              <div role="radiogroup" aria-label="What to watch" className="grid grid-cols-2 gap-2">
                 {SOURCES.map((option) => (
                   <OptionCard
                     key={option.id}
@@ -154,18 +150,6 @@ export function WelcomeGuide({
           </ol>
 
           <div className="space-y-2.5 border-t border-line p-4">
-            <input
-              ref={fileRef}
-              type="file"
-              accept="video/*,image/*"
-              aria-label="Upload lecture video or image"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) onLaunch('upload', file)
-                e.target.value = ''
-              }}
-              className="hidden"
-            />
             <button
               type="button"
               onClick={handleStart}

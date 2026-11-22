@@ -1,5 +1,5 @@
-import { Camera, Crop, MonitorUp, Play, Upload } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { Camera, Crop, MonitorUp, Play } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { CalibrationCorners } from '../api/schemas'
 import { MonitorPhase } from '../hooks/useBoardMonitor'
 import { MediaSourceState } from '../hooks/useMediaSource'
@@ -15,7 +15,6 @@ export interface StageProps {
   imageElRef: React.RefObject<HTMLImageElement | null>
   onStartCamera: () => void
   onStartScreenShare: () => void
-  onUploadFile: (file: File) => void
   monitoring: boolean
   phase: MonitorPhase
   showOverlays: boolean
@@ -48,7 +47,6 @@ export function Stage({
   imageElRef,
   onStartCamera,
   onStartScreenShare,
-  onUploadFile,
   monitoring,
   phase,
   showOverlays,
@@ -72,7 +70,6 @@ export function Stage({
   welcome,
   startHint = false,
 }: StageProps) {
-  const emptyFileRef = useRef<HTMLInputElement | null>(null)
   const [containerEl, setContainerEl] = useState<HTMLElement | null>(null)
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 })
 
@@ -105,9 +102,7 @@ export function Stage({
   )
 
   const isVideoLike =
-    mediaState.kind === 'camera' ||
-    mediaState.kind === 'screen' ||
-    mediaState.kind === 'video'
+    mediaState.kind === 'camera' || mediaState.kind === 'screen' || mediaState.kind === 'video'
 
   const handleStageKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
     if (
@@ -139,9 +134,7 @@ export function Stage({
 
       {mediaState.kind === 'none' && !welcome && (
         <div className="flex h-full flex-col items-center justify-center gap-5 px-6 text-center">
-          <p className="max-w-sm text-sm text-zinc-500">
-            Choose a camera, share a screen, or upload a lecture video
-          </p>
+          <p className="max-w-sm text-sm text-zinc-500">Choose a camera or share a screen</p>
           <div className="flex flex-wrap items-center justify-center gap-2">
             <button
               type="button"
@@ -159,43 +152,31 @@ export function Stage({
               <MonitorUp className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" />
               Screen
             </button>
-            <input
-              ref={emptyFileRef}
-              type="file"
-              accept="video/*,image/*"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) onUploadFile(file)
-                e.target.value = ''
-              }}
-              className="hidden"
-            />
-            <button
-              type="button"
-              onClick={() => emptyFileRef.current?.click()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-800 transition hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-            >
-              <Upload className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" />
-              Upload
-            </button>
           </div>
         </div>
       )}
 
-      {startHint && mediaState.kind !== 'none' && mediaState.ready && !monitoring && !calibrationEditing && (
-        <div
-          role="status"
-          className="pointer-events-none absolute top-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full border border-line bg-white px-3.5 py-1.5 text-xs text-zinc-700 shadow-md animate-pill-in"
-        >
-          <span className="flex h-4 w-4 items-center justify-center rounded-full bg-accent text-white" aria-hidden="true">
-            <Play className="h-2 w-2 translate-x-px fill-current" />
-          </span>
-          <span>
-            Ready. Press <span className="font-semibold text-accent">Start</span> (top right) to
-            begin checking for mistakes.
-          </span>
-        </div>
-      )}
+      {startHint &&
+        mediaState.kind !== 'none' &&
+        mediaState.ready &&
+        !monitoring &&
+        !calibrationEditing && (
+          <div
+            role="status"
+            className="pointer-events-none absolute top-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full border border-line bg-white px-3.5 py-1.5 text-xs text-zinc-700 shadow-md animate-pill-in"
+          >
+            <span
+              className="flex h-4 w-4 items-center justify-center rounded-full bg-accent text-white"
+              aria-hidden="true"
+            >
+              <Play className="h-2 w-2 translate-x-px fill-current" />
+            </span>
+            <span>
+              Ready. Press <span className="font-semibold text-accent">Start</span> (top right) to
+              begin checking for mistakes.
+            </span>
+          </div>
+        )}
 
       {/* Unmirrored video element for camera, screen share, and uploaded lecture videos */}
       <video
@@ -268,12 +249,9 @@ export function Stage({
         <div
           role="status"
           aria-live="polite"
-          className="pointer-events-none absolute bottom-4 left-4 z-20 inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 shadow-sm"
+          className="pointer-events-none absolute bottom-4 left-28 z-20 inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 shadow-sm"
         >
-          <span
-            className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse"
-            aria-hidden="true"
-          />
+          <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" aria-hidden="true" />
           <span>Analyzing…</span>
         </div>
       )}

@@ -224,7 +224,7 @@ export function App() {
   // Source generation and error at launch, so stale state from earlier attempts is ignored.
   const launchBaselineRef = useRef({ generation: 0, error: null as string | null })
   const handleWelcomeLaunch = useCallback(
-    (source: WelcomeSource, file?: File) => {
+    (source: WelcomeSource) => {
       speech.unlockAudio()
       launchBaselineRef.current = {
         generation: media.state.sourceGeneration,
@@ -232,8 +232,7 @@ export function App() {
       }
       setLaunchPending(true)
       if (source === 'camera') void media.startCamera()
-      else if (source === 'screen') void media.startScreenShare()
-      else if (file) media.loadUploadedFile(file)
+      else void media.startScreenShare()
     },
     [media, speech],
   )
@@ -588,7 +587,6 @@ export function App() {
           imageElRef={media.imageElRef}
           onStartCamera={() => void media.startCamera()}
           onStartScreenShare={() => void media.startScreenShare()}
-          onUploadFile={media.loadUploadedFile}
           monitoring={monitoring}
           phase={monitor.state.phase}
           showOverlays={showVisualFindings}
