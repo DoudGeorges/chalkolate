@@ -5,6 +5,8 @@ import { MathCorrection } from './MathCorrection'
 
 export interface DetectionOverlayProps {
   imageRect: ContainedImageRect
+  /** Visible part of the stage; pills are kept inside it. Defaults to `imageRect`. */
+  visibleRect?: ContainedImageRect
   issues: readonly TrackedIssue[]
   locationsUnverified?: boolean
   selectedIssueId: string | null
@@ -15,6 +17,7 @@ export interface DetectionOverlayProps {
 
 export function DetectionOverlay({
   imageRect,
+  visibleRect = imageRect,
   issues,
   selectedIssueId,
   hoveredIssueId,
@@ -86,7 +89,7 @@ export function DetectionOverlay({
       {/* Separate HTML layer so non-uniform SVG scaling never warps pill text */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         {issues.map((issue) => {
-          const pos = computeOverlayPillPosition(issue.box_2d, imageRect)
+          const pos = computeOverlayPillPosition(issue.box_2d, imageRect, 220, 30, visibleRect)
           const color = CATEGORY_COLORS[issue.category]
           const isHighlighted =
             issue.id === selectedIssueId || issue.id === hoveredIssueId
@@ -101,7 +104,7 @@ export function DetectionOverlay({
               style={{
                 left: `${pos.left}px`,
                 top: `${pos.top}px`,
-                maxWidth: `${Math.max(120, Math.min(280, imageRect.width - 8))}px`,
+                maxWidth: `${Math.max(120, Math.min(280, visibleRect.width - 8))}px`,
               }}
               className={`pointer-events-auto absolute flex items-center gap-1.5 rounded-lg border bg-white px-2.5 py-1 text-left text-xs shadow-md transition duration-150 animate-pill-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
                 isHighlighted

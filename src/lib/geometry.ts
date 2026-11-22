@@ -192,6 +192,53 @@ export function buildNormalizedQuadMask(
   return mask
 }
 
+/**
+ * Where to draw the full frame so the committed crop fills the stage.
+ *
+ * The crop quad's axis-aligned bounding box is fitted (object-contain style) and centered in the
+ * container; the returned rect is the resulting placement of the WHOLE frame, so it may extend
+ * past the container edges (the stage clips it). Because it keeps the frame's aspect ratio, every
+ * normalized `[0, 1000]` overlay mapping that accepts a `ContainedImageRect` works unchanged.
+ * Falls back to the plain contained rect when there is no usable crop.
+ */
+export function computeCropViewRect(
+  containerWidth: number,
+  containerHeight: number,
+  intrinsicWidth: number,
+  intrinsicHeight: number,
+  corners: CalibrationCorners | null,
+): ContainedImageRect {
+  const base = computeContainedImageRect(
+    containerWidth,
+    containerHeight,
+    intrinsicWidth,
+    intrinsicHeight,
+  )
+  if (!corners || base.width <= 0 || base.height <= 0) return base
+
+  const xs = corners.map(([x]) => clampNorm(x))
+  const ys = corners.map(([, y]) => clampNorm(y))
+  const minX = Math.min(...xs)
+  const maxX = Math.max(...xs)
+  const minY = Math.min(...ys)
+  const maxY = Math.max(...ys)
+  const cropWidthPx = ((maxX - minX) / 1000) * intrinsicWidth
+  const cropHeightPx = ((maxY - minY) / 1000) * intrinsicHeight
+  if (!(cropWidthPx > 0) || !(cropHeightPx > 0)) return base
+
+  const scale = Math.min(containerWidth / cropWidthPx, containerHeight / cropHeightPx)
+  if (!Number.isFinite(scale) || scale <= 0) return base
+
+  const width = intrinsicWidth * scale
+  const height = intrinsicHeight * scale
+  return {
+    left: containerWidth / 2 - ((minX + maxX) / 2000) * width,
+    top: containerHeight / 2 - ((minY + maxY) / 2000) * height,
+    width,
+    height,
+  }
+}
+
 export interface PillPosition {
   left: number
   top: number
@@ -203,28 +250,37 @@ export function computeOverlayPillPosition(
   imageRect: ContainedImageRect,
   estimatedPillWidth = 220,
   estimatedPillHeight = 30,
+  /** Visible area to keep the pill inside (defaults to `imageRect`; smaller when zoomed in). */
+  clipRect: ContainedImageRect = imageRect,
 ): PillPosition {
   const [ymin, xmin, ymax] = box
-  const boxLeftPx = (xmin / 1000) * imageRect.width
-  const boxTopPx = (ymin / 1000) * imageRect.height
-  const boxBottomPx = (ymax / 1000) * imageRect.height
+  const boxLeftPx = imageRect.left + (xmin / 1000) * imageRect.width
+  const boxTopPx = imageRect.top + (ymin / 1000) * imageRect.height
+  const boxBottomPx = imageRect.top + (ymax / 1000) * imageRect.height
 
-  const maxLocalLeft = Math.max(4, imageRect.width - estimatedPillWidth - 4)
-  const localLeft = Math.max(4, Math.min(maxLocalLeft, boxLeftPx))
+  const minLeft = clipRect.left + 4
+  const maxLeft = Math.max(minLeft, clipRect.left + clipRect.width - estimatedPillWidth - 4)
+  const left = Math.max(minLeft, Math.min(maxLeft, boxLeftPx))
 
+  const minTop = clipRect.top + 4
   let placement: 'above' | 'below' = 'above'
-  let localTop = boxTopPx - estimatedPillHeight - 6
-  if (localTop < 4) {
+  let top = boxTopPx - estimatedPillHeight - 6
+  if (top < minTop) {
     placement = 'below'
-    localTop = Math.min(
-      Math.max(4, imageRect.height - estimatedPillHeight - 4),
+    top = Math.min(
+      Math.max(minTop, clipRect.top + clipRect.height - estimatedPillHeight - 4),
       boxBottomPx + 6,
     )
   }
 
-  return {
-    left: imageRect.left + localLeft,
-    top: imageRect.top + localTop,
-    placement,
-  }
+  return { left, top, placement }
+}
+
+/** Intersection of two rects (zero-size when they do not overlap). */
+export function intersectRects(a: ContainedImageRect, b: ContainedImageRect): ContainedImageRect {
+  const left = Math.max(a.left, b.left)
+  const top = Math.max(a.top, b.top)
+  const right = Math.min(a.left + a.width, b.left + b.width)
+  const bottom = Math.min(a.top + a.height, b.top + b.height)
+  return { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) }
 }
