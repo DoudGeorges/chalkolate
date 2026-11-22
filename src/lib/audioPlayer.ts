@@ -1,3 +1,5 @@
+import { isAbortError } from './abort'
+
 export interface PlayAudioStreamOptions {
   signal: AbortSignal
   onStart: () => void
@@ -22,19 +24,6 @@ function getSharedAudioElement(): HTMLAudioElement | null {
   sharedAudioElement = document.createElement('audio')
   sharedAudioElement.preload = 'auto'
   return sharedAudioElement
-}
-
-export function resetAudioPlayerForTests(): void {
-  if (sharedAudioElement) {
-    try {
-      sharedAudioElement.pause()
-      sharedAudioElement.removeAttribute('src')
-    } catch {
-      // Ignore cleanup errors on detached media elements.
-    }
-  }
-  sharedAudioElement = null
-  isPlayingSharedAudio = false
 }
 
 /**
@@ -78,9 +67,6 @@ function createAbortError(): DOMException {
   return new DOMException('Speech playback aborted.', 'AbortError')
 }
 
-function isAbortError(err: unknown): boolean {
-  return err instanceof DOMException && err.name === 'AbortError'
-}
 
 function waitForEvent(
   target: EventTarget,

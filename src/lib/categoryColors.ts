@@ -8,10 +8,3 @@ export const CATEGORY_COLORS: Record<ErrorCategory, string> = {
   spelling: '#38bdf8',
   factual: '#a78bfa',
 }
-
-export const CATEGORY_LABELS: Record<ErrorCategory, string> = {
-  math: 'Math',
-  physics: 'Physics',
-  spelling: 'Spelling',
-  factual: 'Fact',
-}
