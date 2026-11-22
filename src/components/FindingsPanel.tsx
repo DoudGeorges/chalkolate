@@ -89,7 +89,7 @@ export function FindingsPanel({
   const emptyState = hasAnalyzed
     ? {
         title: 'Board looks clear',
-        detail: 'No math, physics, or spelling mistakes detected.',
+        detail: 'No mistakes detected.',
         clear: true,
       }
     : monitoring

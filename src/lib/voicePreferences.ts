@@ -112,6 +112,7 @@ const CATEGORY_PHRASES: Record<string, string> = {
   math: 'Math',
   physics: 'Physics',
   spelling: 'Spelling',
+  factual: 'Factual',
   chemistry: 'Chemistry',
   engineering: 'Engineering',
   programming: 'Code',

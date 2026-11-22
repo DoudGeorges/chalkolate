@@ -100,8 +100,8 @@ export function WelcomeGuide({
             Catch mistakes on the board as they&apos;re written
           </h1>
           <p className="mx-auto mt-1.5 max-w-md text-xs leading-relaxed text-zinc-500">
-            Chalkolate watches a whiteboard or lecture and points out math, physics, and spelling
-            mistakes on screen and out loud. Nothing turns on until you press Start.
+            Chalkolate watches a whiteboard or lecture and points out mistakes on screen and out
+            loud. Nothing turns on until you press Start.
           </p>
         </div>
 
