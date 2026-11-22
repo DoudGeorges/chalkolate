@@ -12,6 +12,8 @@ import {
   NotesMetadataPayload,
   NotesResponse,
   NotesResponseSchema,
+  VoicesResponse,
+  VoicesResponseSchema,
 } from './schemas'
 
 export class ApiClientError extends Error {
@@ -125,7 +127,7 @@ interface ParseMessages {
 
 async function parseJsonResponse<T>(
   response: Response,
-  schema: z.ZodType<T>,
+  schema: z.ZodType<T, unknown>,
   messages: ParseMessages,
 ): Promise<T> {
   let raw: unknown
@@ -186,6 +188,20 @@ export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse>
   })
 }
 
+/** Lists the ElevenLabs voices available to the backend's account ('default' first). */
+export async function fetchVoices(signal?: AbortSignal): Promise<VoicesResponse> {
+  const response = await sendRequest(
+    '/api/voices',
+    { method: 'GET', signal, headers: { Accept: 'application/json' } },
+    'Unable to load ElevenLabs voices.',
+  )
+  return parseJsonResponse(response, VoicesResponseSchema, {
+    malformed: 'Voices endpoint returned malformed JSON.',
+    invalid: 'Voices response failed contract validation.',
+    invalidCode: 'INVALID_VOICES_CONTRACT',
+  })
+}
+
 export async function analyzeSnapshot(
   imageBlob: Blob,
   metadata: AnalysisMetadataPayload,
@@ -224,10 +240,18 @@ export async function detectBoardCorners(
   })
 }
 
+export interface SpeechStreamOptions {
+  /** ElevenLabs voice ID from /api/voices; omitted/'default' uses the configured voice. */
+  voice?: string
+}
+
 export async function requestSpeechStream(
   text: string,
   signal?: AbortSignal,
+  options: SpeechStreamOptions = {},
 ): Promise<Response> {
+  const body: { text: string; voice?: string } = { text }
+  if (options.voice && options.voice !== 'default') body.voice = options.voice
   const response = await sendRequest(
     '/api/speech',
     {
@@ -237,7 +261,7 @@ export async function requestSpeechStream(
         Accept: 'audio/mpeg',
         ...SESSION_HEADERS,
       },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(body),
       signal,
     },
     'Network error while requesting speech audio.',

@@ -33,3 +33,6 @@ coverage/
 .idea/
 .vscode/
 .admin-logs/
+
+# Local Claude Code worktrees
+.claude/worktrees/
