@@ -588,6 +588,23 @@ export function App() {
       <Toasts toasts={toasts} onDismiss={dismissToast} />
 
       <div className="relative flex flex-1 min-h-0 flex-col md:flex-row overflow-hidden">
+        <NotesPanel
+          open={notesOpen}
+          active={notesActive && media.state.ready && !calibrationEditing}
+          configured={health?.analysis_configured ?? false}
+          phase={notesBuilder.phase}
+          error={notesBuilder.error}
+          notes={notesBuilder.notes}
+          onToggleOpen={() => setNotesOpen((prev) => !prev)}
+          onExportMarkdown={handleExportMarkdown}
+          onExportLatex={handleExportLatex}
+          onExportPrint={handleExportPrint}
+          onClear={() => {
+            if (window.confirm('Clear all lecture notes? This cannot be undone.')) {
+              notesBuilder.clear()
+            }
+          }}
+        />
         <Stage
           mediaState={media.state}
           videoElRef={media.videoElRef}
@@ -628,23 +645,6 @@ export function App() {
           }
         />
 
-        <NotesPanel
-          open={notesOpen}
-          active={notesActive && media.state.ready && !calibrationEditing}
-          configured={health?.analysis_configured ?? false}
-          phase={notesBuilder.phase}
-          error={notesBuilder.error}
-          notes={notesBuilder.notes}
-          onToggleOpen={() => setNotesOpen((prev) => !prev)}
-          onExportMarkdown={handleExportMarkdown}
-          onExportLatex={handleExportLatex}
-          onExportPrint={handleExportPrint}
-          onClear={() => {
-            if (window.confirm('Clear all lecture notes? This cannot be undone.')) {
-              notesBuilder.clear()
-            }
-          }}
-        />
         {!onboarding && (
           <FindingsPanel
             open={panelOpen}

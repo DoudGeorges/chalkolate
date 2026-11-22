@@ -53,96 +53,104 @@ export function NotesPanel({
           : null
 
   return (
-    <>
-      {open && (
-        <aside
-          aria-label="Lecture notes"
-          className="absolute inset-y-0 right-0 z-30 flex w-full max-w-md flex-col border-l border-line bg-white shadow-xl"
-        >
-          <header className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
-            <h2 className="truncate text-sm font-medium text-zinc-900">
-              {notes.title || 'Lecture notes'}
-            </h2>
-            <button
-              type="button"
-              onClick={onToggleOpen}
-              aria-label="Close notes"
-              className="rounded p-1 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
-            >
-              <X className="h-4 w-4" aria-hidden />
-            </button>
-          </header>
+    <div
+      data-testid="notes-panel-container"
+      className={`relative z-30 shrink-0 overflow-hidden bg-white transition-[width,height] duration-200 ease-out ${
+        open
+          ? 'h-[42vh] w-full border-b border-line md:h-auto md:w-[360px] md:border-r md:border-b-0'
+          : 'h-0 w-full border-transparent md:h-auto md:w-0'
+      }`}
+    >
+      <aside
+        aria-label="Lecture notes"
+        aria-hidden={!open}
+        inert={!open}
+        className="flex h-full w-full flex-col md:w-[360px]"
+      >
+        <header className="flex items-center justify-between gap-2 border-b border-line px-3 py-2">
+          <h2 className="truncate text-sm font-medium text-zinc-900">
+            {notes.title || 'Lecture notes'}
+          </h2>
+          <button
+            type="button"
+            onClick={onToggleOpen}
+            aria-label="Close notes"
+            className="rounded p-1 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900"
+          >
+            <X className="h-4 w-4" aria-hidden />
+          </button>
+        </header>
 
-          {status && (
-            <p role="status" className="border-b border-line px-3 py-2 text-xs text-zinc-600">
-              {status}
-            </p>
-          )}
+        {status && (
+          <p role="status" className="border-b border-line px-3 py-2 text-xs text-zinc-600">
+            {status}
+          </p>
+        )}
 
-          {error && (
-            <div role="alert" className="border-b border-amber-500/20 bg-amber-50 px-3 py-1.5 text-xs text-amber-800">
-              {error}
-            </div>
-          )}
-
-          <div className="flex-1 space-y-5 overflow-y-auto px-3 py-3">
-            {count === 0 ? (
-              <p className="text-sm text-zinc-500">
-                No notes yet.
-              </p>
-            ) : (
-              notes.sections.map((section) => (
-                <section key={section.id} aria-label={section.heading}>
-                  <h3 className="mb-1 text-sm font-semibold text-zinc-900">{section.heading}</h3>
-                  <NoteBody markdown={section.body_markdown} />
-                  {section.figure && (
-                    <img
-                      src={section.figure}
-                      alt={`Board snapshot: ${section.heading}`}
-                      className="mt-2 rounded border border-line"
-                    />
-                  )}
-                </section>
-              ))
-            )}
+        {error && (
+          <div
+            role="alert"
+            className="border-b border-amber-500/20 bg-amber-50 px-3 py-1.5 text-xs text-amber-800"
+          >
+            {error}
           </div>
+        )}
 
-          <footer className="flex flex-wrap items-center gap-2 border-t border-line px-3 py-2 text-xs">
-            <button
-              type="button"
-              onClick={onExportMarkdown}
-              disabled={count === 0}
-              className="flex items-center gap-1 rounded border border-line px-2 py-1 text-zinc-900 hover:bg-zinc-100 disabled:opacity-40"
-            >
-              <Download className="h-3 w-3" aria-hidden /> Export Markdown
-            </button>
-            <button
-              type="button"
-              onClick={onExportLatex}
-              disabled={count === 0}
-              className="flex items-center gap-1 rounded border border-line px-2 py-1 text-zinc-900 hover:bg-zinc-100 disabled:opacity-40"
-            >
-              <Download className="h-3 w-3" aria-hidden /> LaTeX
-            </button>
-            <button
-              type="button"
-              onClick={onExportPrint}
-              disabled={count === 0}
-              className="flex items-center gap-1 rounded border border-line px-2 py-1 text-zinc-900 hover:bg-zinc-100 disabled:opacity-40"
-            >
-              <Printer className="h-3 w-3" aria-hidden /> Print / PDF
-            </button>
-            <button
-              type="button"
-              onClick={onClear}
-              disabled={count === 0}
-              className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-zinc-600 hover:text-rose-700 disabled:opacity-40"
-            >
-              <Trash2 className="h-3 w-3" aria-hidden /> Clear
-            </button>
-          </footer>
-        </aside>
-      )}
-    </>
+        <div className="flex-1 space-y-5 overflow-y-auto px-3 py-3">
+          {count === 0 ? (
+            <p className="text-sm text-zinc-500">No notes yet.</p>
+          ) : (
+            notes.sections.map((section) => (
+              <section key={section.id} aria-label={section.heading}>
+                <h3 className="mb-1 text-sm font-semibold text-zinc-900">{section.heading}</h3>
+                <NoteBody markdown={section.body_markdown} />
+                {section.figure && (
+                  <img
+                    src={section.figure}
+                    alt={`Board snapshot: ${section.heading}`}
+                    className="mt-2 rounded border border-line"
+                  />
+                )}
+              </section>
+            ))
+          )}
+        </div>
+
+        <footer className="flex flex-wrap items-center gap-2 border-t border-line px-3 py-2 text-xs">
+          <button
+            type="button"
+            onClick={onExportMarkdown}
+            disabled={count === 0}
+            className="flex items-center gap-1 rounded border border-line px-2 py-1 text-zinc-900 hover:bg-zinc-100 disabled:opacity-40"
+          >
+            <Download className="h-3 w-3" aria-hidden /> Export Markdown
+          </button>
+          <button
+            type="button"
+            onClick={onExportLatex}
+            disabled={count === 0}
+            className="flex items-center gap-1 rounded border border-line px-2 py-1 text-zinc-900 hover:bg-zinc-100 disabled:opacity-40"
+          >
+            <Download className="h-3 w-3" aria-hidden /> LaTeX
+          </button>
+          <button
+            type="button"
+            onClick={onExportPrint}
+            disabled={count === 0}
+            className="flex items-center gap-1 rounded border border-line px-2 py-1 text-zinc-900 hover:bg-zinc-100 disabled:opacity-40"
+          >
+            <Printer className="h-3 w-3" aria-hidden /> Print / PDF
+          </button>
+          <button
+            type="button"
+            onClick={onClear}
+            disabled={count === 0}
+            className="ml-auto flex items-center gap-1 rounded px-2 py-1 text-zinc-600 hover:text-rose-700 disabled:opacity-40"
+          >
+            <Trash2 className="h-3 w-3" aria-hidden /> Clear
+          </button>
+        </footer>
+      </aside>
+    </div>
   )
 }
