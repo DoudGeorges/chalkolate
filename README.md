@@ -1,6 +1,6 @@
 # Chalkolate
 
-Chalkolate monitors lecture boards from a camera, screen share, or uploaded video. It highlights supported errors, can announce corrections aloud, and builds lecture notes from snapshots. Your media source and findings stay in the browser. Gemini receives selected board snapshots and context when enabled. ElevenLabs receives alert text when its speech service is configured.
+Chalkolate monitors lecture boards from a camera, screen share, or uploaded video. It highlights supported errors, can announce corrections aloud and builds lecture notes for you. Test out our project in [here](https://chalkolate.edouardchasse.com/)
 
 ## Local setup
 
