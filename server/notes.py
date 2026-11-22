@@ -6,6 +6,7 @@ Notes and mistake detection use the same Gemini request handling and independent
 from __future__ import annotations
 
 import json
+from typing import cast
 
 from pydantic import ValidationError
 
@@ -13,6 +14,7 @@ from analyzer import (
     AsyncGenAIClient,
     UnusableModelOutputError,
     generate_board_response,
+    simplify_schema_for_gemini,
     validate_response_completion,
 )
 from config import Settings
@@ -53,7 +55,10 @@ NOTES_SYSTEM_INSTRUCTION = (
     "topic."
 )
 
-_NOTES_RESPONSE_JSON_SCHEMA: dict[str, object] = BoardNotesResult.model_json_schema()
+# Same Gemini schema-complexity limit as board analysis; Pydantic enforces the stripped bounds.
+_NOTES_RESPONSE_JSON_SCHEMA = cast(
+    dict[str, object], simplify_schema_for_gemini(BoardNotesResult.model_json_schema())
+)
 
 
 def build_notes_prompt(metadata: NotesMetadata) -> str:
