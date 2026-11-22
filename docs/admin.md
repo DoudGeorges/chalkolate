@@ -29,7 +29,7 @@ written to the log store. It is therefore strictly opt-in and meant for short de
 `hmac.compare_digest`), is rate-limited (10/min per client), and sets an httpOnly,
 `SameSite=Strict`, `Secure` (on https) cookie holding an HMAC-signed 12 h expiry derived from
 `ADMIN_TOKEN` (rotating the token invalidates sessions). `Authorization: Bearer <token>` also
-works for curl. Every `/api/admin/*` response carries `Cache-Control: no-store` and
+works for curl. Admin endpoints return `Cache-Control: no-store, private` and
 `X-Robots-Tag: noindex`; the page has `robots: noindex`. Unauthenticated data requests get 401.
 The admin API is the only reader; the studio never queries it, and entries are keyed by random
 128-bit ids (not by user-supplied ids), so another user cannot enumerate them.
@@ -46,6 +46,7 @@ Bounds: `ADMIN_LOG_TTL_SECONDS` (default 3 days; Redis keys use `EX`), `ADMIN_LO
 (default 200, oldest and their images deleted), `ADMIN_LOG_MAX_IMAGE_BYTES` (default 512 KiB;
 larger frames are re-encoded smaller, or dropped keeping only a 256 px thumbnail). Responses are
 captured only for JSON bodies up to 256 KiB; speech audio is not stored (only its size).
+The local store prunes expired entries when it is accessed.
 
 ## How it works
 

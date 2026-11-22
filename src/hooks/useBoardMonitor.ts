@@ -48,12 +48,7 @@ export interface MonitorState {
   phase: MonitorPhase
   tracker: IssueTrackerState
   boardSummary: string
-  lastLatencyMs: number | null
-  lastAnalyzedAt: number | null
   apiError: MonitorApiError | null
-  hasAnalyzed: boolean
-  locationsUnverified: boolean
-  backoffUntilMs: number | null
   consecutiveFailures: number
 }
 
@@ -64,12 +59,10 @@ type MonitorAction =
       type: 'COMMIT_ANALYSIS'
       response: AnalysisResponse
       nextTracker: IssueTrackerState
-      nowMs: number
     }
   | {
       type: 'FAIL_ANALYSIS'
       error: MonitorApiError
-      backoffUntilMs: number
       fallbackPhase: MonitorPhase
     }
   | { type: 'CLEAR_API_ERROR' }
@@ -84,12 +77,7 @@ function createInitialMonitorState(monitoring: boolean): MonitorState {
     phase: monitoring ? 'WATCHING' : 'STOPPED',
     tracker: createInitialTrackerState(),
     boardSummary: '',
-    lastLatencyMs: null,
-    lastAnalyzedAt: null,
     apiError: null,
-    hasAnalyzed: false,
-    locationsUnverified: false,
-    backoffUntilMs: null,
     consecutiveFailures: 0,
   }
 }
@@ -109,12 +97,7 @@ function monitorReducer(state: MonitorState, action: MonitorAction): MonitorStat
         phase: state.phase === 'STOPPED' ? 'STOPPED' : 'WATCHING',
         tracker: action.nextTracker,
         boardSummary: action.response.board_summary,
-        lastLatencyMs: action.response.latency_ms,
-        lastAnalyzedAt: action.nowMs,
         apiError: null,
-        hasAnalyzed: true,
-        locationsUnverified: false,
-        backoffUntilMs: null,
         consecutiveFailures: 0,
       }
 
@@ -124,7 +107,6 @@ function monitorReducer(state: MonitorState, action: MonitorAction): MonitorStat
         phase: state.phase === 'STOPPED' ? 'STOPPED' : action.fallbackPhase,
         apiError: action.error,
         tracker: clearPendingVerification(state.tracker),
-        backoffUntilMs: action.backoffUntilMs,
         consecutiveFailures: state.consecutiveFailures + 1,
       }
 
@@ -132,7 +114,6 @@ function monitorReducer(state: MonitorState, action: MonitorAction): MonitorStat
       return {
         ...state,
         apiError: null,
-        backoffUntilMs: null,
       }
 
     case 'DISMISS_ISSUE':
@@ -247,8 +228,8 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
   stateRef.current = state
 
   const settingsSig = useMemo(
-    () => JSON.stringify(committedCorners),
-    [committedCorners],
+    () => JSON.stringify([committedCorners, answerFormat]),
+    [committedCorners, answerFormat],
   )
 
   const runtimeRef = useRef({
@@ -288,7 +269,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     seq: number
     abortController: AbortController
   } | null>(null)
-  const pendingIntentRef = useRef<'auto' | 'manual' | null>(null)
+  const manualCheckPendingRef = useRef(false)
 
   const detectorStateRef = useRef<DetectorState>(createDetectorState())
   const baselineRef = useRef<GrayscaleSample | null>(null)
@@ -346,7 +327,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
   )
 
   const abortInFlightAndClearPending = useCallback(() => {
-    pendingIntentRef.current = null
+    manualCheckPendingRef.current = false
     const active = inFlightRef.current
     if (active) {
       inFlightRef.current = null
@@ -359,6 +340,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     baselineRef.current = null
     lastSampleRef.current = null
     changeFirstSeenAtRef.current = null
+    lastSettledAtRef.current = 0
     backoffUntilMsRef.current = null
     lastMovingFractionRef.current = 0
     lastPersistentCountRef.current = 0
@@ -381,18 +363,14 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     }
   }, [resetSession, sourceGeneration])
 
-  // Committed calibration changes clear session tracking/summaries (old coordinates are invalid).
-  const committedCornersKey = useMemo(
-    () => JSON.stringify(committedCorners),
-    [committedCorners],
-  )
-  const prevCornersKeyRef = useRef<string>(committedCornersKey)
+  // Changing the crop or the number format invalidates existing findings.
+  const prevSettingsSigRef = useRef(settingsSig)
   useEffect(() => {
-    if (prevCornersKeyRef.current !== committedCornersKey) {
-      prevCornersKeyRef.current = committedCornersKey
+    if (prevSettingsSigRef.current !== settingsSig) {
+      prevSettingsSigRef.current = settingsSig
       resetSession()
     }
-  }, [committedCornersKey, resetSession])
+  }, [resetSession, settingsSig])
 
   // Stop/Start and calibration edit transitions.
   useEffect(() => {
@@ -428,8 +406,10 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
       inFlightRef.current = { seq, abortController }
       dispatch({ type: 'SET_PHASE', phase: 'ANALYZING' })
 
+      let timedOut = false
       const deadlineTimer = window.setTimeout(() => {
         if (inFlightRef.current?.seq === seq) {
+          timedOut = true
           abortController.abort()
         }
       }, rt.clientDeadlineMs)
@@ -438,7 +418,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
       // calibration edit, or settings change invalidates.
       const isStillOwner = (): boolean => {
         const latest = runtimeRef.current
-        if (abortController.signal.aborted) return false
         if (!latest.monitoring || latest.calibrationEditing) return false
         if (latest.sourceGeneration !== snapshotSourceGen) return false
         if (sessionGenRef.current !== snapshotSessionGen) return false
@@ -456,6 +435,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
         const dispatchStillTicks = new Uint16Array(detectorStateRef.current.stillTicks)
         const captured = await rt.deps.captureSnapshot(rt.mediaSource, captureCanvas)
 
+        abortController.signal.throwIfAborted()
         if (!isStillOwner()) {
           return
         }
@@ -473,6 +453,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
           abortController.signal,
         )
 
+        abortController.signal.throwIfAborted()
         if (!isStillOwner()) {
           return
         }
@@ -532,7 +513,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
           type: 'COMMIT_ANALYSIS',
           response,
           nextTracker: reconciled.nextState,
-          nowMs: lastSettledAtRef.current,
         })
         settledPhaseHandled = true
 
@@ -549,7 +529,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
           })
         }
       } catch (err) {
-        if (abortController.signal.aborted || !isStillOwner()) {
+        if (!isStillOwner() || (abortController.signal.aborted && !timedOut)) {
           return
         }
 
@@ -558,10 +538,13 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
         lastSettledAtRef.current = failNow
 
         let code = 'ANALYSIS_FAILED'
-        let message = 'Snapshot analysis failed.'
+        let message = 'The board check could not finish. Try again.'
         let retryAfterSeconds: number | null = null
 
-        if (err instanceof ApiClientError) {
+        if (timedOut) {
+          code = 'ANALYSIS_TIMEOUT'
+          message = 'Board analysis timed out.'
+        } else if (err instanceof ApiClientError) {
           code = err.code
           message = err.message
           retryAfterSeconds = err.retryAfterSeconds
@@ -580,7 +563,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
         dispatch({
           type: 'FAIL_ANALYSIS',
           error: { message, code, retryAfterSeconds },
-          backoffUntilMs,
           fallbackPhase:
             lastPersistentCountRef.current > 0 ||
             lastMovingFractionRef.current >= CALM_MOVING_FRACTION
@@ -595,9 +577,10 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
           if (
             runtimeRef.current.monitoring &&
             !runtimeRef.current.calibrationEditing &&
-            pendingIntentRef.current === 'manual'
+            runtimeRef.current.mediaReady &&
+            manualCheckPendingRef.current
           ) {
-            pendingIntentRef.current = null
+            manualCheckPendingRef.current = false
             queueMicrotask(() => {
               void dispatchAnalysisRef.current?.()
             })
@@ -647,20 +630,19 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     }
 
     // Manual Check Now bypasses backoff and quiet waits.
-    if (pendingIntentRef.current === 'manual') {
-      pendingIntentRef.current = null
+    if (manualCheckPendingRef.current) {
+      manualCheckPendingRef.current = false
       void dispatchAnalysis()
       return
     }
 
-    const activeBackoffUntil = backoffUntilMsRef.current ?? curState.backoffUntilMs
+    const activeBackoffUntil = backoffUntilMsRef.current
     const inBackoff = activeBackoffUntil !== null && nowMs < activeBackoffUntil
     const gapElapsed = nowMs - lastSettledAtRef.current >= MIN_DISPATCH_GAP_MS
 
     // No baseline yet (first start, reset, seek, calibration change) -> analyze promptly.
     if (baselineRef.current === null) {
       if (!inBackoff) {
-        pendingIntentRef.current = null
         void dispatchAnalysis()
       } else {
         dispatch({ type: 'SET_PHASE', phase: 'WATCHING' })
@@ -669,24 +651,18 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     }
 
     const hasActiveChange =
-      det.activeChangedTiles > 0 ||
-      det.persistentChangedTiles > 0 ||
-      pendingIntentRef.current === 'auto'
+      det.activeChangedTiles > 0 || det.persistentChangedTiles > 0
 
     if (hasActiveChange) {
       if (changeFirstSeenAtRef.current === null) {
         changeFirstSeenAtRef.current = nowMs
       }
-      const hasPersistentChange =
-        det.persistentChangedTiles > 0 || pendingIntentRef.current === 'auto'
-
-      if (hasPersistentChange) {
+      if (det.persistentChangedTiles > 0) {
         const changeAgeMs = nowMs - changeFirstSeenAtRef.current
         const calmEnough = det.movingFraction <= CALM_MOVING_FRACTION
         const waitedMax = changeAgeMs >= MAX_CHANGE_WAIT_MS
 
         if ((calmEnough || waitedMax) && gapElapsed && !inBackoff) {
-          pendingIntentRef.current = null
           void dispatchAnalysis()
           return
         }
@@ -754,10 +730,10 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     backoffUntilMsRef.current = null
     dispatch({ type: 'CLEAR_API_ERROR' })
     if (inFlightRef.current !== null) {
-      pendingIntentRef.current = 'manual'
+      manualCheckPendingRef.current = true
       return
     }
-    pendingIntentRef.current = null
+    manualCheckPendingRef.current = false
     void dispatchAnalysis()
   }, [dispatchAnalysis])
 

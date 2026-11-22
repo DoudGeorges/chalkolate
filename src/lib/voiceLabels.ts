@@ -19,9 +19,9 @@ export interface VoiceDisplay {
  */
 export function parseVoiceLabel(option: SpeechVoiceOption): VoiceDisplay {
   const isDefault = option.id === 'default'
-  let rest = option.label.trim()
+  let rest = option.label.replace(/\s*[\u2013\u2014]\s*/gu, ' - ').trim()
   if (isDefault) {
-    rest = rest.replace(/^Default:?\s*/i, '')
+    rest = rest.replace(/^Default(?:\s*:\s*|\s+|$)/i, '')
   }
 
   let tags: string[] = []
@@ -54,13 +54,4 @@ export function parseVoiceLabel(option: SpeechVoiceOption): VoiceDisplay {
     isDefault,
     searchText: `${name} ${tagline} ${tags.join(' ')}`.toLowerCase(),
   }
-}
-
-/** Stable muted hue per voice name for avatar chips. */
-export function voiceHue(name: string): number {
-  let hash = 0
-  for (let i = 0; i < name.length; i += 1) {
-    hash = (hash * 31 + name.charCodeAt(i)) >>> 0
-  }
-  return hash % 360
 }

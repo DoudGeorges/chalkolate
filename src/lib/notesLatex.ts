@@ -81,7 +81,7 @@ export function exportLatex(doc: NotesDocument, now: Date = new Date()): string 
 
   const body = doc.sections
     .map((s) => {
-      const withMath = s.body_markdown.split(NUL).join('')
+      const withMath = s.body_markdown.replace(/\r\n?/g, '\n').replaceAll(NUL, '')
         .replace(/\$\$([\s\S]+?)\$\$/g, (_m, tex: string) => stash(tex, true))
         .replace(/(?<![\\$])\$([^$\n]+?)\$(?!\$)/g, (_m, tex: string) => stash(tex, false))
       const blocks = withMath
@@ -101,7 +101,7 @@ export function exportLatex(doc: NotesDocument, now: Date = new Date()): string 
         })
         .filter((b) => b.length > 0)
       if (s.figure) {
-        blocks.push('\\textit{[Board figure omitted; see the Markdown or PDF export.]}')
+        blocks.push('\\textit{The Markdown and PDF exports include the board image.}')
       }
       return `\\section*{${latexInline(s.heading.split(NUL).join(''))}}\n\n${blocks.join('\n\n')}`
     })
@@ -112,6 +112,7 @@ export function exportLatex(doc: NotesDocument, now: Date = new Date()): string 
   return `\\documentclass[11pt]{article}
 \\usepackage[utf8]{inputenc}
 \\usepackage[T1]{fontenc}
+\\renewcommand{\\familydefault}{\\sfdefault}
 \\usepackage{amsmath,amssymb}
 \\usepackage[margin=1in]{geometry}
 \\title{${title}}

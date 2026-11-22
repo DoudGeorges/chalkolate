@@ -54,7 +54,8 @@ async function parseErrorResponse(response: Response): Promise<ApiClientError> {
   let raw: unknown = null
   try {
     raw = await response.json()
-  } catch {
+  } catch (err) {
+    if (isAbortError(err)) throw err
     return new ApiClientError(`Server returned HTTP ${response.status}.`, {
       code: 'HTTP_ERROR',
       status: response.status,
@@ -99,11 +100,13 @@ async function sendRequest(
   networkErrorMessage: string,
 ): Promise<Response> {
   let response: Response
+  const headers = new Headers(init.headers)
+  for (const [name, value] of Object.entries(SESSION_HEADERS)) headers.set(name, value)
   try {
     response = await fetch(url, {
       ...init,
       cache: 'no-store',
-      headers: { ...(init.headers as Record<string, string> | undefined), ...SESSION_HEADERS },
+      headers,
     })
   } catch (err) {
     if (isAbortError(err)) {
@@ -119,9 +122,7 @@ async function sendRequest(
 }
 
 interface ParseMessages {
-  malformed: string
-  invalid: string
-  invalidCode?: string
+  unreadable: string
   requestId?: string
 }
 
@@ -133,8 +134,9 @@ async function parseJsonResponse<T>(
   let raw: unknown
   try {
     raw = await response.json()
-  } catch {
-    throw new ApiClientError(messages.malformed, {
+  } catch (err) {
+    if (isAbortError(err)) throw err
+    throw new ApiClientError(messages.unreadable, {
       code: 'MALFORMED_RESPONSE',
       status: response.status,
     })
@@ -142,13 +144,42 @@ async function parseJsonResponse<T>(
 
   const parsed = schema.safeParse(raw)
   if (!parsed.success) {
-    throw new ApiClientError(messages.invalid, {
-      code: messages.invalidCode ?? 'INVALID_RESPONSE_CONTRACT',
+    throw new ApiClientError(messages.unreadable, {
+      code: 'INVALID_RESPONSE_CONTRACT',
       status: response.status,
       requestId: messages.requestId ?? null,
     })
   }
   return parsed.data
+}
+
+async function sendJsonRequest<T>(
+  url: string,
+  init: RequestInit,
+  schema: z.ZodType<T, unknown>,
+  messages: ParseMessages & { network: string; timeoutMs: number },
+): Promise<T> {
+  const controller = new AbortController()
+  const cancel = () => controller.abort()
+  const parentSignal = init.signal
+  if (parentSignal?.aborted) cancel()
+  else parentSignal?.addEventListener('abort', cancel, { once: true })
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    cancel()
+  }, messages.timeoutMs)
+
+  try {
+    const response = await sendRequest(url, { ...init, signal: controller.signal }, messages.network)
+    return await parseJsonResponse(response, schema, messages)
+  } catch (err) {
+    if (!timedOut || parentSignal?.aborted) throw err
+    throw new ApiClientError('The request timed out. Try again.', { code: 'REQUEST_TIMEOUT', status: 0 })
+  } finally {
+    clearTimeout(timer)
+    parentSignal?.removeEventListener('abort', cancel)
+  }
 }
 
 function assertRequestIdMatches(
@@ -158,7 +189,7 @@ function assertRequestIdMatches(
   status: number,
 ): void {
   if (actual !== expected) {
-    throw new ApiClientError(`${label} response request_id did not match the request.`, {
+    throw new ApiClientError(`The ${label} response belongs to a different request. Try again.`, {
       code: 'REQUEST_ID_MISMATCH',
       status,
       requestId: actual,
@@ -176,29 +207,19 @@ function snapshotForm(imageBlob: Blob, filename: string, metadata?: object): For
 }
 
 export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
-  const response = await sendRequest(
-    '/api/health',
-    { method: 'GET', signal, headers: { Accept: 'application/json' } },
-    'Unable to reach backend health endpoint.',
-  )
-  return parseJsonResponse(response, HealthResponseSchema, {
-    malformed: 'Health endpoint returned malformed JSON.',
-    invalid: 'Health response failed contract validation.',
-    invalidCode: 'INVALID_HEALTH_CONTRACT',
+  return sendJsonRequest('/api/health', { signal }, HealthResponseSchema, {
+    network: 'Unable to reach the analysis service.',
+    unreadable: 'The analysis service returned an unreadable status.',
+    timeoutMs: 8000,
   })
 }
 
 /** Lists the ElevenLabs voices available to the backend's account ('default' first). */
 export async function fetchVoices(signal?: AbortSignal): Promise<VoicesResponse> {
-  const response = await sendRequest(
-    '/api/voices',
-    { method: 'GET', signal, headers: { Accept: 'application/json' } },
-    'Unable to load ElevenLabs voices.',
-  )
-  return parseJsonResponse(response, VoicesResponseSchema, {
-    malformed: 'Voices endpoint returned malformed JSON.',
-    invalid: 'Voices response failed contract validation.',
-    invalidCode: 'INVALID_VOICES_CONTRACT',
+  return sendJsonRequest('/api/voices', { signal }, VoicesResponseSchema, {
+    network: 'Unable to reach the voice service.',
+    unreadable: 'The voice list could not be read. Try again.',
+    timeoutMs: 15_000,
   })
 }
 
@@ -210,14 +231,13 @@ export async function analyzeSnapshot(
   const response = await sendRequest(
     '/api/analyze',
     { method: 'POST', body: snapshotForm(imageBlob, 'snapshot.jpg', metadata), signal },
-    'Network error while sending board snapshot for analysis.',
+    'The board image could not be sent. Check your connection.',
   )
   const parsed = await parseJsonResponse(response, AnalysisResponseSchema, {
-    malformed: 'Analysis response was not valid JSON.',
-    invalid: 'Analysis response failed schema validation.',
+    unreadable: 'The board check returned an unreadable result. Try again.',
     requestId: metadata.request_id,
   })
-  assertRequestIdMatches('Analysis', metadata.request_id, parsed.request_id, response.status)
+  assertRequestIdMatches('board check', metadata.request_id, parsed.request_id, response.status)
 
   return {
     ...parsed,
@@ -229,15 +249,16 @@ export async function detectBoardCorners(
   imageBlob: Blob,
   signal?: AbortSignal,
 ): Promise<BoardDetectionResponse> {
-  const response = await sendRequest(
+  return sendJsonRequest(
     '/api/detect-board',
     { method: 'POST', body: snapshotForm(imageBlob, 'frame.jpg'), signal },
-    'Network error while detecting board corners.',
+    BoardDetectionResponseSchema,
+    {
+      network: 'Unable to reach the board detection service.',
+      unreadable: 'The detected board corners could not be read. Try again.',
+      timeoutMs: 15_000,
+    },
   )
-  return parseJsonResponse(response, BoardDetectionResponseSchema, {
-    malformed: 'Board detection response was not valid JSON.',
-    invalid: 'Board detection response failed schema validation.',
-  })
 }
 
 export interface SpeechStreamOptions {
@@ -259,17 +280,16 @@ export async function requestSpeechStream(
       headers: {
         'Content-Type': 'application/json',
         Accept: 'audio/mpeg',
-        ...SESSION_HEADERS,
       },
       body: JSON.stringify(body),
       signal,
     },
-    'Network error while requesting speech audio.',
+    'The voice service could not be reached. Check your connection.',
   )
 
   const contentType = (response.headers.get('Content-Type') ?? '').toLowerCase()
   if (!contentType.startsWith('audio/')) {
-    throw new ApiClientError('Speech endpoint did not return audio content.', {
+    throw new ApiClientError('The voice service did not return playable audio.', {
       code: 'INVALID_SPEECH_RESPONSE',
       status: response.status,
     })
@@ -284,16 +304,17 @@ export async function requestNotesUpdate(
   metadata: NotesMetadataPayload,
   signal?: AbortSignal,
 ): Promise<NotesResponse> {
-  const response = await sendRequest(
+  const parsed = await sendJsonRequest(
     '/api/notes',
     { method: 'POST', body: snapshotForm(imageBlob, 'notes-snapshot.jpg', metadata), signal },
-    'Network error while updating lecture notes.',
+    NotesResponseSchema,
+    {
+      network: 'Unable to reach the notes service.',
+      unreadable: 'The notes update could not be read. Try again.',
+      requestId: metadata.request_id,
+      timeoutMs: 60_000,
+    },
   )
-  const parsed = await parseJsonResponse(response, NotesResponseSchema, {
-    malformed: 'Notes response was not valid JSON.',
-    invalid: 'Notes response failed schema validation.',
-    requestId: metadata.request_id,
-  })
-  assertRequestIdMatches('Notes', metadata.request_id, parsed.request_id, response.status)
+  assertRequestIdMatches('notes', metadata.request_id, parsed.request_id, 200)
   return parsed
 }

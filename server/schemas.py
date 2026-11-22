@@ -106,6 +106,18 @@ class AnalysisMetadata(StrictModel):
         ),
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _discard_legacy_role(cls, data: object) -> object:
+        # Tabs opened before the speech style update can still send this field.
+        if (
+            isinstance(data, dict)
+            and "role" in data
+            and data["role"] in (None, "student", "professor")
+        ):
+            return {key: value for key, value in data.items() if key != "role"}
+        return data
+
     @field_validator("previous_board_summary")
     @classmethod
     def _validate_prev_summary(cls, value: str) -> str:
@@ -154,17 +166,21 @@ class _FindingBase(StrictModel):
     """Shared validated finding payload prior to distinguishing coordinate spaces."""
 
     category: ErrorCategory = Field(
-        description="Mistake category: math, physics, spelling, or factual (any other falsehood).",
+        description=(
+            "Use math for mathematics (including false mathematical statements), logic or code; "
+            "physics for physical science or engineering; spelling for clear spelling or grammar "
+            "errors; factual for any other demonstrably false assertion."
+        ),
     )
     detected_text: str = Field(
         min_length=1,
         max_length=MAX_DETECTED_TEXT_LENGTH,
-        description="Exact visible erroneous term, equation fragment, unit, or misspelled word.",
+        description="Exact visible erroneous span, including the whole assertion if needed.",
     )
     correction_text: str = Field(
         min_length=1,
         max_length=MAX_CORRECTION_TEXT_LENGTH,
-        description="Required plain-text readable correction without surrounding LaTeX delimiters.",
+        description="Plain-text replacement that fixes the error or states the corrected claim.",
     )
     correction_latex: str | None = Field(
         default=None,
@@ -178,19 +194,19 @@ class _FindingBase(StrictModel):
         min_length=1,
         max_length=MAX_SPOKEN_ALERT_LENGTH,
         description=(
-            "One concise natural-speech alert sentence (max 180 chars) phrasing math, exponents, "
-            "and units in plain spoken words without LaTeX markup or square-bracket tags."
+            "One short spoken sentence identifying the mistake and stating the correction. "
+            "Use spoken words for symbols and units. Put the reason in explanation."
         ),
     )
     explanation: str = Field(
         min_length=1,
         max_length=MAX_EXPLANATION_LENGTH,
-        description="One concise sentence explaining the error and correction.",
+        description="One plain-language sentence with the reason, calculation, or counterexample.",
     )
     confidence: float = Field(
         ge=0.0,
         le=1.0,
-        description="Model self-assessed confidence in [0.0, 1.0].",
+        description="Confidence in both the reading and the verified correction, from 0 to 1.",
     )
 
     @field_validator("detected_text")
@@ -291,16 +307,15 @@ class BoardAnalysisResult(StrictModel):
     board_summary: str = Field(
         max_length=MAX_BOARD_SUMMARY_LENGTH,
         description=(
-            "At most two short sentences describing currently visible work; "
+            "One short sentence describing currently visible work; "
             "empty string if the board is blank or illegible."
         ),
     )
     errors: list[DetectedError] = Field(
         max_length=MAX_FINDINGS,
         description=(
-            "List of at most 20 high-confidence demonstrable errors of any kind (math, physics, "
-            "spelling, or factual falsehoods) currently visible in the image; empty list when "
-            "none are justified."
+            "Up to 20 distinct, demonstrable mistakes from the current image, including false "
+            "written assertions; empty when none are justified."
         ),
     )
 
@@ -313,12 +328,6 @@ class BoardAnalysisResult(StrictModel):
                 f"board_summary must not exceed {MAX_BOARD_SUMMARY_LENGTH} characters."
             )
         return trimmed
-
-    @model_validator(mode="after")
-    def _validate_errors_count(self) -> BoardAnalysisResult:
-        if len(self.errors) > MAX_FINDINGS:
-            raise ValueError(f"At most {MAX_FINDINGS} errors are allowed per analysis.")
-        return self
 
 
 class AnalysisResponse(StrictModel):

@@ -87,24 +87,24 @@ export function clientPointToNormalized(
 export function validateCalibrationQuad(corners: CalibrationCorners): ValidationResult {
   for (const [x, y] of corners) {
     if (!Number.isFinite(x) || !Number.isFinite(y)) {
-      return { valid: false, reason: 'Calibration coordinates must be finite numbers.' }
+      return { valid: false, reason: 'A corner position is invalid. Reset the crop and try again.' }
     }
     if (x < 0 || x > 1000 || y < 0 || y > 1000) {
-      return { valid: false, reason: 'Calibration corners must stay inside the board frame.' }
+      return { valid: false, reason: 'Keep all four corners inside the preview.' }
     }
   }
 
   for (let i = 0; i < 4; i++) {
     const a = corners[i]
-    if (!a) return { valid: false, reason: 'Calibration requires four corners.' }
+    if (!a) return { valid: false, reason: 'Place all four corners to crop the board.' }
     for (let j = i + 1; j < 4; j++) {
       const b = corners[j]
-      if (!b) return { valid: false, reason: 'Calibration requires four corners.' }
+      if (!b) return { valid: false, reason: 'Place all four corners to crop the board.' }
       const dist = Math.hypot(a[0] - b[0], a[1] - b[1])
       if (dist < MIN_CORNER_SEPARATION_NORM) {
         return {
           valid: false,
-          reason: 'Calibration corners are too close together.',
+          reason: 'Move the corners farther apart.',
         }
       }
     }
@@ -125,14 +125,14 @@ export function validateCalibrationQuad(corners: CalibrationCorners): Validation
     if (crossZ <= 0) {
       return {
         valid: false,
-        reason: 'Corners must form a convex quad in TL, TR, BR, BL order without crossing edges.',
+        reason: 'Place the handles around the board in clockwise order, starting at the top left.',
       }
     }
     const sinTheta = crossZ / (n1 * n2)
     if (sinTheta < MIN_CORNER_SIN) {
       return {
         valid: false,
-        reason: 'Calibration corners are nearly collinear; adjust handles into a clear quad.',
+        reason: 'Three handles are nearly in a line. Move each one to a separate corner.',
       }
     }
   }
@@ -145,14 +145,14 @@ export function validateCalibrationQuad(corners: CalibrationCorners): Validation
   }
   const area = Math.abs(area2) / 2
   if (area < MIN_QUAD_AREA_NORM) {
-    return { valid: false, reason: 'Selected board area is too small.' }
+    return { valid: false, reason: 'Move the handles apart to include more of the board.' }
   }
 
   const [tl, tr, br, bl] = corners
   if (!(tr[0] > tl[0] && br[0] > bl[0] && bl[1] > tl[1] && br[1] > tr[1])) {
     return {
       valid: false,
-      reason: 'Maintain TL, TR, BR, BL orientation without swapping corners.',
+      reason: 'Keep the top handles above the bottom handles and the left handles on the left.',
     }
   }
 

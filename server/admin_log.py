@@ -22,6 +22,7 @@ import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -29,6 +30,7 @@ import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response
 from PIL import Image
+from starlette.datastructures import FormData, UploadFile
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from config import Settings
@@ -95,7 +97,10 @@ def _sign(token: str, expires: int) -> str:
 
 def token_matches(candidate: str, token: str) -> bool:
     """Constant-time token comparison (digests make lengths equal and hide length)."""
-    a = hashlib.sha256(candidate.encode()).digest()
+    try:
+        a = hashlib.sha256(candidate.encode()).digest()
+    except UnicodeEncodeError:
+        return False
     b = hashlib.sha256(token.encode()).digest()
     return hmac.compare_digest(a, b)
 
@@ -108,13 +113,13 @@ def make_session_cookie(token: str, now: float | None = None) -> str:
 def verify_session_cookie(cookie: str | None, token: str, now: float | None = None) -> bool:
     if not cookie:
         return False
-    parts = cookie.split(".")
-    if len(parts) != 3 or parts[0] != "v1" or not parts[1].isdigit():
+    match = re.fullmatch(r"v1\.([0-9]{1,12})\.([a-f0-9]{64})", cookie)
+    if match is None:
         return False
-    expires = int(parts[1])
-    if expires < (time.time() if now is None else now):
+    expires = int(match[1])
+    if expires <= (time.time() if now is None else now):
         return False
-    return hmac.compare_digest(parts[2], _sign(token, expires))
+    return hmac.compare_digest(match[2], _sign(token, expires))
 
 
 def is_authorized(request: Request, token: str) -> bool:
@@ -155,7 +160,7 @@ _KINDS = {"full": "i", "thumb": "t", "model": "m"}
 
 
 def valid_entry_id(entry_id: str) -> bool:
-    return bool(_ID_RE.match(entry_id))
+    return _ID_RE.fullmatch(entry_id) is not None
 
 
 class RedisLogStore:
@@ -176,7 +181,10 @@ class RedisLogStore:
             json=commands,
         )
         resp.raise_for_status()
-        return [item.get("result") for item in resp.json()]
+        results = resp.json()
+        if len(results) != len(commands) or any("error" in item for item in results):
+            raise RuntimeError("Admin storage command failed.")
+        return [item.get("result") for item in results]
 
     def _k(self, prefix: str, entry_id: str) -> str:
         return f"chalkolate:admin:{prefix}:{entry_id}"
@@ -208,13 +216,11 @@ class RedisLogStore:
             ["ZADD", self._idx, ts_ms, entry_id],
             ["ZREMRANGEBYSCORE", self._idx, "-inf", ts_ms - self._ttl * 1000],
             ["EXPIRE", self._idx, self._ttl],
-            ["ZCARD", self._idx],
+            ["ZRANGE", self._idx, 0, -self._max - 1],
         ]
-        card = (await self._pipe(cmds))[-1]
-        if isinstance(card, int) and card > self._max:
-            stale = (await self._pipe([["ZRANGE", self._idx, 0, card - self._max - 1]]))[0] or []
-            if stale:
-                await self._delete(stale)
+        stale = (await self._pipe(cmds))[-1]
+        if stale:
+            await self._delete(stale)
 
     async def _delete(self, ids: list[str]) -> None:
         keys = [self._k(p, i) for i in ids for p in ("s", "e", "i", "t", "m")]
@@ -253,13 +259,29 @@ class FileLogStore:
         self._root = root
         self._ttl = ttl
         self._max = max_entries
+        self._lock = Lock()
         root.mkdir(parents=True, exist_ok=True)
 
     def _entries(self) -> list[Path]:
         return sorted(self._root.glob("*.json"), reverse=True)
 
+    def _active_entries(self) -> list[Path]:
+        cutoff = (time.time() - self._ttl) * 1000
+        active: list[Path] = []
+        for path in self._entries():
+            timestamp, _, entry_id = path.stem.partition("-")
+            if len(timestamp) != 13 or not timestamp.isascii() or not timestamp.isdigit():
+                continue
+            if not valid_entry_id(entry_id):
+                continue
+            if len(active) >= self._max or int(timestamp) <= cutoff:
+                self._remove(path)
+            else:
+                active.append(path)
+        return active
+
     def _find(self, entry_id: str) -> Path | None:
-        return next(iter(self._root.glob(f"*-{entry_id}.json")), None)
+        return next((path for path in self._active_entries() if path.stem.endswith(entry_id)), None)
 
     def _put_sync(
         self,
@@ -270,14 +292,19 @@ class FileLogStore:
         images: StoredImages,
     ) -> None:
         base = self._root / f"{ts_ms:013d}-{entry_id}"
-        for kind, data in (("full", images.full), ("thumb", images.thumb), ("model", images.model)):
-            if data:
-                base.with_suffix(f".{kind}.jpg").write_bytes(data)
-        base.with_suffix(".json").write_text(json.dumps({"summary": summary, "detail": detail}))
-        cutoff = ts_ms - self._ttl * 1000
-        for i, path in enumerate(self._entries()):
-            if i >= self._max or int(path.name.split("-")[0]) < cutoff:
-                self._remove(path)
+        with self._lock:
+            try:
+                for kind in _KINDS:
+                    data = getattr(images, kind)
+                    if data:
+                        base.with_suffix(f".{kind}.jpg").write_bytes(data)
+                base.with_suffix(".json").write_text(
+                    json.dumps({"summary": summary, "detail": detail}), encoding="utf-8"
+                )
+            except OSError:
+                self._remove(base.with_suffix(".json"))
+                raise
+            self._active_entries()
 
     def _remove(self, path: Path) -> None:
         stem = path.name.removesuffix(".json")
@@ -296,31 +323,38 @@ class FileLogStore:
         await asyncio.to_thread(self._put_sync, entry_id, ts_ms, summary, detail, images)
 
     def _list_sync(self, limit: int) -> list[dict[str, Any]]:
-        return [json.loads(p.read_text())["summary"] for p in self._entries()[:limit]]
+        with self._lock:
+            return [
+                json.loads(path.read_text(encoding="utf-8"))["summary"]
+                for path in self._active_entries()[:limit]
+            ]
 
     async def list(self, limit: int) -> list[dict[str, Any]]:
         return await asyncio.to_thread(self._list_sync, limit)
 
     def _get_sync(self, entry_id: str) -> dict[str, Any] | None:
-        path = self._find(entry_id)
-        return json.loads(path.read_text()) if path else None
+        with self._lock:
+            path = self._find(entry_id)
+            return json.loads(path.read_text(encoding="utf-8")) if path else None
 
     async def get(self, entry_id: str) -> dict[str, Any] | None:
         return await asyncio.to_thread(self._get_sync, entry_id)
 
     def _image_sync(self, entry_id: str, kind: str) -> bytes | None:
-        path = self._find(entry_id)
-        if not path:
-            return None
-        img = path.with_suffix(f".{kind}.jpg")
-        return img.read_bytes() if img.exists() else None
+        with self._lock:
+            path = self._find(entry_id)
+            if not path:
+                return None
+            img = path.with_suffix(f".{kind}.jpg")
+            return img.read_bytes() if img.exists() else None
 
     async def image(self, entry_id: str, kind: str) -> bytes | None:
         return await asyncio.to_thread(self._image_sync, entry_id, kind)
 
     def _clear_sync(self) -> None:
-        for path in self._entries():
-            self._remove(path)
+        with self._lock:
+            for path in self._active_entries():
+                self._remove(path)
 
     async def clear(self) -> None:
         await asyncio.to_thread(self._clear_sync)
@@ -363,15 +397,17 @@ def _jpeg(img: Image.Image, long_edge: int, quality: int) -> bytes:
 
 
 def fit_image(
-    raw: bytes, max_bytes: int
+    raw: bytes, max_bytes: int, max_pixels: int
 ) -> tuple[bytes | None, bytes | None, tuple[int, int] | None]:
     """Return (full-size-capped bytes, thumbnail, original size); full is re-encoded if too big."""
     try:
         with Image.open(io.BytesIO(raw)) as img:
             size = img.size
+            if size[0] * size[1] > max_pixels:
+                return None, None, size
             img.load()
             thumb = _jpeg(img, THUMB_LONG_EDGE, 70)
-            if len(raw) <= max_bytes:
+            if img.format == "JPEG" and len(raw) <= max_bytes:
                 return raw, thumb, size
             edge = 1400
             while edge >= 400:
@@ -384,17 +420,13 @@ def fit_image(
         return None, None, None
 
 
-def cap_bytes(data: bytes, max_bytes: int) -> bytes | None:
-    return data if len(data) <= max_bytes else fit_image(data, max_bytes)[0]
-
-
 # --------------------------------------------------------------------------- middleware
 
 
 def _parse_json(raw: bytes) -> Any:
     try:
         return json.loads(raw)
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
 
 
@@ -503,23 +535,29 @@ class AdminLogMiddleware:
         if "multipart/form-data" in ctype and body and not truncated:
             form = await self._replay_form(scope, body)
             if form is not None:
-                raw_meta = form.get("metadata")
-                if isinstance(raw_meta, str):
-                    metadata = _parse_json(raw_meta.encode()) or raw_meta[:MAX_TEXT_FIELD_CHARS]
-                upload = form.get("image")
-                if upload is not None and hasattr(upload, "read"):
-                    raw = await upload.read()
-                    full, thumb, size = await asyncio.to_thread(
-                        fit_image, raw, self.settings.admin_log_max_image_bytes
-                    )
-                    images = StoredImages(full=full, thumb=thumb)
-                    image_info = {
-                        "bytes": len(raw),
-                        "width": size[0] if size else None,
-                        "height": size[1] if size else None,
-                        "stored": full is not None,
-                        "content_type": getattr(upload, "content_type", None),
-                    }
+                try:
+                    raw_meta = form.get("metadata")
+                    if isinstance(raw_meta, str):
+                        metadata = _parse_json(raw_meta.encode()) or raw_meta[:MAX_TEXT_FIELD_CHARS]
+                    upload = form.get("image")
+                    if isinstance(upload, UploadFile):
+                        raw = await upload.read()
+                        full, thumb, size = await asyncio.to_thread(
+                            fit_image,
+                            raw,
+                            self.settings.admin_log_max_image_bytes,
+                            self.settings.max_image_pixels,
+                        )
+                        images = StoredImages(full=full, thumb=thumb)
+                        image_info = {
+                            "bytes": len(raw),
+                            "width": size[0] if size else None,
+                            "height": size[1] if size else None,
+                            "stored": full is not None,
+                            "content_type": upload.content_type,
+                        }
+                finally:
+                    await form.close()
         elif "json" in ctype and body:
             speech_body = _parse_json(body)
 
@@ -533,11 +571,14 @@ class AdminLogMiddleware:
         err_msg = parsed_resp.get("message") if isinstance(parsed_resp, dict) else None
         model_image = scope.get("state", {}).get("admin_model_image")
         if isinstance(model_image, bytes):
-            images = StoredImages(
-                images.full,
-                images.thumb,
-                cap_bytes(model_image, self.settings.admin_log_max_image_bytes),
-            )
+            if len(model_image) > self.settings.admin_log_max_image_bytes:
+                model_image, _, _ = await asyncio.to_thread(
+                    fit_image,
+                    model_image,
+                    self.settings.admin_log_max_image_bytes,
+                    self.settings.max_image_pixels,
+                )
+            images = StoredImages(images.full, images.thumb, model_image)
 
         entry_id = uuid4().hex
         now_ms = int(time.time() * 1000)
@@ -556,7 +597,10 @@ class AdminLogMiddleware:
         ]
         if isinstance(findings, list):
             search_bits += [
-                f.get("text") or f.get("explanation") for f in findings if isinstance(f, dict)
+                f.get(field)
+                for f in findings
+                if isinstance(f, dict)
+                for field in ("detected_text", "correction_text", "explanation")
             ]
         if isinstance(speech_body, dict):
             search_bits.append(speech_body.get("text"))
@@ -623,7 +667,7 @@ class AdminLogMiddleware:
             entry_id, now_ms, redact(summary, self._secrets), redact(detail, self._secrets), images
         )
 
-    async def _replay_form(self, scope: Scope, body: bytes) -> Any:
+    async def _replay_form(self, scope: Scope, body: bytes) -> FormData | None:
         sent = False
 
         async def replay() -> Message:
@@ -641,7 +685,7 @@ class AdminLogMiddleware:
 
 # --------------------------------------------------------------------------- router
 
-_NO_STORE = {"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow"}
+_NO_STORE = {"Cache-Control": "no-store, private", "X-Robots-Tag": "noindex, nofollow"}
 
 
 def _json(status: int, payload: Any) -> JSONResponse:
@@ -670,7 +714,7 @@ def build_admin_router(
             return resp
         try:
             payload = await request.json()
-        except ValueError:
+        except (ValueError, RecursionError):
             payload = None
         candidate = payload.get("token") if isinstance(payload, dict) else None
         if not isinstance(candidate, str) or not token_matches(candidate, token):

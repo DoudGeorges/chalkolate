@@ -47,6 +47,10 @@ class SpeechConfigError(SpeechError):
     """Raised when ElevenLabs speech synthesis is unconfigured or invalid."""
 
 
+class SpeechTextError(SpeechError):
+    """Raised when the provided text has no speakable characters."""
+
+
 class SpeechAuthError(SpeechError):
     """Raised when ElevenLabs rejects the backend API key or voice permissions."""
 
@@ -178,8 +182,8 @@ class OpenedSpeechStream:
     response: httpx.Response
     media_type: str = "audio/mpeg"
 
-    async def iter_chunks(self, chunk_size: int = 8192) -> AsyncIterator[bytes]:
-        async for chunk in self.response.aiter_bytes(chunk_size=chunk_size):
+    async def iter_chunks(self) -> AsyncIterator[bytes]:
+        async for chunk in self.response.aiter_bytes():
             if chunk:
                 yield chunk
 
@@ -201,7 +205,7 @@ def _extract_error_tags(body_bytes: bytes) -> tuple[str | None, str | None]:
         return None, None
     try:
         parsed = json.loads(body_bytes.decode("utf-8", errors="ignore"))
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
         return None, None
     if not isinstance(parsed, dict):
         return None, None
@@ -223,30 +227,28 @@ async def _raise_upstream_error(response: httpx.Response, operation: str) -> Non
     """Close a failed ElevenLabs response and raise a typed error without leaking its body."""
     status_code = response.status_code
     retry_after_s = _parse_retry_after(response.headers)
-    detail_code: str | None = None
-    detail_status: str | None = None
+    body = bytearray()
     try:
-        body_bytes = await response.aread()
-        detail_code, detail_status = _extract_error_tags(body_bytes[:4096])
+        async for chunk in response.aiter_bytes():
+            body.extend(chunk[: 4096 - len(body)])
+            if len(body) >= 4096:
+                break
+    except httpx.HTTPError:
+        pass  # The HTTP status still provides enough information to classify the failure.
     finally:
         await response.aclose()
 
-    logger.warning(
-        "ElevenLabs %s upstream failure status=%s code=%s tag=%s",
-        operation,
-        status_code,
-        detail_code or "unknown",
-        detail_status or "unknown",
-    )
+    detail_code, detail_status = _extract_error_tags(bytes(body))
+    logger.warning("ElevenLabs %s upstream failure status=%s", operation, status_code)
 
     if status_code in (401, 403):
         raise SpeechAuthError("ElevenLabs credentials or voice permissions were rejected.")
     if detail_code == "quota_exceeded" or detail_status == "quota_exceeded":
         raise SpeechQuotaError(
-            "ElevenLabs character quota exceeded; falling back to browser voice.",
+            "ElevenLabs character quota exceeded.",
             retry_after_s=retry_after_s or 60,
         )
-    if status_code == 402 or detail_code == "paid_plan_required":
+    if status_code == 402 or "paid_plan_required" in (detail_code, detail_status):
         raise SpeechPlanError(
             "Configured ElevenLabs voice requires a paid plan; choose another voice or upgrade."
         )
@@ -305,7 +307,7 @@ def parse_voice_catalog(payload: object) -> list[ElevenLabsVoice]:
         voice_id = raw.get("voice_id")
         if not isinstance(voice_id, str) or not VOICE_ID_PATTERN.fullmatch(voice_id):
             continue
-        if voice_id in seen:
+        if voice_id == DEFAULT_VOICE_KEY or voice_id in seen:
             continue
         seen.add(voice_id)
         voices.append(ElevenLabsVoice(voice_id=voice_id, label=_voice_label(raw)))
@@ -344,11 +346,15 @@ async def fetch_elevenlabs_voices(
         await _raise_upstream_error(response, "voices")
     try:
         body = await response.aread()
+    except httpx.TimeoutException as exc:
+        raise SpeechTimeoutError("ElevenLabs voice list request timed out.") from exc
+    except httpx.HTTPError as exc:
+        raise SpeechUnavailableError("Speech provider connection failed.") from exc
     finally:
         await response.aclose()
     try:
         payload = json.loads(body.decode("utf-8", errors="ignore"))
-    except json.JSONDecodeError as exc:
+    except (ValueError, RecursionError) as exc:
         raise SpeechProviderError("ElevenLabs returned an unexpected voice list.") from exc
     return parse_voice_catalog(payload)
 
@@ -377,7 +383,7 @@ class VoiceCatalog:
             if self._voices is not None and now - self._fetched_at < self._ttl_seconds:
                 return self._voices
             self._voices = await fetch_elevenlabs_voices(client, settings)
-            self._fetched_at = now
+            self._fetched_at = self._clock()
             return self._voices
 
     async def contains(
@@ -405,7 +411,7 @@ async def open_elevenlabs_speech_stream(
     try:
         prepared_text = prepare_spoken_text(text)
     except ValueError as exc:
-        raise SpeechProviderError("Speech text is empty after sanitization.") from exc
+        raise SpeechTextError("Enter text that can be read aloud.") from exc
 
     url = (
         f"{ELEVENLABS_BASE_URL}/text-to-speech/{voice_id}/stream"
@@ -447,5 +453,8 @@ async def open_elevenlabs_speech_stream(
 
     if response.status_code != 200:
         await _raise_upstream_error(response, "TTS")
+    if not response.headers.get("content-type", "").lower().startswith("audio/"):
+        await response.aclose()
+        raise SpeechProviderError("Speech provider did not return audio.")
 
     return OpenedSpeechStream(response=response, media_type="audio/mpeg")

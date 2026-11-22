@@ -13,7 +13,8 @@ export const metadata: Metadata = {
 export default async function AdminPage() {
   await connection()
   const enabled =
-    process.env['ADMIN_DEBUG_LOGGING'] === '1' && (process.env['ADMIN_TOKEN'] ?? '').length >= 16
+    process.env['ADMIN_DEBUG_LOGGING']?.trim() === '1' &&
+    (process.env['ADMIN_TOKEN'] ?? '').trim().length >= 16
   if (!enabled) notFound()
   return <AdminApp />
 }

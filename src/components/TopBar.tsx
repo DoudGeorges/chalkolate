@@ -1,132 +1,127 @@
-import { ArrowLeft, Crop, FileText, Play, Settings, Square } from 'lucide-react'
+import { Crop, LoaderCircle, NotebookPen, Play, SlidersHorizontal, Square } from 'lucide-react'
+import { useEffect, useRef } from 'react'
+import { Brand } from './Brand'
 
 export interface TopBarProps {
-  mediaReady: boolean
+  starting: boolean
   monitoring: boolean
   onToggleMonitoring: () => void
-  /** Landing page: hide Start/Stop so the welcome guide is the one path. */
   onboarding?: boolean
-  /** Close the current source and return to the welcome guide (shown when not onboarding). */
-  onGoHome?: () => void
+  onGoHome: () => void
   notesOpen: boolean
   notesCount: number
-  /** Notes are being built automatically right now. */
-  notesActive: boolean
   settingsOpen: boolean
   onToggleSettings: () => void
   onToggleNotes: () => void
-  /** Show the crop control (a ready camera/video source; not screen shares). */
   canCrop: boolean
   cropped: boolean
+  calibrationEditing: boolean
   onToggleCrop: () => void
 }
+
 export function TopBar({
-  mediaReady,
+  starting,
   monitoring,
   onToggleMonitoring,
   onboarding = false,
   onGoHome,
   notesOpen,
   notesCount,
-  notesActive,
   settingsOpen,
   onToggleSettings,
   onToggleNotes,
   canCrop,
   cropped,
+  calibrationEditing,
   onToggleCrop,
 }: TopBarProps) {
+  const cropLabel = calibrationEditing ? 'Cancel crop' : cropped ? 'Adjust crop' : 'Crop board'
+  const startButton = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (!onboarding) startButton.current?.focus({ preventScroll: true })
+  }, [onboarding])
+
   return (
-    <header className="relative z-40 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-line bg-white px-4">
-      {/* Left: wordmark + way back to the landing page once a source is live */}
-      <div className="flex min-w-0 items-center gap-3">
-        <span className="font-chalk text-xl leading-none text-zinc-900 select-none">
-          Chalkolate
-        </span>
-        {!onboarding && onGoHome && (
+    <header className="relative z-40 shrink-0 border-b border-line bg-panel">
+      <div className="px-4 sm:px-6">
+        <div className="flex min-h-16 flex-wrap items-center justify-between gap-x-4 gap-y-2 py-2">
           <button
             type="button"
             onClick={onGoHome}
-            title="Close this source and go back to the start page"
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+            aria-label="Chalkolate home"
+            title="Return to session setup"
+            className="inline-flex -mx-1 rounded-md px-1 transition-opacity hover:opacity-80"
           >
-            <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
-            Back to start
+            <Brand />
           </button>
-        )}
-        {!onboarding && (
-          <button
-            type="button"
-            onClick={onToggleNotes}
-            aria-expanded={notesOpen}
-            aria-label="Toggle lecture notes"
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-          >
-            <FileText className="h-3.5 w-3.5" aria-hidden="true" />
-            Notes{notesCount > 0 ? ` (${notesCount})` : ''}
-            {notesActive && (
-              <span className="h-1.5 w-1.5 rounded-full bg-rose-500" aria-hidden="true" />
-            )}
-          </button>
-        )}
-      </div>
 
-      {/* Right: Crop + Start/Stop */}
-      <div className="flex items-center gap-2">
-        {!onboarding && (
-          <button
-            type="button"
-            onClick={onToggleSettings}
-            aria-expanded={settingsOpen}
-            aria-label="Toggle settings"
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-          >
-            <Settings className="h-3.5 w-3.5" aria-hidden="true" />
-            Settings
-          </button>
-        )}
-        {!onboarding && canCrop && (
-          <button
-            type="button"
-            onClick={onToggleCrop}
-            title={cropped ? 'Adjust the board crop' : 'Crop to just the board'}
-            className={`inline-flex h-8 items-center gap-1.5 rounded-lg border bg-white px-2.5 text-xs font-medium transition hover:bg-zinc-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
-              cropped ? 'border-accent text-zinc-900' : 'border-line text-zinc-700'
-            }`}
-          >
-            <Crop className="h-3.5 w-3.5" aria-hidden="true" />
-            {cropped ? 'Adjust crop' : 'Crop board'}
-          </button>
-        )}
-        {!onboarding && (
-          <button
-            type="button"
-            disabled={!mediaReady}
-            aria-pressed={monitoring}
-            title={monitoring ? 'Stop mistake checks and spoken alerts' : 'Start mistake checks'}
-            onClick={onToggleMonitoring}
-            className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium leading-none transition duration-150 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
-              monitoring
-                ? 'border border-line bg-white text-zinc-900 hover:bg-zinc-50'
-                : 'bg-accent text-white hover:brightness-105'
-            }`}
-          >
-            {monitoring ? (
-              <>
-                <Square
-                  className="h-3 w-3 shrink-0 fill-rose-500 text-rose-500"
-                  aria-hidden="true"
-                />
-                <span>Stop</span>
-              </>
-            ) : (
-              <>
-                <Play className="h-3 w-3 shrink-0 fill-current" aria-hidden="true" />
-                <span>Start</span>
-              </>
-            )}
-          </button>
-        )}
+          {!onboarding && (
+            <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
+              <button
+                type="button"
+                id="notes-toggle"
+                onClick={onToggleNotes}
+                aria-expanded={notesOpen}
+                aria-controls="lecture-notes-panel"
+                className="ui-button px-2.5 sm:px-3"
+              >
+                <NotebookPen aria-hidden="true" />
+                Notes
+                {notesCount > 0 && (
+                  <span className="ui-badge">{notesCount}<span className="sr-only">{notesCount === 1 ? ' section' : ' sections'}</span></span>
+                )}
+              </button>
+              <button
+                type="button"
+                id="settings-toggle"
+                onClick={onToggleSettings}
+                aria-label="Settings"
+                title="Settings"
+                aria-expanded={settingsOpen}
+                aria-controls="studio-settings-panel"
+                className="ui-button px-2.5 sm:px-3"
+              >
+                <SlidersHorizontal aria-hidden="true" />
+                <span className="hidden min-[360px]:inline">Settings</span>
+              </button>
+              {canCrop && (
+                <button
+                  type="button"
+                  id="crop-toggle"
+                  onClick={onToggleCrop}
+                  title={cropLabel}
+                  aria-label={cropLabel}
+                  aria-expanded={calibrationEditing}
+                  className="ui-button px-2.5 sm:px-3"
+                  data-selected={cropped}
+                >
+                  <Crop aria-hidden="true" />
+                  <span className="hidden lg:inline">{cropLabel}</span>
+                </button>
+              )}
+              <span aria-hidden="true" className="mx-1 hidden h-5 w-px bg-line sm:block" />
+              <button
+                type="button"
+                ref={startButton}
+                disabled={starting}
+                aria-busy={starting}
+                title={monitoring ? 'Stop board checks and spoken alerts' : 'Start board checks'}
+                onClick={onToggleMonitoring}
+                className="ui-button ml-auto px-2.5 sm:ml-0 sm:px-3"
+                data-variant={monitoring ? 'danger' : 'primary'}
+              >
+                {starting ? (
+                  <LoaderCircle className="animate-spin" aria-hidden="true" />
+                ) : monitoring ? (
+                  <Square className="fill-current" aria-hidden="true" />
+                ) : (
+                  <Play className="fill-current" aria-hidden="true" />
+                )}
+                {starting ? 'Starting…' : monitoring ? 'Stop' : 'Start'}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </header>
   )

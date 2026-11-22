@@ -1,10 +1,10 @@
 # Permanotes
 
-Permanotes builds lecture notes from board snapshots. It starts once the user opens a source and Gemini is configured. The notes panel has no pause or manual snapshot controls. The mistake monitor has its own Start and Stop controls.
+Permanotes builds lecture notes from board snapshots. It starts when the preview plays and Gemini is configured. The notes panel has no pause or manual snapshot controls. The mistake monitor has its own Start and Stop controls.
 
 ## Capture and requests
 
-The browser samples the board every 500 ms. It sends the first calm frame and later frames with significant changes. It retains smaller stable changes briefly and submits the retained frame if an erasure or large scene change is detected. A change of source or crop invalidates work from the previous view.
+The browser samples the board every 500 ms. It sends the first calm frame and later frames with significant changes. It retains smaller stable changes briefly and submits the retained frame if an erasure or large scene change is detected. When a video pauses, an update already in progress can still finish. Changing the source, changing the crop, or seeking invalidates work from the previous view.
 
 POST /api/notes sends an image, optional crop corners, and up to 40,000 bytes of serialized note context. Recent sections can include their full text. Older sections keep their headings as the budget fills. The model returns up to eight section updates and an optional title. The server projects figure boxes into source coordinates before the browser crops a thumbnail from the submitted frame.
 

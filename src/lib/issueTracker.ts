@@ -58,42 +58,7 @@ export const MISSES_TO_RESOLVE_CHANGED = 1
 export const MISSES_TO_RESOLVE_UNCHANGED = 2
 export const MAX_TRACKED_HISTORY = 120
 
-const CONCEPT_STOP_WORDS = new Set([
-  'the',
-  'and',
-  'for',
-  'not',
-  'with',
-  'from',
-  'that',
-  'this',
-  'have',
-  'should',
-  'instead',
-  'rather',
-  'than',
-  'error',
-  'mistake',
-  'wrong',
-  'incorrect',
-  'missing',
-  'written',
-  'equation',
-  'expression',
-  'term',
-  'value',
-  'result',
-  'gives',
-  'equals',
-  'equal',
-  'must',
-  'into',
-  'here',
-  'there',
-  'when',
-  'check',
-  'sign',
-])
+const WORD_CHAR = /[\p{L}\p{N}_]/u
 
 export function createInitialTrackerState(): IssueTrackerState {
   return {
@@ -206,73 +171,27 @@ function levenshteinSimilarity(a: string, b: string): number {
   return 1 - (prev[b.length] ?? maxLen) / maxLen
 }
 
-interface EquivalenceDescriptor {
-  category: ErrorCategory
-  box_2d: Box2D
-  compactDetected: string
-  compactCorrection: string
-  explainTokens: Set<string>
-}
-
-function extractConceptTokens(text: string): Set<string> {
-  const tokens = new Set<string>()
-  const matches = text.toLowerCase().match(/[a-z0-9^_]+/g)
-  if (!matches) return tokens
-  for (const tok of matches) {
-    if (tok.length >= 2 && !CONCEPT_STOP_WORDS.has(tok)) {
-      tokens.add(tok)
-    }
-  }
-  return tokens
-}
-
-function tokenJaccard(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 || b.size === 0) return 0
-  let intersection = 0
-  for (const item of a) {
-    if (b.has(item)) intersection++
-  }
-  const union = a.size + b.size - intersection
-  return union > 0 ? intersection / union : 0
-}
-
 function categoriesCompatible(a: ErrorCategory, b: ErrorCategory): boolean {
   if (a === b) return true
   return (a === 'math' && b === 'physics') || (a === 'physics' && b === 'math')
 }
 
 function containsNonTrivial(haystack: string, needle: string): boolean {
-  return needle.length >= 2 && haystack.includes(needle)
+  if (needle.length < 2) return false
+  for (let start = haystack.indexOf(needle); start !== -1; start = haystack.indexOf(needle, start + 1)) {
+    const end = start + needle.length
+    const cutsStart = WORD_CHAR.test(needle[0] ?? '') && WORD_CHAR.test(haystack[start - 1] ?? '')
+    const cutsEnd = WORD_CHAR.test(needle.at(-1) ?? '') && WORD_CHAR.test(haystack[end] ?? '')
+    if (!cutsStart && !cutsEnd) return true
+  }
+  return false
 }
 
 function eitherContains(a: string, b: string): boolean {
   return containsNonTrivial(a, b) || containsNonTrivial(b, a)
 }
 
-function buildDescriptor(item: {
-  category: ErrorCategory
-  box_2d: Box2D
-  detected_text: string
-  correction_text: string
-  explanation: string
-  spoken_alert: string
-}): EquivalenceDescriptor {
-  const normDet = normalizeDetectedText(item.detected_text)
-  const normCor = normalizeDetectedText(item.correction_text)
-  return {
-    category: item.category,
-    box_2d: item.box_2d,
-    compactDetected: compactDetectedText(normDet),
-    compactCorrection: compactDetectedText(normCor),
-    explainTokens: extractConceptTokens(`${item.explanation} ${item.spoken_alert}`),
-  }
-}
-
-function correctionsAlign(a: EquivalenceDescriptor, b: EquivalenceDescriptor): boolean {
-  if (a.compactCorrection === b.compactCorrection) return true
-  if (eitherContains(a.compactCorrection, b.compactCorrection)) return true
-  return levenshteinSimilarity(a.compactCorrection, b.compactCorrection) >= 0.62
-}
+type FindingIdentity = Pick<SourceSpaceDetectedError, 'category' | 'box_2d' | 'detected_text' | 'correction_text'>
 
 /**
  * Determines whether two findings describe the same conceptual mistake (e.g. a full
@@ -280,61 +199,41 @@ function correctionsAlign(a: EquivalenceDescriptor, b: EquivalenceDescriptor): b
  * that happen to share an equation or nearby region.
  */
 export function areEquivalentFindings(
-  a: {
-    category: ErrorCategory
-    box_2d: Box2D
-    detected_text: string
-    correction_text: string
-    explanation: string
-    spoken_alert: string
-  },
-  b: {
-    category: ErrorCategory
-    box_2d: Box2D
-    detected_text: string
-    correction_text: string
-    explanation: string
-    spoken_alert: string
-  },
+  a: FindingIdentity,
+  b: FindingIdentity,
 ): boolean {
   if (!categoriesCompatible(a.category, b.category)) return false
 
-  const descA = buildDescriptor(a)
-  const descB = buildDescriptor(b)
-  const iou = computeBoxIoU(descA.box_2d, descB.box_2d)
-  const containment = computeBoxContainment(descA.box_2d, descB.box_2d)
-  const sameCorr = correctionsAlign(descA, descB)
-  const detMatch =
-    eitherContains(descA.compactDetected, descB.compactDetected) ||
-    levenshteinSimilarity(descA.compactDetected, descB.compactDetected) >= 0.45
-  const explainSim = tokenJaccard(descA.explainTokens, descB.explainTokens)
+  const detectedA = normalizeDetectedText(a.detected_text)
+  const detectedB = normalizeDetectedText(b.detected_text)
+  const correctionA = normalizeDetectedText(a.correction_text)
+  const correctionB = normalizeDetectedText(b.correction_text)
+  const sameCorrection = compactDetectedText(correctionA) === compactDetectedText(correctionB)
+  const iou = computeBoxIoU(a.box_2d, b.box_2d)
+  const containment = computeBoxContainment(a.box_2d, b.box_2d)
 
   // Overlapping or nested boxes (e.g. full equation enclosing wrong RHS or LHS).
   if (iou >= 0.45 || containment >= 0.65) {
-    if (sameCorr && (detMatch || explainSim >= 0.25)) return true
-    if (descA.compactCorrection === descB.compactCorrection && descA.compactCorrection.length >= 2) {
-      return true
-    }
-    return false
+    const sameTarget = compactDetectedText(detectedA) === compactDetectedText(detectedB)
+    return (sameTarget || eitherContains(detectedA, detectedB)) &&
+      (sameCorrection || eitherContains(correctionA, correctionB))
   }
 
   // Same-line adjacent boxes (e.g. LHS and RHS of the same incorrect equation).
-  if (sameLineAdjacent(descA.box_2d, descB.box_2d)) {
-    if (!sameCorr) return false
-    if (explainSim >= 0.25) return true
-    // One box highlights an unchanged side whose own correction already includes it.
-    const aIsUnchangedSide = containsNonTrivial(descA.compactCorrection, descA.compactDetected)
-    const bIsUnchangedSide = containsNonTrivial(descB.compactCorrection, descB.compactDetected)
-    if (aIsUnchangedSide !== bIsUnchangedSide) return true
+  if (sameCorrection && sameLineAdjacent(a.box_2d, b.box_2d)) {
+    // Group duplicate equation sides only when one side is kept in their shared replacement.
+    const aIsUnchangedSide = containsNonTrivial(correctionA, detectedA)
+    const bIsUnchangedSide = containsNonTrivial(correctionB, detectedB)
+    return aIsUnchangedSide !== bIsUnchangedSide
   }
 
   return false
 }
 
 function isUnchangedSideHighlight(finding: SourceSpaceDetectedError): boolean {
-  const det = compactDetectedText(normalizeDetectedText(finding.detected_text))
-  const cor = compactDetectedText(normalizeDetectedText(finding.correction_text))
-  return det.length >= 2 && cor.length > det.length && cor.includes(det)
+  const det = normalizeDetectedText(finding.detected_text)
+  const cor = normalizeDetectedText(finding.correction_text)
+  return cor.length > det.length && containsNonTrivial(cor, det)
 }
 
 function hasClearBoxDimensions(box: Box2D): boolean {
@@ -379,32 +278,14 @@ export function deduplicateFindings(
 ): SourceSpaceDetectedError[] {
   if (findings.length <= 1) return [...findings]
 
-  const visited = new Array<boolean>(findings.length).fill(false)
-  const consolidated: SourceSpaceDetectedError[] = []
-
-  for (let i = 0; i < findings.length; i++) {
-    if (visited[i]) continue
-    visited[i] = true
-    const cluster: SourceSpaceDetectedError[] = [findings[i]!]
-    const queue: number[] = [i]
-
-    while (queue.length > 0) {
-      const currIdx = queue.shift()!
-      const curr = findings[currIdx]!
-      for (let j = 0; j < findings.length; j++) {
-        if (visited[j]) continue
-        if (areEquivalentFindings(curr, findings[j]!)) {
-          visited[j] = true
-          cluster.push(findings[j]!)
-          queue.push(j)
-        }
-      }
-    }
-
-    consolidated.push(pickPreferredClusterFinding(cluster))
+  const clusters: SourceSpaceDetectedError[][] = []
+  for (const finding of findings) {
+    // A wide box can overlap several unrelated mistakes. Require each pair to agree.
+    const cluster = clusters.find((items) => items.every((item) => areEquivalentFindings(item, finding)))
+    if (cluster) cluster.push(finding)
+    else clusters.push([finding])
   }
-
-  return consolidated
+  return clusters.map(pickPreferredClusterFinding)
 }
 
 function generateLocalUuid(): string {

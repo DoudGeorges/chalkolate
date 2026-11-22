@@ -87,7 +87,7 @@ export interface UseNotesBuilderOptions {
   mediaSource: MediaFrameSource | null
   mediaReady: boolean
   sourceGeneration: number
-  /** User toggle for "record notes"; independent of mistake monitoring. */
+  /** Whether automatic notes are available from the backend. */
   enabled: boolean
   calibrationEditing: boolean
   committedCorners: CalibrationCorners | null
@@ -132,8 +132,9 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
   notesRef.current = notes
   const [phase, setPhase] = useState<NotesPhase>('idle')
   const [error, setError] = useState<string | null>(null)
-  const runtimeRef = useRef({ mediaSource, mediaReady, committedCorners, enabled, calibrationEditing })
-  runtimeRef.current = { mediaSource, mediaReady, committedCorners, enabled, calibrationEditing }
+  const runtime = { mediaSource, mediaReady, sourceGeneration, committedCorners, enabled, calibrationEditing }
+  const runtimeRef = useRef(runtime)
+  runtimeRef.current = runtime
 
   const sessionGenRef = useRef(0)
   const detectorRef = useRef<DetectorState>(createDetectorState())
@@ -161,6 +162,7 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
   }
 
   const commitNotes = useCallback((next: NotesDocument) => {
+    if (notesRef.current === next) return
     notesRef.current = next
     setNotes(next)
     depsRef.current.persist(next)
@@ -174,21 +176,27 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
       const request = { controller, sample: item.sample, startedAt: d.now() }
       inFlightRef.current = request
       setPhase('building')
-      const corners = runtimeRef.current.committedCorners
+      const { committedCorners, sourceGeneration } = runtimeRef.current
+      const ownsRequest = () => {
+        const current = runtimeRef.current
+        return !controller.signal.aborted && gen === sessionGenRef.current &&
+          current.enabled && !current.calibrationEditing &&
+          current.sourceGeneration === sourceGeneration && current.committedCorners === committedCorners
+      }
       const metadata: NotesMetadataPayload = {
         request_id: d.createUuid(),
         sections: buildNotesContext(notesRef.current.sections),
-        corners,
+        corners: committedCorners,
       }
       try {
         const response = await d.requestNotes(item.blob, metadata, controller.signal)
-        if (controller.signal.aborted || gen !== sessionGenRef.current) return
+        if (!ownsRequest()) return
         // One crop per flagged update, taken from the exact frame the model saw.
         const figures = new Map<string, string | null>()
         for (const u of response.updates) {
           if (!u.has_figure) continue
           figures.set(u.id, await d.makeThumbnail(item.blob, u.figure_box_2d))
-          if (controller.signal.aborted || gen !== sessionGenRef.current) return
+          if (!ownsRequest()) return
         }
         const now = d.now()
         commitNotes(applyNotesUpdate(notesRef.current, response, figures, now))
@@ -200,23 +208,23 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
         backoffUntilRef.current = 0
         setError(null)
       } catch (err) {
-        if (controller.signal.aborted || gen !== sessionGenRef.current) return
-        if (isAbortError(err)) return
+        if (!ownsRequest() || isAbortError(err)) return
         const retryMs =
           err instanceof ApiClientError && err.retryAfterSeconds !== null
             ? err.retryAfterSeconds * 1000
             : FAILURE_BACKOFF_MS
         backoffUntilRef.current = d.now() + retryMs
-        setError(err instanceof Error && err.message ? err.message : 'Notes update failed.')
+        pendingRef.current ??= item
+        setError(err instanceof Error && err.message ? err.message : 'The notes could not be updated.')
       } finally {
         if (inFlightRef.current === request) {
           inFlightRef.current = null
           const next = pendingRef.current
-          if (next && gen === sessionGenRef.current && d.now() >= backoffUntilRef.current) {
+          const rt = runtimeRef.current
+          if (next && ownsRequest() && rt.mediaReady && d.now() >= backoffUntilRef.current) {
             pendingRef.current = null
             submitRef.current(next)
           } else {
-            const rt = runtimeRef.current
             setPhase(rt.enabled && rt.mediaReady && !rt.calibrationEditing ? 'watching' : 'idle')
           }
         }
@@ -238,15 +246,13 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
   )
   submitRef.current = submit
 
-  const captureCurrent = useCallback(async (): Promise<Captured | null> => {
+  const captureCurrent = useCallback(async (sample: GrayscaleSample): Promise<Captured | null> => {
     const rt = runtimeRef.current
     if (!rt.mediaSource || !rt.mediaReady || rt.calibrationEditing || capturingRef.current) return null
     capturingRef.current = true
     const d = depsRef.current
     const gen = sessionGenRef.current
     try {
-      const sample = d.sampleFrame(rt.mediaSource, canvas(sampleCanvasRef))
-      if (!sample) return null
       const { blob } = await d.captureSnapshot(rt.mediaSource, canvas(captureCanvasRef))
       return gen === sessionGenRef.current ? { blob, sample } : null
     } catch {
@@ -271,6 +277,7 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
     backoffUntilRef.current = 0
     calmTicksRef.current = 0
     detectorRef.current = createDetectorState()
+    setError(null)
     const rt = runtimeRef.current
     setPhase(rt.enabled && rt.mediaReady && !rt.calibrationEditing ? 'watching' : 'idle')
   }, [cancelWork])
@@ -340,9 +347,10 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
       return
     }
     const gen = sessionGenRef.current
-    void captureCurrent().then((captured) => {
+    void captureCurrent(sample).then((captured) => {
       const current = runtimeRef.current
-      if (!captured || gen !== sessionGenRef.current || !current.enabled || current.calibrationEditing) return
+      if (!captured || gen !== sessionGenRef.current || !current.enabled || current.calibrationEditing ||
+          current.sourceGeneration !== rt.sourceGeneration || current.committedCorners !== rt.committedCorners) return
       if (action === 'capture_stable') {
         stableRef.current = { ...captured, capturedAt: d.now() }
       } else if (action === 'send_now') {
@@ -353,11 +361,16 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
   }, [captureCurrent, cornersKey, submit])
 
   useEffect(() => {
-    if (!enabled || !mediaReady || calibrationEditing) {
+    if (!enabled || calibrationEditing) {
       cancelWork()
       stableRef.current = null
       calmTicksRef.current = 0
       setPhase('idle')
+      return
+    }
+    if (!mediaReady) {
+      calmTicksRef.current = 0
+      setPhase(inFlightRef.current ? 'building' : 'idle')
       return
     }
     setPhase((prev) => (prev === 'building' ? prev : 'watching'))
@@ -368,17 +381,10 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
 
   useEffect(() => cancelWork, [cancelWork])
 
-  const snapshotNow = useCallback(async () => {
-    const gen = sessionGenRef.current
-    const captured = await captureCurrent()
-    if (captured && gen === sessionGenRef.current) submitRef.current(captured)
-  }, [captureCurrent])
-
   const clear = useCallback(() => {
     resetTracking()
-    setError(null)
     commitNotes(createEmptyNotes())
   }, [commitNotes, resetTracking])
 
-  return { notes, phase, error, snapshotNow, clear }
+  return { notes, phase, error, resetTracking, clear }
 }

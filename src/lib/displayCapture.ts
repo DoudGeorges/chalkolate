@@ -12,7 +12,7 @@
  */
 
 export const SELF_CAPTURE_MESSAGE =
-  'You shared Chalkolate itself, which would show the app inside the app. Share the lecture window, tab, or screen instead.'
+  'Choose the lecture window, tab, or screen to avoid capturing the Chalkolate preview.'
 
 /** `getDisplayMedia` options newer than lib.dom typings; unsupported keys are ignored by browsers. */
 export type DisplayMediaOptionsWithHints = DisplayMediaStreamOptions & {
