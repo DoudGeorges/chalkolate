@@ -1,3 +1,5 @@
+import { z } from 'zod'
+import { isAbortError } from '../lib/abort'
 import {
   AnalysisMetadataPayload,
   AnalysisResponse,
@@ -51,14 +53,11 @@ async function parseErrorResponse(response: Response): Promise<ApiClientError> {
   try {
     raw = await response.json()
   } catch {
-    return new ApiClientError(
-      `Server returned HTTP ${response.status}.`,
-      {
-        code: 'HTTP_ERROR',
-        status: response.status,
-        retryAfterSeconds,
-      },
-    )
+    return new ApiClientError(`Server returned HTTP ${response.status}.`, {
+      code: 'HTTP_ERROR',
+      status: response.status,
+      retryAfterSeconds,
+    })
   }
 
   const parsed = ErrorEnvelopeSchema.safeParse(raw)
@@ -88,46 +87,103 @@ const SESSION_ID =
     : Math.random().toString(16).slice(2)
 const SESSION_HEADERS = { 'X-Chalkolate-Session': SESSION_ID }
 
-export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
+/**
+ * Sends one API request and returns the successful response. Responses are per-user data, so
+ * the browser HTTP cache is bypassed (the backend also replies `Cache-Control: no-store`).
+ */
+async function sendRequest(
+  url: string,
+  init: RequestInit,
+  networkErrorMessage: string,
+): Promise<Response> {
   let response: Response
   try {
-    response = await fetch('/api/health', {
-      method: 'GET',
-      signal,
-      headers: { Accept: 'application/json', ...SESSION_HEADERS },
+    response = await fetch(url, {
+      ...init,
+      cache: 'no-store',
+      headers: { ...(init.headers as Record<string, string> | undefined), ...SESSION_HEADERS },
     })
   } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
+    if (isAbortError(err)) {
       throw err
     }
-    throw new ApiClientError('Unable to reach backend health endpoint.', {
-      code: 'NETWORK_ERROR',
-      status: 0,
-    })
+    throw new ApiClientError(networkErrorMessage, { code: 'NETWORK_ERROR', status: 0 })
   }
 
   if (!response.ok) {
     throw await parseErrorResponse(response)
   }
+  return response
+}
 
+interface ParseMessages {
+  malformed: string
+  invalid: string
+  invalidCode?: string
+  requestId?: string
+}
+
+async function parseJsonResponse<T>(
+  response: Response,
+  schema: z.ZodType<T>,
+  messages: ParseMessages,
+): Promise<T> {
   let raw: unknown
   try {
     raw = await response.json()
   } catch {
-    throw new ApiClientError('Health endpoint returned malformed JSON.', {
+    throw new ApiClientError(messages.malformed, {
       code: 'MALFORMED_RESPONSE',
       status: response.status,
     })
   }
 
-  const parsed = HealthResponseSchema.safeParse(raw)
+  const parsed = schema.safeParse(raw)
   if (!parsed.success) {
-    throw new ApiClientError('Health response failed contract validation.', {
-      code: 'INVALID_HEALTH_CONTRACT',
+    throw new ApiClientError(messages.invalid, {
+      code: messages.invalidCode ?? 'INVALID_RESPONSE_CONTRACT',
       status: response.status,
+      requestId: messages.requestId ?? null,
     })
   }
   return parsed.data
+}
+
+function assertRequestIdMatches(
+  label: string,
+  expected: string,
+  actual: string,
+  status: number,
+): void {
+  if (actual !== expected) {
+    throw new ApiClientError(`${label} response request_id did not match the request.`, {
+      code: 'REQUEST_ID_MISMATCH',
+      status,
+      requestId: actual,
+    })
+  }
+}
+
+function snapshotForm(imageBlob: Blob, filename: string, metadata?: object): FormData {
+  const formData = new FormData()
+  formData.append('image', imageBlob, filename)
+  if (metadata !== undefined) {
+    formData.append('metadata', JSON.stringify(metadata))
+  }
+  return formData
+}
+
+export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
+  const response = await sendRequest(
+    '/api/health',
+    { method: 'GET', signal, headers: { Accept: 'application/json' } },
+    'Unable to reach backend health endpoint.',
+  )
+  return parseJsonResponse(response, HealthResponseSchema, {
+    malformed: 'Health endpoint returned malformed JSON.',
+    invalid: 'Health response failed contract validation.',
+    invalidCode: 'INVALID_HEALTH_CONTRACT',
+  })
 }
 
 export async function analyzeSnapshot(
@@ -135,61 +191,20 @@ export async function analyzeSnapshot(
   metadata: AnalysisMetadataPayload,
   signal?: AbortSignal,
 ): Promise<AnalysisResponse> {
-  const formData = new FormData()
-  formData.append('image', imageBlob, 'snapshot.jpg')
-  formData.append('metadata', JSON.stringify(metadata))
-
-  let response: Response
-  try {
-    response = await fetch('/api/analyze', {
-      method: 'POST',
-      body: formData,
-      signal,
-      headers: SESSION_HEADERS,
-    })
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      throw err
-    }
-    throw new ApiClientError('Network error while sending board snapshot for analysis.', {
-      code: 'NETWORK_ERROR',
-      status: 0,
-    })
-  }
-
-  if (!response.ok) {
-    throw await parseErrorResponse(response)
-  }
-
-  let raw: unknown
-  try {
-    raw = await response.json()
-  } catch {
-    throw new ApiClientError('Analysis response was not valid JSON.', {
-      code: 'MALFORMED_RESPONSE',
-      status: response.status,
-    })
-  }
-
-  const parsed = AnalysisResponseSchema.safeParse(raw)
-  if (!parsed.success) {
-    throw new ApiClientError('Analysis response failed schema validation.', {
-      code: 'INVALID_RESPONSE_CONTRACT',
-      status: response.status,
-      requestId: metadata.request_id,
-    })
-  }
-
-  if (parsed.data.request_id !== metadata.request_id) {
-    throw new ApiClientError('Analysis response request_id did not match the request.', {
-      code: 'REQUEST_ID_MISMATCH',
-      status: response.status,
-      requestId: parsed.data.request_id,
-    })
-  }
+  const response = await sendRequest(
+    '/api/analyze',
+    { method: 'POST', body: snapshotForm(imageBlob, 'snapshot.jpg', metadata), signal },
+    'Network error while sending board snapshot for analysis.',
+  )
+  const parsed = await parseJsonResponse(response, AnalysisResponseSchema, {
+    malformed: 'Analysis response was not valid JSON.',
+    invalid: 'Analysis response failed schema validation.',
+    requestId: metadata.request_id,
+  })
+  assertRequestIdMatches('Analysis', metadata.request_id, parsed.request_id, response.status)
 
   return {
-    ...parsed.data,
+    ...parsed,
     incomplete: response.headers.get('X-Chalkolate-Partial-Analysis') === '1',
   }
 }
@@ -198,59 +213,24 @@ export async function detectBoardCorners(
   imageBlob: Blob,
   signal?: AbortSignal,
 ): Promise<BoardDetectionResponse> {
-  const formData = new FormData()
-  formData.append('image', imageBlob, 'frame.jpg')
-
-  let response: Response
-  try {
-    response = await fetch('/api/detect-board', {
-      method: 'POST',
-      body: formData,
-      signal,
-      headers: SESSION_HEADERS,
-    })
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      throw err
-    }
-    throw new ApiClientError('Network error while detecting board corners.', {
-      code: 'NETWORK_ERROR',
-      status: 0,
-    })
-  }
-
-  if (!response.ok) {
-    throw await parseErrorResponse(response)
-  }
-
-  let raw: unknown
-  try {
-    raw = await response.json()
-  } catch {
-    throw new ApiClientError('Board detection response was not valid JSON.', {
-      code: 'MALFORMED_RESPONSE',
-      status: response.status,
-    })
-  }
-
-  const parsed = BoardDetectionResponseSchema.safeParse(raw)
-  if (!parsed.success) {
-    throw new ApiClientError('Board detection response failed schema validation.', {
-      code: 'INVALID_RESPONSE_CONTRACT',
-      status: response.status,
-    })
-  }
-
-  return parsed.data
+  const response = await sendRequest(
+    '/api/detect-board',
+    { method: 'POST', body: snapshotForm(imageBlob, 'frame.jpg'), signal },
+    'Network error while detecting board corners.',
+  )
+  return parseJsonResponse(response, BoardDetectionResponseSchema, {
+    malformed: 'Board detection response was not valid JSON.',
+    invalid: 'Board detection response failed schema validation.',
+  })
 }
 
 export async function requestSpeechStream(
   text: string,
   signal?: AbortSignal,
 ): Promise<Response> {
-  let response: Response
-  try {
-    response = await fetch('/api/speech', {
+  const response = await sendRequest(
+    '/api/speech',
+    {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -259,20 +239,9 @@ export async function requestSpeechStream(
       },
       body: JSON.stringify({ text }),
       signal,
-    })
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      throw err
-    }
-    throw new ApiClientError('Network error while requesting speech audio.', {
-      code: 'NETWORK_ERROR',
-      status: 0,
-    })
-  }
-
-  if (!response.ok) {
-    throw await parseErrorResponse(response)
-  }
+    },
+    'Network error while requesting speech audio.',
+  )
 
   const contentType = (response.headers.get('Content-Type') ?? '').toLowerCase()
   if (!contentType.startsWith('audio/')) {
@@ -291,56 +260,16 @@ export async function requestNotesUpdate(
   metadata: NotesMetadataPayload,
   signal?: AbortSignal,
 ): Promise<NotesResponse> {
-  const formData = new FormData()
-  formData.append('image', imageBlob, 'notes-snapshot.jpg')
-  formData.append('metadata', JSON.stringify(metadata))
-
-  let response: Response
-  try {
-    response = await fetch('/api/notes', {
-      method: 'POST',
-      body: formData,
-      signal,
-      headers: SESSION_HEADERS,
-    })
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      throw err
-    }
-    throw new ApiClientError('Network error while updating lecture notes.', {
-      code: 'NETWORK_ERROR',
-      status: 0,
-    })
-  }
-
-  if (!response.ok) {
-    throw await parseErrorResponse(response)
-  }
-
-  let raw: unknown
-  try {
-    raw = await response.json()
-  } catch {
-    throw new ApiClientError('Notes response was not valid JSON.', {
-      code: 'MALFORMED_RESPONSE',
-      status: response.status,
-    })
-  }
-
-  const parsed = NotesResponseSchema.safeParse(raw)
-  if (!parsed.success) {
-    throw new ApiClientError('Notes response failed schema validation.', {
-      code: 'INVALID_RESPONSE_CONTRACT',
-      status: response.status,
-      requestId: metadata.request_id,
-    })
-  }
-  if (parsed.data.request_id !== metadata.request_id) {
-    throw new ApiClientError('Notes response request_id did not match the request.', {
-      code: 'REQUEST_ID_MISMATCH',
-      status: response.status,
-      requestId: parsed.data.request_id,
-    })
-  }
-  return parsed.data
+  const response = await sendRequest(
+    '/api/notes',
+    { method: 'POST', body: snapshotForm(imageBlob, 'notes-snapshot.jpg', metadata), signal },
+    'Network error while updating lecture notes.',
+  )
+  const parsed = await parseJsonResponse(response, NotesResponseSchema, {
+    malformed: 'Notes response was not valid JSON.',
+    invalid: 'Notes response failed schema validation.',
+    requestId: metadata.request_id,
+  })
+  assertRequestIdMatches('Notes', metadata.request_id, parsed.request_id, response.status)
+  return parsed
 }

@@ -86,6 +86,9 @@ logger = logging.getLogger("chalkolate.api")
 
 MAX_SPEECH_BODY_BYTES = 4096
 PARTIAL_ANALYSIS_HEADER = "X-Chalkolate-Partial-Analysis"
+# Every API response is per-request user data (board findings, notes, audio). Forbid browsers,
+# Vercel's CDN, and any intermediary from storing or replaying one to another caller.
+NO_STORE_CACHE_CONTROL = "no-store, private"
 
 
 class ConcurrencyGate:
@@ -148,7 +151,7 @@ class SpeechStreamingResponse(StreamingResponse):
         super().__init__(
             opened.iter_chunks(),
             media_type=opened.media_type,
-            headers={"Cache-Control": "no-store"},
+            headers={"Cache-Control": NO_STORE_CACHE_CONTROL},
         )
         self.opened = opened
         self.gate = gate
@@ -163,6 +166,28 @@ class SpeechStreamingResponse(StreamingResponse):
                     await self.opened.aclose()
             finally:
                 self.gate.release()
+
+
+class NoStoreCacheMiddleware:
+    """Mark every HTTP response ``Cache-Control: no-store, private`` unless already set."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_no_store(message: Message) -> None:
+            if message.get("type") == "http.response.start":
+                headers = list(message.get("headers", ()))
+                if not any(name.lower() == b"cache-control" for name, _ in headers):
+                    headers.append((b"cache-control", NO_STORE_CACHE_CONTROL.encode("ascii")))
+                    message = {**message, "headers": headers}
+            await send(message)
+
+        await self.app(scope, receive, send_with_no_store)
 
 
 class _StreamedBodyLimitExceeded(BaseException):
@@ -259,6 +284,7 @@ async def _send_error_json(
             "headers": [
                 (b"content-type", b"application/json"),
                 (b"content-length", str(len(body)).encode("ascii")),
+                (b"cache-control", NO_STORE_CACHE_CONTROL.encode("ascii")),
             ],
         }
     )
@@ -274,10 +300,12 @@ def _error_response(
     headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     envelope = ErrorEnvelope(code=code, message=message, request_id=request_id)
+    # Set here as well as in NoStoreCacheMiddleware: the catch-all 500 handler runs in
+    # Starlette's ServerErrorMiddleware, outside every user middleware.
     return JSONResponse(
         status_code=status_code,
         content=envelope.model_dump(),
-        headers=dict(headers) if headers else None,
+        headers={"Cache-Control": NO_STORE_CACHE_CONTROL, **(headers or {})},
     )
 
 
@@ -441,12 +469,14 @@ async def _read_image_upload(
             status_code=413,
             code="PAYLOAD_TOO_LARGE",
             message="Uploaded image exceeds maximum allowed byte size.",
+            request_id=request_id,
         )
     if not raw_bytes:
         return _error_response(
             status_code=422,
             code="EMPTY_IMAGE",
             message="Uploaded image is empty.",
+            request_id=request_id,
         )
     return raw_bytes
 
@@ -470,7 +500,7 @@ def create_app(
     resolved_speech_factory = speech_client_factory or _default_speech_client_factory
     logging.basicConfig(level=getattr(logging, resolved_settings.log_level, logging.INFO))
 
-    gate = ConcurrencyGate(resolved_settings.analysis_max_concurrency)
+    analysis_gate = ConcurrencyGate(resolved_settings.analysis_max_concurrency)
     detection_gate = ConcurrencyGate(resolved_settings.analysis_max_concurrency)
     speech_gate = ConcurrencyGate(resolved_settings.speech_max_concurrency)
     notes_gate = ConcurrencyGate(resolved_settings.notes_max_concurrency)
@@ -512,12 +542,6 @@ def create_app(
         version="0.1.0",
         lifespan=lifespan,
     )
-    app.state.settings = resolved_settings
-    app.state.concurrency_gate = gate
-    app.state.speech_concurrency_gate = speech_gate
-    app.state.notes_concurrency_gate = notes_gate
-    app.state.voice_catalog = voice_catalog
-
     multipart_overhead = resolved_settings.max_metadata_bytes + 64 * 1024
     upload_limit = resolved_settings.max_upload_bytes + multipart_overhead
     app.add_middleware(
@@ -537,6 +561,8 @@ def create_app(
             allow_headers=["Content-Type", "X-Chalkolate-Session"],
             expose_headers=["Retry-After", PARTIAL_ANALYSIS_HEADER],
         )
+    # Added last so it is the outermost user middleware and also covers early 413/400 replies.
+    app.add_middleware(NoStoreCacheMiddleware)
 
     if resolved_settings.admin_enabled:
         app.include_router(
@@ -799,7 +825,7 @@ def create_app(
                 request_id=request_id_str,
                 headers={"Retry-After": "2"},
             )
-        if not gate.try_acquire():
+        if not analysis_gate.try_acquire():
             analysis_client_gate.release(caller)
             return _error_response(
                 status_code=503,
@@ -852,7 +878,7 @@ def create_app(
                 latency_ms=elapsed_ms,
             )
         finally:
-            gate.release()
+            analysis_gate.release()
             analysis_client_gate.release(caller)
 
     @app.post("/api/notes", response_model=NotesResponse)

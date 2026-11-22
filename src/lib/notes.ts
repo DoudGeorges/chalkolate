@@ -21,7 +21,16 @@ export const MAX_SECTIONS = 300
 /** Server accepts 48 KiB of metadata; leave room for JSON framing and corners. */
 export const MAX_CONTEXT_BYTES = 40_000
 export const MAX_CONTEXT_SECTIONS = 120
-export const NOTES_STORAGE_KEY = 'chalkolate.permanotes.v1'
+/**
+ * Notes live in sessionStorage: scoped to one tab's browsing session and discarded when it
+ * closes, so the next person on a shared browser profile (or another tab) never inherits them.
+ */
+export const NOTES_STORAGE_KEY = 'chalkolate.permanotes.session.v2'
+/**
+ * Pre-isolation key. It lived in origin-wide localStorage, so every later visitor on the same
+ * browser profile loaded the previous user's lecture. It is deleted on load and never read.
+ */
+export const LEGACY_NOTES_STORAGE_KEY = 'chalkolate.permanotes.v1'
 
 export function createEmptyNotes(): NotesDocument {
   return { title: '', sections: [] }
@@ -135,7 +144,7 @@ const StoredNotesSchema = z.object({
     .max(MAX_SECTIONS),
 })
 
-export function loadNotes(storage: Pick<Storage, 'getItem'> | null = safeStorage()): NotesDocument {
+export function loadNotes(storage: Pick<Storage, 'getItem'> | null = sessionStore()): NotesDocument {
   try {
     const raw = storage?.getItem(NOTES_STORAGE_KEY)
     if (!raw) return createEmptyNotes()
@@ -149,7 +158,7 @@ export function loadNotes(storage: Pick<Storage, 'getItem'> | null = safeStorage
 /** Persists notes; if the quota is exceeded, retries without figures (text is the priority). */
 export function saveNotes(
   doc: NotesDocument,
-  storage: Pick<Storage, 'setItem' | 'removeItem'> | null = safeStorage(),
+  storage: Pick<Storage, 'setItem' | 'removeItem'> | null = sessionStore(),
 ): void {
   if (!storage) return
   try {
@@ -168,9 +177,24 @@ export function saveNotes(
   }
 }
 
-function safeStorage(): Storage | null {
+/** Deletes notes left in shared localStorage by older builds without reading them. */
+export function purgeLegacyNotes(
+  storage: Pick<Storage, 'removeItem'> | null = browserStore('localStorage'),
+): void {
   try {
-    return typeof window === 'undefined' ? null : window.localStorage
+    storage?.removeItem(LEGACY_NOTES_STORAGE_KEY)
+  } catch {
+    /* storage unavailable: nothing to purge */
+  }
+}
+
+function sessionStore(): Storage | null {
+  return browserStore('sessionStorage')
+}
+
+function browserStore(kind: 'localStorage' | 'sessionStorage'): Storage | null {
+  try {
+    return typeof window === 'undefined' ? null : window[kind]
   } catch {
     return null
   }
