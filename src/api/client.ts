@@ -127,7 +127,7 @@ interface ParseMessages {
 
 async function parseJsonResponse<T>(
   response: Response,
-  schema: z.ZodType<T, z.ZodTypeDef, unknown>,
+  schema: z.ZodType<T, unknown>,
   messages: ParseMessages,
 ): Promise<T> {
   let raw: unknown
