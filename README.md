@@ -1,6 +1,6 @@
-![Chalkolate](Logo.png)
-
-![Chalkolate screenshot](Screenshot.png)
+<p align="center">
+  <img src="public/chalkolate-logo.png" alt="Chalkolate" width="420" />
+</p>
 
 _Smarter than the front row._
 
