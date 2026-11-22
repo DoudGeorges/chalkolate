@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiClientError, requestNotesUpdate } from '../api/client'
+import { isAbortError } from '../lib/abort'
+import { createRequestId } from '../lib/requestId'
 import { Box2D, CalibrationCorners, NotesMetadataPayload, NotesResponse } from '../api/schemas'
 import { DetectorState, createDetectorState, updateDetector } from '../lib/changeDetector'
 import {
@@ -71,10 +73,7 @@ const DEFAULT_DEPS: NotesBuilderDeps = {
   requestNotes: (blob, metadata, signal) => requestNotesUpdate(blob, metadata, signal),
   makeThumbnail: defaultThumbnail,
   now: () => Date.now(),
-  createUuid: () =>
-    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `00000000-0000-4000-8000-${Date.now().toString().padStart(12, '0').slice(-12)}`,
+  createUuid: createRequestId,
   loadInitial: () => {
     purgeLegacyNotes()
     return loadNotes()
@@ -202,7 +201,7 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
         setError(null)
       } catch (err) {
         if (controller.signal.aborted || gen !== sessionGenRef.current) return
-        if (err instanceof DOMException && err.name === 'AbortError') return
+        if (isAbortError(err)) return
         const retryMs =
           err instanceof ApiClientError && err.retryAfterSeconds !== null
             ? err.retryAfterSeconds * 1000
