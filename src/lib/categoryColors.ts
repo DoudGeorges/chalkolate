@@ -6,10 +6,12 @@ export const CATEGORY_COLORS: Record<ErrorCategory, string> = {
   math: '#f43f5e',
   physics: '#f59e0b',
   spelling: '#38bdf8',
+  factual: '#a78bfa',
 }
 
 export const CATEGORY_LABELS: Record<ErrorCategory, string> = {
   math: 'Math',
   physics: 'Physics',
   spelling: 'Spelling',
+  factual: 'Fact',
 }

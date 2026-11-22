@@ -8,7 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-ErrorCategory = Literal["math", "physics", "spelling"]
+ErrorCategory = Literal["math", "physics", "spelling", "factual"]
 AnswerFormat = Literal["exact", "fraction", "decimal3"]
 
 MAX_PREV_SUMMARY_LENGTH = 2000
@@ -154,7 +154,7 @@ class _FindingBase(StrictModel):
     """Shared validated finding payload prior to distinguishing coordinate spaces."""
 
     category: ErrorCategory = Field(
-        description="Mistake category: math, physics, or spelling.",
+        description="Mistake category: math, physics, spelling, or factual (any other falsehood).",
     )
     detected_text: str = Field(
         min_length=1,
@@ -298,8 +298,9 @@ class BoardAnalysisResult(StrictModel):
     errors: list[DetectedError] = Field(
         max_length=MAX_FINDINGS,
         description=(
-            "List of at most 20 high-confidence demonstrable math, physics, or spelling errors "
-            "currently visible in the image; empty list when none are justified."
+            "List of at most 20 high-confidence demonstrable errors of any kind (math, physics, "
+            "spelling, or factual falsehoods) currently visible in the image; empty list when "
+            "none are justified."
         ),
     )
 
