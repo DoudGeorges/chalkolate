@@ -1,5 +1,5 @@
-import { Loader2, Scan } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { Check, LoaderCircle, Scan } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { CalibrationCorners, CornerPoint } from '../api/schemas'
 import {
   ContainedImageRect,
@@ -8,7 +8,7 @@ import {
   validateCalibrationQuad,
 } from '../lib/geometry'
 
-const CORNER_LABELS = ['TL', 'TR', 'BR', 'BL'] as const
+const CORNER_LABELS = ['Top-left', 'Top-right', 'Bottom-right', 'Bottom-left'] as const
 
 export type CalibrationDetectStatus =
   | 'idle'
@@ -22,6 +22,11 @@ export interface CalibrationOverlayProps {
   draftCorners: CalibrationCorners
   detectStatus: CalibrationDetectStatus
   onChangeDraft: (next: CalibrationCorners) => void
+}
+
+interface CalibrationToolbarProps {
+  draftCorners: CalibrationCorners
+  detectStatus: CalibrationDetectStatus
   onAutoDetect: () => void
   onApply: () => void
   onResetCrop: () => void
@@ -33,18 +38,18 @@ export function CalibrationOverlay({
   draftCorners,
   detectStatus,
   onChangeDraft,
-  onAutoDetect,
-  onApply,
-  onResetCrop,
-  onCancel,
 }: CalibrationOverlayProps) {
   const overlayRef = useRef<HTMLDivElement | null>(null)
+  const firstCornerRef = useRef<HTMLButtonElement>(null)
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null)
   const validation = validateCalibrationQuad(draftCorners)
+  const hasImage = imageRect.width > 0 && imageRect.height > 0
 
-  if (imageRect.width <= 0 || imageRect.height <= 0) {
-    return null
-  }
+  useEffect(() => {
+    if (hasImage) firstCornerRef.current?.focus({ preventScroll: true })
+  }, [hasImage])
+
+  if (!hasImage) return null
 
   const updateCorner = (index: number, nextPoint: CornerPoint) => {
     const updated: CalibrationCorners = [
@@ -61,6 +66,7 @@ export function CalibrationOverlay({
     event: React.PointerEvent<HTMLButtonElement>,
   ) => {
     event.preventDefault()
+    event.currentTarget.focus({ preventScroll: true })
     event.currentTarget.setPointerCapture(event.pointerId)
     setDraggingIndex(index)
   }
@@ -110,32 +116,10 @@ export function CalibrationOverlay({
   }
 
   const polygonPoints = draftCorners.map(([x, y]) => `${x},${y}`).join(' ')
-  const isDetecting = detectStatus === 'detecting'
-
-  let statusText = 'Drag corners to align with the board'
-  let statusTone = 'text-zinc-700'
-  if (!validation.valid) {
-    statusText = validation.reason ?? 'Adjust handles into a valid quadrilateral'
-    statusTone = 'text-rose-700'
-  } else if (detectStatus === 'detecting') {
-    statusText = 'Detecting board corners…'
-    statusTone = 'text-zinc-800'
-  } else if (detectStatus === 'detected') {
-    statusText = 'Board detected. Drag handles to refine'
-    statusTone = 'text-emerald-700'
-  } else if (detectStatus === 'fallback') {
-    statusText = 'Could not detect board edges. Drag handles manually'
-    statusTone = 'text-zinc-700'
-  } else if (detectStatus === 'error') {
-    statusText = 'Auto-detect unavailable. Drag handles manually'
-    statusTone = 'text-amber-700'
-  }
-
   return (
     <div
       ref={overlayRef}
       className="absolute inset-0 z-30 select-none"
-      aria-label="Board corner calibration editor"
     >
       <svg
         viewBox="0 0 1000 1000"
@@ -159,15 +143,16 @@ export function CalibrationOverlay({
           y="0"
           width="1000"
           height="1000"
-          fill="rgba(255, 255, 255, 0.72)"
+          fill="var(--color-ink)"
+          fillOpacity={0.55}
           mask="url(#chalkolate-cal-mask)"
         />
         <polygon
           points={polygonPoints}
-          fill="rgba(24, 24, 27, 0.04)"
-          stroke={validation.valid ? '#18181b' : '#e11d48'}
+          fill="none"
+          stroke={validation.valid ? 'white' : 'var(--color-danger)'}
           strokeWidth={2}
-          strokeDasharray={isDetecting ? '6 4' : undefined}
+          strokeDasharray={detectStatus === 'detecting' ? '6 4' : undefined}
           vectorEffect="non-scaling-stroke"
         />
       </svg>
@@ -175,13 +160,15 @@ export function CalibrationOverlay({
       {draftCorners.map(([nx, ny], idx) => {
         const pxLeft = imageRect.left + (nx / 1000) * imageRect.width
         const pxTop = imageRect.top + (ny / 1000) * imageRect.height
-        const cornerName = CORNER_LABELS[idx] ?? `C${idx}`
+        const cornerName = CORNER_LABELS[idx] ?? 'Board'
 
         return (
           <button
             key={cornerName}
+            ref={idx === 0 ? firstCornerRef : undefined}
             type="button"
-            aria-label={`Calibration corner ${cornerName}`}
+            aria-label={cornerName + ' corner'}
+            aria-describedby="crop-keyboard-hint"
             onPointerDown={(e) => handlePointerDown(idx, e)}
             onPointerMove={(e) => handlePointerMove(idx, e)}
             onPointerUp={(e) => handlePointerUp(idx, e)}
@@ -191,62 +178,91 @@ export function CalibrationOverlay({
               left: `${pxLeft}px`,
               top: `${pxTop}px`,
             }}
-            className="group absolute flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 cursor-grab items-center justify-center rounded-full active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/80"
+            className="group absolute flex size-10 -translate-x-1/2 -translate-y-1/2 touch-none cursor-grab items-center justify-center rounded-full active:cursor-grabbing focus-visible:outline-2 focus-visible:outline-white"
           >
             <span
-              className={`h-4 w-4 rounded-full border-2 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.35)] transition duration-150 group-hover:scale-115 ${
-                draggingIndex === idx ? 'scale-120' : ''
-              } ${validation.valid ? 'border-accent' : 'border-rose-500'}`}
+              className={`size-4 rounded-full border-2 bg-white shadow-[0_1px_4px_rgb(0_0_0/0.35)] transition-transform duration-150 group-hover:scale-[1.15] ${
+                draggingIndex === idx ? 'scale-[1.3]' : ''
+              } ${validation.valid ? 'border-accent' : 'border-danger'}`}
             />
           </button>
         )
       })}
+      <span id="crop-keyboard-hint" className="sr-only">Use the arrow keys to move this corner. Hold Shift for larger steps.</span>
+    </div>
+  )
+}
 
-      {/* Polished calibration control bar */}
-      <div className="absolute bottom-4 left-1/2 flex w-max max-w-[94%] -translate-x-1/2 flex-wrap items-center justify-center gap-3 rounded-xl border border-line bg-white px-3.5 py-2 text-xs shadow-lg">
-        <span className={`inline-flex items-center gap-1.5 ${statusTone}`}>
-          {isDetecting && (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" aria-hidden="true" />
-          )}
-          <span>{statusText}</span>
-        </span>
+export function CalibrationToolbar({
+  draftCorners,
+  detectStatus,
+  onAutoDetect,
+  onApply,
+  onResetCrop,
+  onCancel,
+}: CalibrationToolbarProps) {
+  const validation = validateCalibrationQuad(draftCorners)
+  const isDetecting = detectStatus === 'detecting'
+  let statusText = 'Move each handle to a corner of the board.'
+  let statusTone = 'text-muted'
+  if (!validation.valid) {
+    statusText = validation.reason ?? 'Move the handles to form a four-sided crop.'
+    statusTone = 'text-danger'
+  } else if (isDetecting) {
+    statusText = 'Finding board corners…'
+  } else if (detectStatus === 'detected') {
+    statusText = 'Board found. Adjust the corners if needed.'
+    statusTone = 'text-moss'
+  } else if (detectStatus === 'fallback') {
+    statusText = 'The board edges are unclear. Move the handles into place.'
+  } else if (detectStatus === 'error') {
+    statusText = 'Corner detection is unavailable. Move the handles into place.'
+    statusTone = 'text-warn'
+  }
 
-        <span className="hidden sm:inline-block h-4 w-px bg-zinc-100" aria-hidden="true" />
-
-        <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            onClick={onAutoDetect}
-            disabled={isDetecting}
-            title="Re-run automatic corner detection"
-            className="inline-flex items-center gap-1 rounded-lg border border-line bg-zinc-100 px-2.5 py-1.5 font-medium text-zinc-800 transition hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-          >
-            <Scan className="h-3.5 w-3.5 text-zinc-500" aria-hidden="true" />
-            <span>Auto-detect</span>
-          </button>
-          <button
-            type="button"
-            onClick={onResetCrop}
-            className="rounded-lg border border-line bg-zinc-100 px-2.5 py-1.5 font-medium text-zinc-800 transition hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-          >
-            Reset
-          </button>
-          <button
-            type="button"
-            onClick={onCancel}
-            className="rounded-lg px-2.5 py-1.5 font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={onApply}
-            disabled={!validation.valid || isDetecting}
-            className="rounded-lg bg-accent px-3 py-1.5 font-semibold text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
-          >
-            Apply
-          </button>
-        </div>
+  return (
+    <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-line bg-panel p-3">
+      <p role="status" className={`flex items-center gap-2 text-xs leading-relaxed ${statusTone}`}>
+        {isDetecting && (
+          <LoaderCircle className="size-3.5 shrink-0 animate-spin text-moss" aria-hidden="true" />
+        )}
+        {statusText}
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={onAutoDetect}
+          disabled={isDetecting}
+          className="ui-button ui-compact"
+        >
+          <Scan aria-hidden="true" />
+          Detect corners
+        </button>
+        <button
+          type="button"
+          onClick={onResetCrop}
+          className="ui-button ui-compact"
+        >
+          Reset crop
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="ui-button ui-compact"
+          data-variant="quiet"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onApply}
+          disabled={!validation.valid || isDetecting}
+          className="ui-button ui-compact ml-auto"
+          data-variant="primary"
+        >
+          <Check aria-hidden="true" />
+          Apply crop
+        </button>
       </div>
     </div>
   )

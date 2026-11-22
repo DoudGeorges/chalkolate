@@ -1,4 +1,4 @@
-import { CATEGORY_COLORS } from '../lib/categoryColors'
+import { CATEGORY_COLORS, CATEGORY_LABELS } from '../lib/categoryColors'
 import { ContainedImageRect, FindingBoxProjector, computeOverlayPillPosition } from '../lib/geometry'
 import { TrackedIssue } from '../lib/issueTracker'
 import { MathCorrection } from './MathCorrection'
@@ -8,7 +8,6 @@ export interface DetectionOverlayProps {
   /** Visible media area in stage pixels; overlays are clipped to it and pills kept inside it. */
   clipRect: ContainedImageRect
   issues: readonly TrackedIssue[]
-  locationsUnverified?: boolean
   selectedIssueId: string | null
   hoveredIssueId: string | null
   onSelectIssue: (issueId: string) => void
@@ -44,6 +43,7 @@ export function DetectionOverlay({
     return [
       {
         issue,
+        label: `${CATEGORY_LABELS[issue.category]} correction. On the board: ${issue.detected_text}. Correction: ${issue.correction_text}`,
         points: polygon.map(([x, y]) => `${x},${y}`).join(' '),
         boxPx: {
           left: Math.min(...polygon.map(([x]) => x)),
@@ -60,11 +60,15 @@ export function DetectionOverlay({
     <div
       className="pointer-events-none absolute inset-0"
       style={{ clipPath }}
-      aria-label="Detected board error overlays"
+      role="group"
+      aria-label="Board corrections"
     >
       {/* Stage-pixel SVG so perspective-projected boxes line up with the displayed media */}
-      <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
-        {projected.map(({ issue, points }) => {
+      <svg
+        aria-hidden={showPills ? true : undefined}
+        className="pointer-events-none absolute inset-0 h-full w-full overflow-visible"
+      >
+        {projected.map(({ issue, points, label }) => {
           const color = CATEGORY_COLORS[issue.category]
           const isHighlighted =
             issue.id === selectedIssueId || issue.id === hoveredIssueId
@@ -72,6 +76,7 @@ export function DetectionOverlay({
           return (
             <polygon
               key={issue.id}
+              id={showPills ? undefined : 'finding-' + issue.id}
               points={points}
               fill={color}
               fillOpacity={isHighlighted ? 0.18 : 0.1}
@@ -79,11 +84,13 @@ export function DetectionOverlay({
               strokeOpacity={1}
               strokeWidth={isHighlighted ? 3 : 2}
               strokeLinejoin="round"
+              style={{ transition: 'fill-opacity 150ms, stroke-width 150ms' }}
               className="pointer-events-auto cursor-pointer transition-opacity duration-150"
-              tabIndex={0}
+              tabIndex={showPills ? undefined : 0}
               role="button"
               aria-pressed={issue.id === selectedIssueId}
-              aria-label={`${issue.category} finding: ${issue.detected_text}. Correction: ${issue.correction_text}`}
+              aria-label={label}
+              aria-controls={issue.id === selectedIssueId ? 'finding-explanation' : undefined}
               onClick={() => onSelectIssue(issue.id)}
               onMouseEnter={() => onHoverIssue(issue.id)}
               onMouseLeave={() => onHoverIssue(null)}
@@ -102,7 +109,7 @@ export function DetectionOverlay({
 
       {/* Separate HTML layer so pill text is never warped */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        {showPills && projected.map(({ issue, boxPx }) => {
+        {showPills && projected.map(({ issue, boxPx, label }) => {
           const pos = computeOverlayPillPosition(boxPx, clipRect, pillWidth)
           const color = CATEGORY_COLORS[issue.category]
           const isHighlighted =
@@ -111,19 +118,25 @@ export function DetectionOverlay({
           return (
             <button
               key={`pill-${issue.id}`}
+              id={'finding-' + issue.id}
               type="button"
+              aria-label={label}
+              aria-controls={issue.id === selectedIssueId ? 'finding-explanation' : undefined}
+              aria-pressed={issue.id === selectedIssueId}
               onClick={() => onSelectIssue(issue.id)}
               onMouseEnter={() => onHoverIssue(issue.id)}
               onMouseLeave={() => onHoverIssue(null)}
+              onFocus={() => onHoverIssue(issue.id)}
+              onBlur={() => onHoverIssue(null)}
               style={{
                 left: `${pos.left}px`,
                 top: `${pos.top}px`,
                 maxWidth: `${pillWidth}px`,
               }}
-              className={`pointer-events-auto absolute flex items-center gap-1.5 rounded-lg border bg-white px-2.5 py-1 text-left text-xs shadow-md transition duration-150 animate-pill-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
+              className={`pointer-events-auto absolute flex min-h-6 items-center gap-1.5 rounded-full border bg-panel px-2.5 py-1 text-left text-xs animate-pill-in transition-[border-color,box-shadow] duration-150 ${
                 isHighlighted
-                  ? 'z-20 border-zinc-300 ring-1 ring-zinc-300'
-                  : 'z-10 border-line hover:border-zinc-300'
+                  ? 'z-20 border-accent shadow-pop'
+                  : 'z-10 border-line shadow-soft hover:border-control-line'
               }`}
             >
               <span
@@ -131,7 +144,7 @@ export function DetectionOverlay({
                 style={{ backgroundColor: color }}
                 aria-hidden="true"
               />
-              <span className="truncate font-medium text-zinc-900">
+              <span className="truncate font-medium text-ink">
                 <MathCorrection
                   correctionText={issue.correction_text}
                   correctionLatex={issue.correction_latex}

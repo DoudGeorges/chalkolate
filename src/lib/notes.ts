@@ -1,6 +1,6 @@
 import katex from 'katex'
 import { z } from 'zod'
-import { NoteSectionUpdate, NotesContextSection } from '../api/schemas'
+import { NoteSectionUpdate, NotesContextSection, textWithLimit } from '../api/schemas'
 
 /** Permanotes document model: ordered sections of Markdown + KaTeX math with optional snapshot. */
 export interface NoteSection {
@@ -92,7 +92,11 @@ export function applyNotesUpdate(
   figures: ReadonlyMap<string, string | null>,
   nowMs: number,
 ): NotesDocument {
+  const title = doc.title || update.lecture_title.trim()
+  if (update.updates.length === 0) return title === doc.title ? doc : { ...doc, title }
+
   const sections = [...doc.sections]
+  const lastInsertedAfter = new Map<string, string>()
   for (const u of update.updates) {
     const idx = sections.findIndex((s) => s.id === u.id)
     if (idx >= 0) {
@@ -114,27 +118,27 @@ export function applyNotesUpdate(
       figure: u.has_figure ? (figures.get(u.id) ?? null) : null,
       updatedAt: nowMs,
     }
-    const anchor = u.after_section_id
-      ? sections.findIndex((s) => s.id === u.after_section_id)
-      : -1
+    const anchorId = u.after_section_id
+    const precedingId = anchorId && (lastInsertedAfter.get(anchorId) ?? anchorId)
+    const anchor = precedingId ? sections.findIndex((s) => s.id === precedingId) : -1
     if (anchor >= 0) {
       sections.splice(anchor + 1, 0, created)
+      if (anchorId) lastInsertedAfter.set(anchorId, u.id)
     } else {
       sections.push(created)
     }
   }
-  const title = update.lecture_title.trim()
-  return { title: doc.title || title, sections }
+  return { title, sections }
 }
 
 const StoredNotesSchema = z.object({
-  title: z.string().max(160),
+  title: textWithLimit(160),
   sections: z
     .array(
       z.object({
         id: z.string().min(1).max(40),
-        heading: z.string().max(120),
-        body_markdown: z.string().max(3000),
+        heading: textWithLimit(120),
+        body_markdown: textWithLimit(3000),
         figure: z.string().nullable().transform((value) =>
           value && /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/.test(value) ? value : null,
         ),
@@ -258,7 +262,7 @@ function renderInline(text: string): string {
 export function renderNotesBodyHtml(markdown: string): string {
   const math: string[] = []
   const stash = (html: string) => `\u0000${math.push(html) - 1}\u0000`
-  const withMath = markdown.split('\u0000').join('')
+  const withMath = markdown.replace(/\r\n?/g, '\n').replaceAll('\u0000', '')
     .replace(/\$\$([\s\S]+?)\$\$/g, (_m, tex: string) => stash(renderMath(tex.trim(), true)))
     .replace(/(?<![\\$])\$([^$\n]+?)\$(?!\$)/g, (_m, tex: string) =>
       stash(renderMath(tex.trim(), false)),
@@ -285,10 +289,10 @@ export function renderNotesBodyHtml(markdown: string): string {
 }
 
 const PRINT_CSS = `
-body{font-family:Georgia,'Times New Roman',serif;max-width:46rem;margin:2rem auto;padding:0 1rem;line-height:1.55;color:#111}
-h1{font-size:1.9rem;margin-bottom:.2rem}h2{font-size:1.25rem;margin:1.6rem 0 .4rem;break-after:avoid}
-.meta{color:#666;font-size:.85rem;margin-bottom:1.5rem}section{break-inside:avoid-page;margin-bottom:1rem}
-img{max-width:100%;border:1px solid #ddd;border-radius:4px;margin:.5rem 0}code{background:#f3f3f3;padding:0 .25em;border-radius:3px}
+body{font-family:"DM Sans",ui-sans-serif,system-ui,sans-serif;max-width:46rem;margin:2rem auto;padding:0 1rem;line-height:1.6;color:#1c2c25}
+h1,h2{font-weight:600;line-height:1.25}h1{font-size:2rem;margin-bottom:.25rem}h2{font-size:1.25rem;margin:1.5rem 0 .5rem;break-after:avoid}
+.meta{color:#4e6057;font-size:.875rem;margin-bottom:1.5rem}section{break-inside:avoid-page;margin-bottom:1rem}
+img{max-width:100%;border:1px solid #d4ded6;border-radius:8px;margin:.5rem 0}code{font-family:inherit;background:#edf1ed;padding:0 .25em;border-radius:4px}
 math[display=block]{margin:.8rem 0}@media print{body{margin:0;max-width:none}}
 `
 

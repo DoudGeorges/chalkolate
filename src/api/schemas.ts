@@ -1,5 +1,13 @@
 import { z } from 'zod'
 
+/** Match Pydantic's character limits for strings containing supplementary Unicode characters. */
+export function textWithLimit(limit: number, nonEmpty = false) {
+  const schema = nonEmpty ? z.string().trim().min(1) : z.string()
+  return schema.refine((value) => Array.from(value).length <= limit, {
+    message: `Use at most ${limit} characters.`,
+  })
+}
+
 export const ErrorCategorySchema = z.enum(['math', 'physics', 'spelling', 'factual'])
 export type ErrorCategory = z.infer<typeof ErrorCategorySchema>
 
@@ -32,11 +40,11 @@ export type Box2D = z.infer<typeof Box2DSchema>
 export const SourceSpaceErrorSchema = z
   .object({
     category: ErrorCategorySchema,
-    detected_text: z.string().trim().min(1).max(300),
-    correction_text: z.string().trim().min(1).max(300),
-    correction_latex: z.string().max(300).nullable(),
-    spoken_alert: z.string().trim().min(1).max(180),
-    explanation: z.string().trim().min(1).max(300),
+    detected_text: textWithLimit(300, true),
+    correction_text: textWithLimit(300, true),
+    correction_latex: textWithLimit(300).nullable(),
+    spoken_alert: textWithLimit(180, true),
+    explanation: textWithLimit(300, true),
     box_2d: Box2DSchema,
     confidence: z.number().finite().min(0).max(1),
   })
@@ -46,7 +54,7 @@ export type SourceSpaceDetectedError = z.infer<typeof SourceSpaceErrorSchema>
 export const AnalysisResponseSchema = z
   .object({
     request_id: z.string().uuid(),
-    board_summary: z.string().max(600),
+    board_summary: textWithLimit(600),
     errors: z.array(SourceSpaceErrorSchema).max(20),
     image_width: z.number().int().positive(),
     image_height: z.number().int().positive(),
@@ -68,7 +76,7 @@ export type HealthResponse = z.infer<typeof HealthResponseSchema>
 export const SpeechVoiceOptionSchema = z
   .object({
     id: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
-    label: z.string().min(1).max(80),
+    label: textWithLimit(80, true),
   })
   .strict()
 export type SpeechVoiceOption = z.infer<typeof SpeechVoiceOptionSchema>
@@ -116,8 +124,8 @@ const NoteIdSchema = z
 export const NoteSectionUpdateSchema = z
   .object({
     id: NoteIdSchema,
-    heading: z.string().trim().min(1).max(120),
-    body_markdown: z.string().trim().min(1).max(3000),
+    heading: textWithLimit(120, true),
+    body_markdown: textWithLimit(3000, true),
     has_figure: z.boolean(),
     figure_box_2d: Box2DSchema.nullable(),
     after_section_id: NoteIdSchema.nullable(),
@@ -128,7 +136,7 @@ export type NoteSectionUpdate = z.infer<typeof NoteSectionUpdateSchema>
 export const NotesResponseSchema = z
   .object({
     request_id: z.string().uuid(),
-    lecture_title: z.string().max(160),
+    lecture_title: textWithLimit(160),
     updates: z.array(NoteSectionUpdateSchema).max(8),
     latency_ms: z.number().int().nonnegative(),
   })

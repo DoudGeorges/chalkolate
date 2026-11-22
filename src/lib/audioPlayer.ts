@@ -171,7 +171,8 @@ async function waitForAudioCompletion(
 }
 
 function cleanupAudioElement(audio: HTMLAudioElement | null, objectUrl: string | null): void {
-  if (audio) {
+  if (audio && (objectUrl === null || audio.getAttribute('src') === objectUrl)) {
+    if (objectUrl !== null) isPlayingSharedAudio = false
     try {
       audio.pause()
       audio.removeAttribute('src')
@@ -208,6 +209,7 @@ async function playBlobObject(
   audio.src = objectUrl
 
   const onAbortPlayback = () => {
+    if (audio.getAttribute('src') !== objectUrl) return
     try {
       audio.pause()
     } catch {
@@ -220,7 +222,6 @@ async function playBlobObject(
     await waitForAudioCompletion(audio, signal, notifyStarted)
   } finally {
     signal.removeEventListener('abort', onAbortPlayback)
-    isPlayingSharedAudio = false
     cleanupAudioElement(audio, objectUrl)
   }
 }
@@ -257,10 +258,12 @@ async function playWithMediaSourceOrFallbackBlob(
 
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null
   const handleAbort = () => {
-    try {
-      audio.pause()
-    } catch {
-      // Ignore pause errors during abort.
+    if (audio.getAttribute('src') === objectUrl) {
+      try {
+        audio.pause()
+      } catch {
+        // Ignore pause errors during abort.
+      }
     }
     if (reader) {
       void reader.cancel().catch(() => {})
@@ -376,7 +379,6 @@ async function playWithMediaSourceOrFallbackBlob(
         // Ignore already released stream lock.
       }
     }
-    isPlayingSharedAudio = false
     cleanupAudioElement(audio, objectUrl)
   }
 

@@ -1,51 +1,89 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ArrowLeft, ChevronDown, CircleAlert, KeyRound, LoaderCircle, LogOut, RefreshCw, Search, Trash2 } from 'lucide-react'
+import Link from 'next/link'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { z } from 'zod'
+import { Brand } from '../../components/Brand'
 
-interface Summary {
-  id: string
-  ts: number
-  route: string
-  method: string
-  status: number
-  latency_ms: number
-  request_id: string | null
-  session_id: string
-  client: string
-  error_code: string | null
-  findings: number | null
-  has_image: boolean
-  image_bytes: number | null
-  response_bytes: number
-  search: string
-}
+const SummarySchema = z.object({
+  id: z.string().regex(/^[0-9a-f]{32}$/),
+  ts: z.number(),
+  route: z.string(),
+  method: z.string(),
+  status: z.number(),
+  latency_ms: z.number(),
+  request_id: z.string().nullable(),
+  session_id: z.string(),
+  error_code: z.string().nullable(),
+  findings: z.number().nullable(),
+  has_image: z.boolean(),
+  search: z.string(),
+})
+type Summary = z.infer<typeof SummarySchema>
 
-interface Detail {
-  summary: Summary
-  detail: {
-    request: Record<string, unknown>
-    response: Record<string, unknown>
-    settings: Record<string, unknown>
-    timing: Record<string, unknown>
-    trigger: string | null
-    has_model_image: boolean
-  }
-}
+const DetailSchema = z.looseObject({
+  summary: SummarySchema.passthrough(),
+  detail: z.looseObject({
+    request: z.looseObject({ image: z.object({ stored: z.boolean() }).nullable().optional() }),
+    response: z.record(z.string(), z.unknown()),
+    settings: z.record(z.string(), z.unknown()),
+    timing: z.record(z.string(), z.unknown()),
+    trigger: z.string().nullable(),
+    has_model_image: z.boolean(),
+  }),
+})
+const LogListSchema = z.object({ entries: z.array(SummarySchema), storage: z.string().nullable() })
+type Detail = z.infer<typeof DetailSchema>
 
 type Phase = 'checking' | 'login' | 'ready'
 
 const imgUrl = (id: string, size: 'thumb' | 'full' | 'model') =>
-  `/api/admin/logs/${id}/image?size=${size}`
+  '/api/admin/logs/' + id + '/image?size=' + size
+
+function adminFetch(path: string, init: RequestInit = {}) {
+  const deadline = AbortSignal.timeout(15_000)
+  return fetch(`/api/admin/${path}`, {
+    ...init,
+    cache: 'no-store',
+    signal: init.signal ? AbortSignal.any([deadline, init.signal]) : deadline,
+  })
+}
 
 function statusClass(status: number): string {
-  if (status >= 500 || status === 0) return 'bg-rose-100 text-rose-800'
-  if (status >= 400) return 'bg-amber-100 text-amber-800'
-  return 'bg-emerald-100 text-emerald-800'
+  if (status >= 500 || status === 0) return 'bg-danger-soft text-danger'
+  if (status >= 400) return 'bg-warn-soft text-warn'
+  return 'bg-moss-soft text-moss'
+}
+
+function AdminFrame({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <header className="border-b border-line bg-panel">
+        <div className="mx-auto flex min-h-16 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
+          <Brand />
+          <Link href="/" className="ui-button" data-variant="quiet">
+            <ArrowLeft aria-hidden="true" /> Back to studio
+          </Link>
+        </div>
+      </header>
+      {children}
+    </>
+  )
+}
+
+function AdminNotice({ children }: { children: React.ReactNode }) {
+  return (
+    <div role="alert" className="flex items-start gap-2 rounded-lg border border-danger/30 bg-danger-soft p-3 text-sm text-danger">
+      <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+      <p>{children}</p>
+    </div>
+  )
 }
 
 function Json({ value }: { value: unknown }) {
   return (
-    <pre className="max-h-96 overflow-auto rounded border border-line bg-zinc-50 p-2 text-xs">
+    <pre className="max-h-80 overflow-auto rounded-lg border border-line bg-panel p-3 font-sans text-xs leading-relaxed tabular-nums text-ink">
       {JSON.stringify(value, null, 2)}
     </pre>
   )
@@ -53,59 +91,65 @@ function Json({ value }: { value: unknown }) {
 
 function DetailView({ id }: { id: string }) {
   const [data, setData] = useState<Detail | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState(false)
   useEffect(() => {
-    let cancelled = false
-    fetch(`/api/admin/logs/${id}`, { cache: 'no-store' })
-      .then((r) => (r.ok ? (r.json() as Promise<Detail>) : Promise.reject(new Error(`HTTP ${r.status}`))))
-      .then((d) => !cancelled && setData(d))
-      .catch((e: unknown) => !cancelled && setError(String(e)))
-    return () => {
-      cancelled = true
-    }
+    const request = new AbortController()
+    adminFetch(`logs/${id}`, { signal: request.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Request unavailable')
+        return DetailSchema.parse(await response.json())
+      })
+      .then((detail) => {
+        if (!request.signal.aborted) setData(detail)
+      })
+      .catch(() => {
+        if (!request.signal.aborted) setError(true)
+      })
+    return () => request.abort()
   }, [id])
-  if (error) return <p className="p-3 text-sm text-rose-700">Failed to load: {error}</p>
-  if (!data) return <p className="p-3 text-sm text-zinc-500">Loading…</p>
+
+  if (error) return <div className="p-4"><AdminNotice>This request could not be loaded. Reopen it to try again.</AdminNotice></div>
+  if (!data) return <p role="status" className="p-4 text-sm text-muted">Loading request…</p>
+
   const { detail, summary } = data
-  const resp = detail.response as { body?: { errors?: unknown[]; board_summary?: string } | null }
+  const frameSizes: Array<'full' | 'model' | 'thumb'> = []
+  if (summary.has_image) frameSizes.push(detail.request.image?.stored === false ? 'thumb' : 'full')
+  if (detail.has_model_image) frameSizes.push('model')
+
   return (
-    <div className="grid gap-3 p-3 text-sm lg:grid-cols-2">
-      {summary.has_image && (
+    <div className="grid max-w-[calc(100vw-3rem)] gap-4 p-4 text-sm md:max-w-none lg:grid-cols-2">
+      {frameSizes.length > 0 && (
         <section className="lg:col-span-2">
-          <h3 className="mb-1 font-medium">Frames</h3>
-          <div className="flex flex-wrap gap-3">
-            <figure>
-              <a href={imgUrl(id, 'full')} target="_blank" rel="noreferrer">
-                <img src={imgUrl(id, 'full')} alt="Frame as uploaded" className="max-h-72 rounded border border-line" />
-              </a>
-              <figcaption className="text-xs text-zinc-500">As uploaded (click for full size)</figcaption>
-            </figure>
-            {detail.has_model_image && (
-              <figure>
-                <a href={imgUrl(id, 'model')} target="_blank" rel="noreferrer">
-                  <img src={imgUrl(id, 'model')} alt="Frame as sent to the model" className="max-h-72 rounded border border-line" />
-                </a>
-                <figcaption className="text-xs text-zinc-500">Rectified, as sent to the model</figcaption>
-              </figure>
-            )}
+          <h3 className="mb-2 font-semibold text-ink">Board images</h3>
+          <div className="flex flex-wrap gap-4">
+            {frameSizes.map((size) => {
+              const label = size === 'model' ? 'Frame sent to the model' : size === 'thumb' ? 'Uploaded frame thumbnail' : 'Uploaded frame'
+              return (
+                <figure key={size}>
+                  <a href={imgUrl(id, size)} target="_blank" rel="noreferrer" className="inline-block rounded-lg">
+                    <img src={imgUrl(id, size)} alt={label} className="max-h-60 rounded-lg border border-line object-contain" />
+                  </a>
+                  <figcaption className="mt-1 text-xs text-muted">{label}</figcaption>
+                </figure>
+              )
+            })}
           </div>
         </section>
       )}
-      <section>
-        <h3 className="mb-1 font-medium">Request</h3>
+      <section className="min-w-0">
+        <h3 className="mb-2 font-semibold text-ink">Request</h3>
         <Json value={detail.request} />
       </section>
-      <section>
-        <h3 className="mb-1 font-medium">Response</h3>
-        {resp.body?.board_summary && <p className="mb-1 text-xs text-zinc-600">Board: {resp.body.board_summary}</p>}
+      <section className="min-w-0">
+        <h3 className="mb-2 font-semibold text-ink">Response</h3>
         <Json value={detail.response} />
       </section>
-      <section>
-        <h3 className="mb-1 font-medium">Settings &amp; timing (trigger: {detail.trigger ?? 'n/a'})</h3>
-        <Json value={{ settings: detail.settings, timing: detail.timing }} />
+      <section className="min-w-0">
+        <h3 className="mb-2 font-semibold text-ink">Settings and timing</h3>
+        <Json value={{ trigger: detail.trigger, settings: detail.settings, timing: detail.timing }} />
       </section>
-      <section>
-        <h3 className="mb-1 font-medium">Raw entry</h3>
+      <section className="min-w-0">
+        <h3 className="mb-2 font-semibold text-ink">Raw entry</h3>
         <Json value={data} />
       </section>
     </div>
@@ -115,196 +159,293 @@ function DetailView({ id }: { id: string }) {
 export function AdminApp() {
   const [phase, setPhase] = useState<Phase>('checking')
   const [token, setToken] = useState('')
-  const [loginError, setLoginError] = useState<string | null>(null)
+  const [action, setAction] = useState<'login' | 'logout' | 'clear' | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
   const [entries, setEntries] = useState<Summary[]>([])
-  const [meta, setMeta] = useState<string>('')
+  const [storage, setStorage] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [route, setRoute] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
   const [expanded, setExpanded] = useState<string | null>(null)
   const [auto, setAuto] = useState(true)
-  const [loadError, setLoadError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState(false)
+  const pendingLoad = useRef<AbortController | null>(null)
 
   const load = useCallback(async () => {
+    pendingLoad.current?.abort()
+    const request = new AbortController()
+    pendingLoad.current = request
     try {
-      const r = await fetch('/api/admin/logs', { cache: 'no-store' })
-      if (r.status === 401) {
+      const result = await adminFetch('logs', { signal: request.signal })
+      if (request.signal.aborted) return
+      if (result.status === 401) {
+        setEntries([])
+        setExpanded(null)
+        setStorage(null)
+        setLoadError(false)
         setPhase('login')
         return
       }
-      if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      const body = (await r.json()) as { entries: Summary[]; storage: string | null }
+      if (!result.ok) throw new Error('Request log unavailable')
+      const body = LogListSchema.parse(await result.json())
+      if (request.signal.aborted) return
       setEntries(body.entries)
-      setMeta(body.storage ?? 'no storage configured, nothing is being recorded')
-      setLoadError(null)
+      setStorage(body.storage)
+      setLoadError(false)
       setPhase('ready')
-    } catch (e) {
-      setLoadError(String(e))
+    } catch {
+      if (!request.signal.aborted) setLoadError(true)
+    } finally {
+      if (pendingLoad.current === request) pendingLoad.current = null
     }
   }, [])
 
   useEffect(() => {
     void load()
+    return () => pendingLoad.current?.abort()
   }, [load])
 
   useEffect(() => {
-    if (phase !== 'ready' || !auto) return
-    const t = window.setInterval(() => void load(), 4000)
-    return () => window.clearInterval(t)
-  }, [phase, auto, load])
+    if (phase !== 'ready' || !auto || action) return
+    const timer = window.setInterval(() => {
+      if (!pendingLoad.current) void load()
+    }, 4000)
+    return () => window.clearInterval(timer)
+  }, [phase, auto, action, load])
 
-  const login = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoginError(null)
-    const r = await fetch('/api/admin/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token }),
-    })
-    setToken('')
-    if (r.ok) await load()
-    else setLoginError(r.status === 429 ? 'Too many attempts; wait a minute.' : 'Invalid token.')
+  const login = async (event: React.FormEvent) => {
+    event.preventDefault()
+    if (!token || action) return
+    setAction('login')
+    setActionError(null)
+    try {
+      const response = await adminFetch('login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      })
+      if (response.ok) {
+        setPhase('checking')
+        await load()
+      } else if (response.status === 401 || response.status === 429) {
+        setActionError(response.status === 429 ? 'Too many attempts. Wait a minute and try again.' : 'The admin token is incorrect.')
+      } else {
+        throw new Error('Sign-in unavailable')
+      }
+    } catch {
+      setActionError('Couldn’t sign in. Check your connection and try again.')
+    } finally {
+      setToken('')
+      setAction(null)
+    }
   }
 
-  const logout = async () => {
-    await fetch('/api/admin/logout', { method: 'POST' })
-    setEntries([])
-    setPhase('login')
+  const updateLogs = async (operation: 'logout' | 'clear') => {
+    if (action) return
+    if (operation === 'clear' && !window.confirm('Delete all stored request logs and board images?')) return
+    pendingLoad.current?.abort()
+    setAction(operation)
+    setActionError(null)
+    try {
+      const response = operation === 'logout'
+        ? await adminFetch('logout', { method: 'POST' })
+        : await adminFetch('logs', { method: 'DELETE' })
+      if (!response.ok) throw new Error('Operation unavailable')
+      setExpanded(null)
+      if (operation === 'logout') {
+        setEntries([])
+        setPhase('login')
+      } else {
+        await load()
+      }
+    } catch {
+      setActionError(operation === 'logout' ? 'Couldn’t sign out. Try again.' : 'Couldn’t clear the logs. Try again.')
+    } finally {
+      setAction(null)
+    }
   }
 
-  const clearAll = async () => {
-    if (!window.confirm('Delete all stored debug logs and images?')) return
-    await fetch('/api/admin/logs', { method: 'DELETE' })
-    await load()
-  }
-
-  const routes = useMemo(() => Array.from(new Set(entries.map((e) => e.route))).sort(), [entries])
+  const routes = useMemo(() => Array.from(new Set(entries.map((entry) => entry.route))).sort(), [entries])
+  const activeRoute = routes.includes(route) ? route : 'all'
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return entries.filter((e) => {
-      if (route !== 'all' && e.route !== route) return false
-      if (statusFilter === 'ok' && e.status >= 400) return false
-      if (statusFilter === 'error' && e.status < 400) return false
-      return !q || e.search.includes(q) || e.id.includes(q)
+    const term = query.trim().toLowerCase()
+    return entries.filter((entry) => {
+      if (activeRoute !== 'all' && entry.route !== activeRoute) return false
+      const failed = entry.status === 0 || entry.status >= 400
+      if (statusFilter === 'ok' && failed) return false
+      if (statusFilter === 'error' && !failed) return false
+      return !term || entry.search.includes(term) || entry.id.includes(term)
     })
-  }, [entries, query, route, statusFilter])
+  }, [activeRoute, entries, query, statusFilter])
 
-  if (phase === 'checking') return <main className="p-6 text-sm text-zinc-500">Loading…</main>
-
-  if (phase === 'login') {
+  if (phase !== 'ready') {
     return (
-      <main className="mx-auto mt-24 max-w-sm p-6">
-        <form onSubmit={login} className="space-y-3 rounded-lg border border-line bg-panel p-5">
-          <h1 className="text-lg font-medium">Chalkolate admin</h1>
-          <input
-            type="password"
-            autoComplete="off"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            placeholder="Admin token"
-            aria-label="Admin token"
-            className="w-full rounded border border-line px-3 py-2 text-sm"
-          />
-          {loginError && <p className="text-sm text-rose-700">{loginError}</p>}
-          <button type="submit" className="w-full rounded bg-accent px-3 py-2 text-sm text-white">
-            Sign in
-          </button>
-        </form>
-      </main>
+      <AdminFrame>
+        <main className="mx-auto max-w-md px-5 py-14 sm:py-24">
+          <section className="rounded-2xl border border-line bg-panel p-5 shadow-pop sm:p-8">
+            <KeyRound className="mb-4 size-5 text-moss" aria-hidden="true" />
+            <h1 className="ui-title">Admin console</h1>
+            {phase === 'login' ? (
+              <form onSubmit={login} className="mt-6 space-y-4">
+                <label className="ui-label block">
+                  Admin token
+                  <input
+                    type="password"
+                    autoComplete="off"
+                    required
+                    value={token}
+                    onChange={(event) => setToken(event.target.value)}
+                    className="ui-field mt-2"
+                  />
+                </label>
+                {actionError && <AdminNotice>{actionError}</AdminNotice>}
+                <button type="submit" disabled={!token || action !== null} className="ui-button min-h-10 w-full" data-variant="primary">
+                  {action === 'login' ? 'Signing in…' : 'Sign in'}
+                </button>
+              </form>
+            ) : loadError ? (
+              <div className="mt-5 space-y-3">
+                <AdminNotice>Couldn’t connect to the admin console.</AdminNotice>
+                <button type="button" onClick={() => void load()} className="ui-button">
+                  <RefreshCw aria-hidden="true" /> Retry
+                </button>
+              </div>
+            ) : (
+              <p role="status" className="mt-5 flex items-center gap-2 text-sm text-muted">
+                <LoaderCircle className="size-4 animate-spin" aria-hidden="true" /> Checking access…
+              </p>
+            )}
+          </section>
+        </main>
+      </AdminFrame>
     )
   }
 
   return (
-    <main className="p-4 text-sm">
-      <header className="mb-3 flex flex-wrap items-center gap-2">
-        <h1 className="mr-2 text-lg font-medium">Chalkolate admin</h1>
-        <input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search id, session, error, finding, spoken text…"
-          aria-label="Search logs"
-          className="min-w-64 flex-1 rounded border border-line px-3 py-1.5"
-        />
-        <select value={route} onChange={(e) => setRoute(e.target.value)} aria-label="Route" className="rounded border border-line px-2 py-1.5">
-          <option value="all">All routes</option>
-          {routes.map((r) => (
-            <option key={r} value={r}>
-              {r}
-            </option>
-          ))}
-        </select>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Status" className="rounded border border-line px-2 py-1.5">
-          <option value="all">Any status</option>
-          <option value="ok">Success</option>
-          <option value="error">Errors (4xx/5xx)</option>
-        </select>
-        <label className="flex items-center gap-1">
-          <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> Auto-refresh
-        </label>
-        <button onClick={() => void load()} className="rounded border border-line px-3 py-1.5">Refresh</button>
-        <button onClick={() => void clearAll()} className="rounded border border-line px-3 py-1.5 text-rose-700">Clear</button>
-        <button onClick={() => void logout()} className="rounded border border-line px-3 py-1.5">Sign out</button>
-      </header>
-      <p className="mb-2 text-xs text-zinc-500">
-        {filtered.length} of {entries.length} entries · store: {meta}
-        {loadError ? ` · last refresh failed: ${loadError}` : ''}
-      </p>
-      <div className="overflow-x-auto rounded border border-line bg-panel">
-        <table className="w-full text-left">
-          <thead className="bg-zinc-50 text-xs text-zinc-500">
-            <tr>
-              <th className="p-2">Time</th>
-              <th className="p-2">Frame</th>
-              <th className="p-2">Route</th>
-              <th className="p-2">Status</th>
-              <th className="p-2">Latency</th>
-              <th className="p-2">Request</th>
-              <th className="p-2">Session</th>
-              <th className="p-2">Result</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((e) => (
-              <FragmentRow key={e.id} e={e} open={expanded === e.id} toggle={() => setExpanded(expanded === e.id ? null : e.id)} />
-            ))}
-            {filtered.length === 0 && (
+    <AdminFrame>
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-10">
+        <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="ui-title">Request log</h1>
+            <p className="ui-copy mt-2">
+              {storage ? 'Log storage: ' + storage : 'Log storage is unavailable.'}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => void updateLogs('clear')} disabled={!entries.length || action !== null} className="ui-button" data-variant="danger">
+              <Trash2 aria-hidden="true" /> {action === 'clear' ? 'Clearing…' : 'Clear logs'}
+            </button>
+            <button type="button" onClick={() => void updateLogs('logout')} disabled={action !== null} className="ui-button">
+              <LogOut aria-hidden="true" /> {action === 'logout' ? 'Signing out…' : 'Sign out'}
+            </button>
+          </div>
+        </div>
+
+        <section aria-label="Request log filters" className="mb-3 flex flex-wrap items-end gap-3 rounded-xl border border-line bg-panel p-3">
+          <label className="ui-label min-w-40 flex-[2]">
+            Search
+            <span className="relative mt-2 block">
+              <Search className="pointer-events-none absolute top-3 left-3 size-4 text-muted" aria-hidden="true" />
+              <input
+                type="search"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Request ID, error, or finding"
+                className="ui-field pl-9 font-normal"
+              />
+            </span>
+          </label>
+          <label className="ui-label min-w-32 flex-1">
+            Route
+            <select value={activeRoute} onChange={(event) => setRoute(event.target.value)} className="ui-field mt-2 font-normal">
+              <option value="all">All routes</option>
+              {routes.map((item) => <option key={item} value={item}>{item}</option>)}
+            </select>
+          </label>
+          <label className="ui-label min-w-28 flex-1">
+            Status
+            <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="ui-field mt-2 font-normal">
+              <option value="all">All statuses</option>
+              <option value="ok">Success</option>
+              <option value="error">Error</option>
+            </select>
+          </label>
+          <label className="flex min-h-10 items-center gap-2 px-1 text-sm text-muted">
+            <input type="checkbox" checked={auto} onChange={(event) => setAuto(event.target.checked)} className="size-4 accent-accent" />
+            Refresh automatically
+          </label>
+          <button type="button" onClick={() => void load()} disabled={action !== null} className="ui-button min-h-10">
+            <RefreshCw aria-hidden="true" /> Refresh
+          </button>
+        </section>
+
+        <div className="mb-3 space-y-2">
+          <p className="tabular-nums text-xs font-medium text-muted">
+            {filtered.length} of {entries.length} {entries.length === 1 ? 'request' : 'requests'}
+          </p>
+          {actionError && <AdminNotice>{actionError}</AdminNotice>}
+          {loadError && <AdminNotice>Couldn’t refresh the request log. Select Refresh to try again.</AdminNotice>}
+        </div>
+
+        <div role="region" aria-label="Request log table" tabIndex={0} className="overflow-x-auto rounded-xl border border-line bg-panel">
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <caption className="sr-only">Captured requests</caption>
+            <thead className="border-b border-line bg-surface text-xs text-muted">
               <tr>
-                <td colSpan={8} className="p-6 text-center text-zinc-500">No matching requests.</td>
+                {['Time', 'Frame', 'Route', 'Status', 'Latency', 'Request ID', 'Session', 'Result'].map((label) => (
+                  <th key={label} scope="col" className="px-3 py-3 font-semibold">{label}</th>
+                ))}
               </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </main>
+            </thead>
+            <tbody>
+              {filtered.map((entry) => (
+                <RequestRow key={entry.id} entry={entry} open={expanded === entry.id} toggle={() => setExpanded(expanded === entry.id ? null : entry.id)} />
+              ))}
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-3 py-10 text-center text-sm text-muted">
+                    {entries.length ? 'No requests match these filters.' : 'No requests recorded yet.'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </main>
+    </AdminFrame>
   )
 }
 
-function FragmentRow({ e, open, toggle }: { e: Summary; open: boolean; toggle: () => void }) {
+function RequestRow({ entry, open, toggle }: { entry: Summary; open: boolean; toggle: () => void }) {
+  const result = entry.findings === null
+    ? null
+    : entry.findings + (entry.findings === 1 ? ' finding' : ' findings')
   return (
     <>
-      <tr onClick={toggle} className="cursor-pointer border-t border-line hover:bg-zinc-50" aria-expanded={open}>
-        <td className="whitespace-nowrap p-2">{new Date(e.ts).toLocaleTimeString()}</td>
-        <td className="p-2">
-          {e.has_image ? (
-            <img src={imgUrl(e.id, 'thumb')} alt="" loading="lazy" className="h-10 w-14 rounded object-cover" />
-          ) : null}
+      <tr className="border-t border-line first:border-t-0 hover:bg-surface">
+        <td className="tabular-nums whitespace-nowrap px-3 py-2">{new Date(entry.ts).toLocaleTimeString()}</td>
+        <td className="px-3 py-2">
+          {entry.has_image && <img src={imgUrl(entry.id, 'thumb')} alt="" loading="lazy" className="h-9 w-13 max-w-none rounded object-cover" />}
         </td>
-        <td className="p-2 font-mono text-xs">{e.method} {e.route}</td>
-        <td className="p-2">
-          <span className={`rounded px-1.5 py-0.5 text-xs ${statusClass(e.status)}`}>{e.status}</span>
+        <td className="px-3 py-2">
+          <button type="button" onClick={toggle} aria-expanded={open} className="flex min-h-9 items-center gap-2 rounded-sm text-sm font-semibold text-ink">
+            <ChevronDown className={open ? 'size-3.5 rotate-180 text-moss' : 'size-3.5 text-muted'} aria-hidden="true" />
+            {entry.method} {entry.route}
+          </button>
         </td>
-        <td className="p-2">{e.latency_ms} ms</td>
-        <td className="p-2 font-mono text-xs">{e.request_id?.slice(0, 8) ?? '-'}</td>
-        <td className="p-2 font-mono text-xs">{e.session_id.slice(0, 8) || '-'}</td>
-        <td className="p-2 text-xs">
-          {e.error_code ?? (e.findings !== null ? `${e.findings} finding(s)` : '')}
+        <td className="px-3 py-2">
+          <span className={'tabular-nums rounded-md px-1.5 py-0.5 text-xs font-medium ' + statusClass(entry.status)}>
+            {entry.status || 'Failed'}
+          </span>
         </td>
+        <td className="tabular-nums whitespace-nowrap px-3 py-2">{entry.latency_ms} ms</td>
+        <td className="px-3 py-2 text-xs tabular-nums text-muted">{entry.request_id?.slice(0, 8) ?? 'None'}</td>
+        <td className="px-3 py-2 text-xs tabular-nums text-muted">{entry.session_id.slice(0, 8) || 'None'}</td>
+        <td className="px-3 py-2 text-xs">{entry.error_code ?? result}</td>
       </tr>
       {open && (
-        <tr className="border-t border-line bg-white">
-          <td colSpan={8}>
-            <DetailView id={e.id} />
-          </td>
+        <tr className="border-t border-line bg-surface">
+          <td colSpan={8}><DetailView id={entry.id} /></td>
         </tr>
       )}
     </>

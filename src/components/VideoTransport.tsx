@@ -3,8 +3,7 @@ import { useEffect, useState } from 'react'
 
 export interface VideoTransportProps {
   videoElRef: React.RefObject<HTMLVideoElement | null>
-  ready: boolean
-  onUserSeekOrRestart: () => void
+  onTogglePlayback: () => void
 }
 
 function formatTime(seconds: number): string {
@@ -17,8 +16,7 @@ function formatTime(seconds: number): string {
 
 export function VideoTransport({
   videoElRef,
-  ready,
-  onUserSeekOrRestart,
+  onTogglePlayback,
 }: VideoTransportProps) {
   const [playing, setPlaying] = useState(false)
   const [currentTime, setCurrentTime] = useState(0)
@@ -26,7 +24,7 @@ export function VideoTransport({
 
   useEffect(() => {
     const video = videoElRef.current
-    if (!video || !ready) return
+    if (!video) return
 
     const sync = () => {
       setPlaying(!video.paused && !video.ended)
@@ -48,26 +46,13 @@ export function VideoTransport({
       video.removeEventListener('timeupdate', sync)
       video.removeEventListener('durationchange', sync)
     }
-  }, [ready, videoElRef])
-
-  if (!ready) return null
-
-  const togglePlay = () => {
-    const video = videoElRef.current
-    if (!video) return
-    if (video.paused || video.ended) {
-      void video.play().catch(() => {})
-    } else {
-      video.pause()
-    }
-  }
+  }, [videoElRef])
 
   const handleRestart = () => {
     const video = videoElRef.current
     if (!video) return
     video.currentTime = 0
     setCurrentTime(0)
-    onUserSeekOrRestart()
   }
 
   const handleSeek = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -77,27 +62,28 @@ export function VideoTransport({
     if (Number.isFinite(nextTime)) {
       video.currentTime = nextTime
       setCurrentTime(nextTime)
-      onUserSeekOrRestart()
     }
   }
 
-  const maxDuration = duration > 0 ? duration : 0.01
+  const pct = duration > 0 ? (Math.min(currentTime, duration) / duration) * 100 : 0
 
   return (
     <div
+      role="group"
       aria-label="Video playback controls"
-      className="flex items-center gap-2.5 rounded-full border border-line bg-white px-3.5 py-1.5 text-xs shadow-md"
+      className="flex w-full max-w-xl items-center gap-2 text-xs"
     >
       <button
         type="button"
-        onClick={togglePlay}
+        onClick={onTogglePlayback}
         aria-label={playing ? 'Pause video' : 'Play video'}
-        className="flex h-6 w-6 items-center justify-center rounded-full bg-zinc-100 text-zinc-900 transition hover:bg-zinc-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+        title={playing ? 'Pause video' : 'Play video'}
+        className="ui-icon rounded-full bg-accent text-white hover:bg-accent-hover hover:text-white"
       >
         {playing ? (
-          <Pause className="h-3 w-3" aria-hidden="true" />
+          <Pause className="size-3.5" aria-hidden="true" />
         ) : (
-          <Play className="h-3 w-3 translate-x-[0.5px]" aria-hidden="true" />
+          <Play className="size-3.5 translate-x-[0.5px] fill-current" aria-hidden="true" />
         )}
       </button>
 
@@ -106,23 +92,26 @@ export function VideoTransport({
         onClick={handleRestart}
         aria-label="Restart video"
         title="Restart video"
-        className="flex h-6 w-6 items-center justify-center rounded-full text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+        className="ui-icon"
       >
-        <RotateCcw className="h-3 w-3" aria-hidden="true" />
+        <RotateCcw className="size-3.5" aria-hidden="true" />
       </button>
 
       <input
         type="range"
         min={0}
-        max={maxDuration}
-        step={0.05}
-        value={Math.min(currentTime, maxDuration)}
+        max={duration}
+        step="any"
+        value={Math.min(currentTime, duration)}
+        disabled={duration <= 0}
         onChange={handleSeek}
-        aria-label="Seek video position"
-        className="w-36 sm:w-56 accent-accent cursor-pointer"
+        aria-label="Video position"
+        aria-valuetext={formatTime(currentTime) + ' of ' + formatTime(duration)}
+        style={{ '--progress': `${pct}%` } as React.CSSProperties}
+        className="ui-range min-w-0 flex-1"
       />
 
-      <span className="tabular-nums text-[11px] text-zinc-500 whitespace-nowrap">
+      <span className="tabular-nums whitespace-nowrap text-muted">
         {formatTime(currentTime)} / {formatTime(duration)}
       </span>
     </div>
