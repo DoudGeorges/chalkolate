@@ -2,6 +2,7 @@ import { AlertMode } from '../lib/categoryColors'
 import { Talkativeness } from '../lib/voicePreferences'
 import { AnswerFormat } from '../api/schemas'
 import { ALERT_MODE_OPTIONS } from './alertModeOptions'
+import { optionCardClass } from './optionStyles'
 import { TalkativenessPicker } from './TalkativenessPicker'
 
 export interface SettingsContentProps {
@@ -40,7 +41,7 @@ export function SettingsContent({
     <div className="space-y-5">
       <section className="space-y-2">
         <SectionLabel>Alert mode</SectionLabel>
-        <div role="radiogroup" aria-label="Alert mode" className="grid grid-cols-3 gap-1.5">
+        <div role="radiogroup" aria-label="Alert mode" className="grid grid-cols-3 gap-2">
           {ALERT_MODE_OPTIONS.map((option) => {
             const Icon = option.icon
             const selected = alertMode === option.id
@@ -51,17 +52,13 @@ export function SettingsContent({
                 role="radio"
                 aria-checked={selected}
                 onClick={() => onChangeAlertMode(option.id)}
-                className={`flex flex-col items-center gap-1.5 rounded-lg border px-1 py-2.5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
-                  selected
-                    ? 'border-accent bg-accent/[0.06] text-zinc-900'
-                    : 'border-line bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50'
-                }`}
+                className={optionCardClass(selected)}
               >
                 <Icon
                   className={`h-4 w-4 ${selected ? 'text-accent' : 'text-zinc-500'}`}
                   aria-hidden="true"
                 />
-                <span className="text-[11px] font-medium leading-none">{option.label}</span>
+                <span className="text-xs font-medium text-zinc-900">{option.label}</span>
               </button>
             )
           })}
@@ -77,7 +74,7 @@ export function SettingsContent({
 
       <section className="space-y-2 border-t border-line pt-4">
         <SectionLabel>Answer format</SectionLabel>
-        <div role="radiogroup" aria-label="Answer format" className="grid grid-cols-3 gap-1.5">
+        <div role="radiogroup" aria-label="Answer format" className="grid grid-cols-3 gap-2">
           {ANSWER_FORMATS.map(([format, label, example]) => (
             <button
               key={format}
@@ -85,14 +82,10 @@ export function SettingsContent({
               role="radio"
               aria-checked={answerFormat === format}
               onClick={() => onChangeAnswerFormat(format)}
-              className={`flex flex-col items-center gap-1 rounded-lg border px-1 py-2.5 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
-                answerFormat === format
-                  ? 'border-accent bg-accent/[0.06] text-zinc-900'
-                  : 'border-line bg-white text-zinc-600 hover:border-zinc-300 hover:bg-zinc-50'
-              }`}
+              className={optionCardClass(answerFormat === format)}
             >
-              <span className="text-[11px] font-medium leading-none">{label}</span>
-              <span className="text-[10px] leading-none text-zinc-500">{example}</span>
+              <span className="text-xs font-medium text-zinc-900">{label}</span>
+              <span className="text-[11px] text-zinc-500">{example}</span>
             </button>
           ))}
         </div>

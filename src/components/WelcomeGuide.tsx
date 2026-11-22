@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { AlertMode } from '../lib/categoryColors'
 import { Talkativeness } from '../lib/voicePreferences'
 import { ALERT_MODE_OPTIONS } from './alertModeOptions'
+import { optionCardClass } from './optionStyles'
 import { TalkativenessPicker } from './TalkativenessPicker'
 
 export type WelcomeSource = 'camera' | 'screen'
@@ -64,11 +65,7 @@ function OptionCard({
       role="radio"
       aria-checked={selected}
       onClick={onSelect}
-      className={`flex flex-col items-start gap-1.5 rounded-lg border px-3 py-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
-        selected
-          ? 'border-accent bg-accent/[0.06]'
-          : 'border-line bg-white hover:border-zinc-300 hover:bg-zinc-50'
-      }`}
+      className={optionCardClass(selected)}
     >
       <Icon
         className={`h-4 w-4 ${selected ? 'text-accent' : 'text-zinc-500'}`}
