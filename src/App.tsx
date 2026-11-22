@@ -582,7 +582,7 @@ export function App() {
           className="flex items-center justify-center border-b border-amber-200 bg-amber-50 px-4 py-1.5 text-xs text-amber-800"
         >
           {healthError
-            ? 'Backend unreachable — start the FastAPI server on port 8000.'
+            ? 'Backend unreachable. Start the FastAPI server on port 8000.'
             : 'Set GEMINI_API_KEY in .env and restart the backend.'}
         </div>
       )}
