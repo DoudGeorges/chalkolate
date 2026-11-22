@@ -7,7 +7,7 @@ import json
 import logging
 import re
 import time
-from typing import Protocol
+from typing import Protocol, cast
 
 import httpx
 from google.genai import errors as genai_errors
@@ -81,7 +81,49 @@ SYSTEM_INSTRUCTION = (
     "null when non-mathematical)."
 )
 
-_RESPONSE_JSON_SCHEMA: dict[str, object] = BoardAnalysisResult.model_json_schema()
+# Gemini compiles response schemas into a decoding state machine and rejects ones that are too
+# complex ("schema produces a constraint that has too many states for serving", HTTP 400).
+# Length limits, numeric ranges, and array size caps multiply that state count, so they are
+# stripped from the schema sent to the model. Pydantic still enforces every limit server-side
+# when parsing the response (invalid findings are dropped, extras capped at MAX_FINDINGS).
+_GEMINI_UNSERVABLE_KEYWORDS = frozenset(
+    {
+        "minLength",
+        "maxLength",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "pattern",
+        "format",
+    }
+)
+
+
+def simplify_schema_for_gemini(node: object) -> object:
+    """Return a copy of a JSON schema without constraints that inflate Gemini's state space.
+
+    Fixed-length arrays (minItems == maxItems, e.g. the 4-number box) keep their size; other
+    item-count bounds are dropped.
+    """
+    if isinstance(node, list):
+        return [simplify_schema_for_gemini(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    fixed_length = "minItems" in node and node.get("minItems") == node.get("maxItems")
+    simplified: dict[str, object] = {}
+    for key, value in node.items():
+        if key in _GEMINI_UNSERVABLE_KEYWORDS:
+            continue
+        if key in ("minItems", "maxItems") and not fixed_length:
+            continue
+        simplified[key] = simplify_schema_for_gemini(value)
+    return simplified
+
+
+_RESPONSE_JSON_SCHEMA = cast(
+    dict[str, object], simplify_schema_for_gemini(BoardAnalysisResult.model_json_schema())
+)
 
 _BLOCKED_FINISH_REASONS = frozenset(
     {
