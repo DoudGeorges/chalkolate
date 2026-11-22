@@ -12,6 +12,7 @@ import { VerificationResultSummary, useBoardMonitor } from './hooks/useBoardMoni
 import { useMediaSource } from './hooks/useMediaSource'
 import { useNotesBuilder } from './hooks/useNotesBuilder'
 import { useSpeechAlerts } from './hooks/useSpeechAlerts'
+import { isAbortError } from './lib/abort'
 import { AlertMode } from './lib/categoryColors'
 import {
   VoicePreferences,
@@ -28,6 +29,16 @@ import { exportLatex } from './lib/notesLatex'
 const ANSWER_FORMAT_KEY = 'chalkolate.answerFormat.v1'
 
 const LAUNCH_TIMEOUT_MS = 60_000
+
+/** Saves generated text as a local file download; nothing leaves the browser. */
+function downloadText(text: string, type: string, filename: string): void {
+  const url = URL.createObjectURL(new Blob([text], { type }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
+}
 
 export function App() {
   const [health, setHealth] = useState<HealthResponse | null>(null)
@@ -127,7 +138,7 @@ export function App() {
         setHealthError(null)
       })
       .catch((err) => {
-        if (err instanceof DOMException && err.name === 'AbortError') return
+        if (isAbortError(err)) return
         setHealthError(err instanceof Error ? err.message : 'Backend unavailable.')
       })
     return () => controller.abort()
@@ -316,25 +327,11 @@ export function App() {
   })
 
   const handleExportMarkdown = () => {
-    const blob = new Blob([exportMarkdown(notesBuilder.notes)], {
-      type: 'text/markdown;charset=utf-8',
-    })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'lecture-notes.md'
-    a.click()
-    window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    downloadText(exportMarkdown(notesBuilder.notes), 'text/markdown;charset=utf-8', 'lecture-notes.md')
   }
 
   const handleExportLatex = () => {
-    const blob = new Blob([exportLatex(notesBuilder.notes)], { type: 'application/x-tex' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'lecture-notes.tex'
-    a.click()
-    window.setTimeout(() => URL.revokeObjectURL(url), 10_000)
+    downloadText(exportLatex(notesBuilder.notes), 'application/x-tex', 'lecture-notes.tex')
   }
 
   const handleExportPrint = () => {
@@ -413,7 +410,7 @@ export function App() {
       }
     } catch (err) {
       if (controller.signal.aborted) return
-      if (err instanceof DOMException && err.name === 'AbortError') return
+      if (isAbortError(err)) return
       setCalibrationDetectStatus('error')
     } finally {
       if (detectAbortRef.current === controller) {

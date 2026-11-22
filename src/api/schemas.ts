@@ -72,7 +72,6 @@ export const ErrorEnvelopeSchema = z
     request_id: z.string().nullable().optional(),
   })
   .strict()
-export type ErrorEnvelope = z.infer<typeof ErrorEnvelopeSchema>
 
 export const BoardDetectionResponseSchema = z
   .object({

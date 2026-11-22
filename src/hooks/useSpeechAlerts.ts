@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiClientError, requestSpeechStream } from '../api/client'
+import { isAbortError } from '../lib/abort'
 import { playAudioStreamResponse, unlockAudioPlayback } from '../lib/audioPlayer'
 import {
   DEFAULT_VOICE_PREFERENCES,
@@ -61,10 +62,6 @@ function getSpeechSynthesisApi(): SpeechSynthesis | null {
     return null
   }
   return window.speechSynthesis
-}
-
-function isAbortError(err: unknown): boolean {
-  return err instanceof DOMException && err.name === 'AbortError'
 }
 
 function isPermanentSpeechConfigFailure(err: unknown): boolean {
