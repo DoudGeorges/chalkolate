@@ -1,15 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { detectBoardCorners, fetchHealth } from './api/client'
-import {
-  AnswerFormat,
-  AnswerFormatSchema,
-  CalibrationCorners,
-  HealthResponse,
-} from './api/schemas'
+import { AnswerFormat, AnswerFormatSchema, CalibrationCorners, HealthResponse } from './api/schemas'
 import { CalibrationDetectStatus } from './components/CalibrationOverlay'
-import { FindingsPanel, SidePanelTab } from './components/FindingsPanel'
 import { NotesPanel } from './components/NotesPanel'
-import { SettingsContent } from './components/SettingsContent'
+import { SettingsPanel } from './components/SettingsPanel'
 import { Stage } from './components/Stage'
 import { WelcomeGuide, WelcomeSource } from './components/WelcomeGuide'
 import { ToastItem, Toasts } from './components/Toasts'
@@ -58,8 +52,7 @@ export function App() {
       /* preference simply is not remembered */
     }
   }
-  const [voicePreferences, setVoicePreferences] =
-    useState<VoicePreferences>(loadVoicePreferences)
+  const [voicePreferences, setVoicePreferences] = useState<VoicePreferences>(loadVoicePreferences)
 
   const handleChangeVoicePreferences = useCallback((patch: Partial<VoicePreferences>) => {
     setVoicePreferences((prev) => {
@@ -73,21 +66,17 @@ export function App() {
   const [calibrationDetectStatus, setCalibrationDetectStatus] =
     useState<CalibrationDetectStatus>('idle')
   const [committedCorners, setCommittedCorners] = useState<CalibrationCorners | null>(null)
-  const [draftCorners, setDraftCorners] = useState<CalibrationCorners>(
-    DEFAULT_CALIBRATION_CORNERS,
-  )
+  const [draftCorners, setDraftCorners] = useState<CalibrationCorners>(DEFAULT_CALIBRATION_CORNERS)
   const detectAbortRef = useRef<AbortController | null>(null)
   const userEditedDraftRef = useRef(false)
   const calibrationCanvasRef = useRef<HTMLCanvasElement | null>(null)
 
   // One right-side panel hosts both Findings and Settings as tabs.
-  const [panelOpen, setPanelOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   // Notes build automatically once a source is live.
   const [notesOpen, setNotesOpen] = useState(false)
-  const [sidebarTab, setSidebarTab] = useState<SidePanelTab>('findings')
   const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null)
   const [hoveredIssueId, setHoveredIssueId] = useState<string | null>(null)
-  const [pulseBadge, setPulseBadge] = useState(false)
   const [toasts, setToasts] = useState<ToastItem[]>([])
   const toastTimersRef = useRef<Map<string, number>>(new Map())
 
@@ -98,20 +87,17 @@ export function App() {
     }
   }, [])
 
-  const pushToast = useCallback(
-    (toast: Omit<ToastItem, 'id'>, autoDismissMs = 4000) => {
-      const id = `toast-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`
-      setToasts((prev) => [{ ...toast, id }, ...prev].slice(0, 3))
-      if (autoDismissMs > 0) {
-        const timer = window.setTimeout(() => {
-          toastTimersRef.current.delete(id)
-          setToasts((prev) => prev.filter((item) => item.id !== id))
-        }, autoDismissMs)
-        toastTimersRef.current.set(id, timer)
-      }
-    },
-    [],
-  )
+  const pushToast = useCallback((toast: Omit<ToastItem, 'id'>, autoDismissMs = 4000) => {
+    const id = `toast-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`
+    setToasts((prev) => [{ ...toast, id }, ...prev].slice(0, 3))
+    if (autoDismissMs > 0) {
+      const timer = window.setTimeout(() => {
+        toastTimersRef.current.delete(id)
+        setToasts((prev) => prev.filter((item) => item.id !== id))
+      }, autoDismissMs)
+      toastTimersRef.current.set(id, timer)
+    }
+  }, [])
 
   const dismissToast = useCallback((id: string) => {
     const timer = toastTimersRef.current.get(id)
@@ -279,10 +265,6 @@ export function App() {
 
   const handleNewFindings = useCallback(
     (newlyOpened: readonly TrackedIssue[]) => {
-      if (newlyOpened.length > 0) {
-        setPulseBadge(true)
-        window.setTimeout(() => setPulseBadge(false), 1200)
-      }
       if (!monitoringRef.current || alertModeRef.current === 'visual_only') return
       const unsuppressed = newlyOpened.filter((item) => !item.spoken)
       if (unsuppressed.length > 0) {
@@ -445,7 +427,7 @@ export function App() {
   const handleGoHome = () => {
     speech.cancelAll()
     setLaunchPending(false)
-    setPanelOpen(false)
+    setSettingsOpen(false)
     media.clearSource()
   }
 
@@ -469,11 +451,6 @@ export function App() {
     if (mode === 'visual_only') {
       speech.cancelAll()
     }
-    // Voice only keeps a clean board: close Findings, but leave Settings open if the
-    // user is changing the mode from there.
-    if (mode === 'voice_only' && !(panelOpen && sidebarTab === 'settings')) {
-      setPanelOpen(false)
-    }
   }
 
   const openIssues = useMemo(
@@ -485,17 +462,7 @@ export function App() {
     syncActiveIssueIds(new Set(openIssues.map((item) => item.id)))
   }, [openIssues, syncActiveIssueIds])
 
-  const dismissedCount = monitor.state.tracker.dismissalHistoryIds.length
   const showVisualFindings = alertMode !== 'voice_only'
-  const activeSidebarTab: SidePanelTab = showVisualFindings ? sidebarTab : 'settings'
-  const handleSelectOverlayIssue = (issueId: string) => {
-    setSelectedIssueId(issueId)
-    if (showVisualFindings) {
-      setSidebarTab('findings')
-      setPanelOpen(true)
-    }
-  }
-
   const handleToggleCalibration = () => {
     if (!media.state.ready) return
     if (calibrationEditing) {
@@ -542,22 +509,7 @@ export function App() {
     setCalibrationDetectStatus('idle')
   }
 
-  const handleDismissIssue = (issueId: string) => {
-    speech.cancelAll()
-    if (selectedIssueId === issueId) {
-      setSelectedIssueId(null)
-    }
-    monitor.dismiss(issueId)
-    pushToast({
-      message: 'Finding dismissed',
-      tone: 'info',
-      actionLabel: 'Undo',
-      onAction: () => monitor.undoDismissal(),
-    })
-  }
-
-  const backendNeedsSetup =
-    healthError !== null || (health !== null && !health.analysis_configured)
+  const backendNeedsSetup = healthError !== null || (health !== null && !health.analysis_configured)
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-surface text-zinc-900">
@@ -571,6 +523,8 @@ export function App() {
         notesCount={notesBuilder.notes.sections.length}
         notesActive={notesActive && media.state.ready && !calibrationEditing}
         onToggleNotes={() => setNotesOpen((prev) => !prev)}
+        settingsOpen={settingsOpen}
+        onToggleSettings={() => setSettingsOpen((prev) => !prev)}
         canCrop={media.state.ready && media.state.kind !== 'screen' && !calibrationEditing}
         cropped={committedCorners !== null}
         onToggleCrop={handleToggleCalibration}
@@ -620,7 +574,7 @@ export function App() {
           locationsUnverified={monitor.state.locationsUnverified}
           selectedIssueId={selectedIssueId}
           hoveredIssueId={hoveredIssueId}
-          onSelectIssue={handleSelectOverlayIssue}
+          onSelectIssue={setSelectedIssueId}
           onHoverIssue={setHoveredIssueId}
           calibrationEditing={calibrationEditing}
           calibrationDetectStatus={calibrationDetectStatus}
@@ -648,39 +602,17 @@ export function App() {
         />
 
         {!onboarding && (
-          <FindingsPanel
-            open={panelOpen}
-            tab={activeSidebarTab}
-            onChangeTab={setSidebarTab}
-            findingsEnabled={showVisualFindings}
-            settingsContent={
-              <SettingsContent
-                alertMode={alertMode}
-                onChangeAlertMode={handleChangeAlertMode}
-                answerFormat={answerFormat}
-                onChangeAnswerFormat={handleChangeAnswerFormat}
-                talkativeness={voicePreferences.talkativeness}
-                onChangeTalkativeness={(talkativeness) =>
-                  handleChangeVoicePreferences({ talkativeness })
-                }
-              />
+          <SettingsPanel
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            alertMode={alertMode}
+            onChangeAlertMode={handleChangeAlertMode}
+            answerFormat={answerFormat}
+            onChangeAnswerFormat={handleChangeAnswerFormat}
+            talkativeness={voicePreferences.talkativeness}
+            onChangeTalkativeness={(talkativeness) =>
+              handleChangeVoicePreferences({ talkativeness })
             }
-            monitoring={monitoring}
-            onToggle={() => setPanelOpen((prev) => !prev)}
-            onClose={() => setPanelOpen(false)}
-            hasAnalyzed={monitor.state.hasAnalyzed}
-            openIssues={openIssues}
-            dismissedCount={dismissedCount}
-            selectedIssueId={selectedIssueId}
-            hoveredIssueId={hoveredIssueId}
-            speechSupported={speech.isSupported}
-            pulseBadge={pulseBadge}
-            onSelectIssue={setSelectedIssueId}
-            onHoverIssue={setHoveredIssueId}
-            onSpeakIssue={speech.speakNow}
-            onMarkFixed={monitor.markFixed}
-            onDismissIssue={handleDismissIssue}
-            onRestoreDismissed={monitor.restoreDismissed}
           />
         )}
       </div>

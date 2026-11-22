@@ -1,4 +1,4 @@
-import { ArrowLeft, Crop, FileText, Play, Square } from 'lucide-react'
+import { ArrowLeft, Crop, FileText, Play, Settings, Square } from 'lucide-react'
 
 export interface TopBarProps {
   mediaReady: boolean
@@ -12,6 +12,8 @@ export interface TopBarProps {
   notesCount: number
   /** Notes are being built automatically right now. */
   notesActive: boolean
+  settingsOpen: boolean
+  onToggleSettings: () => void
   onToggleNotes: () => void
   /** Show the crop control (a ready camera/video source; not screen shares). */
   canCrop: boolean
@@ -27,6 +29,8 @@ export function TopBar({
   notesOpen,
   notesCount,
   notesActive,
+  settingsOpen,
+  onToggleSettings,
   onToggleNotes,
   canCrop,
   cropped,
@@ -69,6 +73,18 @@ export function TopBar({
 
       {/* Right: Crop + Start/Stop */}
       <div className="flex items-center gap-2">
+        {!onboarding && (
+          <button
+            type="button"
+            onClick={onToggleSettings}
+            aria-expanded={settingsOpen}
+            aria-label="Toggle settings"
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-xs font-medium text-zinc-700 transition hover:bg-zinc-50 hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60"
+          >
+            <Settings className="h-3.5 w-3.5" aria-hidden="true" />
+            Settings
+          </button>
+        )}
         {!onboarding && canCrop && (
           <button
             type="button"
