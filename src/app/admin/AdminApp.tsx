@@ -135,7 +135,7 @@ export function AdminApp() {
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const body = (await r.json()) as { entries: Summary[]; storage: string | null }
       setEntries(body.entries)
-      setMeta(body.storage ?? 'no storage configured — nothing is being recorded')
+      setMeta(body.storage ?? 'no storage configured, nothing is being recorded')
       setLoadError(null)
       setPhase('ready')
     } catch (e) {
@@ -294,8 +294,8 @@ function FragmentRow({ e, open, toggle }: { e: Summary; open: boolean; toggle: (
           <span className={`rounded px-1.5 py-0.5 text-xs ${statusClass(e.status)}`}>{e.status}</span>
         </td>
         <td className="p-2">{e.latency_ms} ms</td>
-        <td className="p-2 font-mono text-xs">{e.request_id?.slice(0, 8) ?? '—'}</td>
-        <td className="p-2 font-mono text-xs">{e.session_id.slice(0, 8) || '—'}</td>
+        <td className="p-2 font-mono text-xs">{e.request_id?.slice(0, 8) ?? '-'}</td>
+        <td className="p-2 font-mono text-xs">{e.session_id.slice(0, 8) || '-'}</td>
         <td className="p-2 text-xs">
           {e.error_code ?? (e.findings !== null ? `${e.findings} finding(s)` : '')}
         </td>
