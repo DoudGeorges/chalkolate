@@ -16,6 +16,7 @@ import {
   createEmptyNotes,
   cropRect,
   loadNotes,
+  purgeLegacyNotes,
   saveNotes,
 } from '../lib/notes'
 import {
@@ -74,7 +75,10 @@ const DEFAULT_DEPS: NotesBuilderDeps = {
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? crypto.randomUUID()
       : `00000000-0000-4000-8000-${Date.now().toString().padStart(12, '0').slice(-12)}`,
-  loadInitial: () => loadNotes(),
+  loadInitial: () => {
+    purgeLegacyNotes()
+    return loadNotes()
+  },
   persist: (doc) => saveNotes(doc),
 }
 

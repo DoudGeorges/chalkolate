@@ -86,6 +86,7 @@ export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse>
   try {
     response = await fetch('/api/health', {
       method: 'GET',
+      cache: 'no-store',
       signal,
       headers: { Accept: 'application/json' },
     })
@@ -136,6 +137,7 @@ export async function analyzeSnapshot(
   try {
     response = await fetch('/api/analyze', {
       method: 'POST',
+      cache: 'no-store',
       body: formData,
       signal,
     })
@@ -197,6 +199,7 @@ export async function detectBoardCorners(
   try {
     response = await fetch('/api/detect-board', {
       method: 'POST',
+      cache: 'no-store',
       body: formData,
       signal,
     })
@@ -243,6 +246,7 @@ export async function requestSpeechStream(
   try {
     response = await fetch('/api/speech', {
       method: 'POST',
+      cache: 'no-store',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'audio/mpeg',
@@ -287,7 +291,12 @@ export async function requestNotesUpdate(
 
   let response: Response
   try {
-    response = await fetch('/api/notes', { method: 'POST', body: formData, signal })
+    response = await fetch('/api/notes', {
+      method: 'POST',
+      cache: 'no-store',
+      body: formData,
+      signal,
+    })
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
       throw err
