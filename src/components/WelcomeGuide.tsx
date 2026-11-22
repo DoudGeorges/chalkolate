@@ -24,7 +24,7 @@ export interface WelcomeGuideProps {
 const SOURCES = [
   { id: 'camera', label: 'Camera', icon: Camera },
   { id: 'screen', label: 'Screen', icon: MonitorUp },
-  { id: 'upload', label: 'Video file', icon: FileVideo },
+  { id: 'upload', label: 'Video', icon: FileVideo },
 ] as const
 
 export function WelcomeGuide({

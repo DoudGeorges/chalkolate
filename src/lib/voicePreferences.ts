@@ -11,7 +11,8 @@ export const DEFAULT_VOICE_PREFERENCES: VoicePreferences = {
   speechStyle: 'professor',
 }
 
-const VOICE_PREFERENCES_STORAGE_KEY = 'chalkolate.voicePreferences.v1'
+const VOICE_PREFERENCES_STORAGE_KEY = 'chalkolate.voicePreferences.v2'
+const LEGACY_VOICE_PREFERENCES_STORAGE_KEY = 'chalkolate.voicePreferences.v1'
 
 export function sanitizeVoicePreferences(raw: unknown): VoicePreferences {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_VOICE_PREFERENCES }
@@ -32,7 +33,18 @@ export function sanitizeVoicePreferences(raw: unknown): VoicePreferences {
 export function loadVoicePreferences(): VoicePreferences {
   try {
     const stored = window.localStorage.getItem(VOICE_PREFERENCES_STORAGE_KEY)
-    return sanitizeVoicePreferences(stored ? JSON.parse(stored) : null)
+    if (stored) {
+      return sanitizeVoicePreferences(JSON.parse(stored))
+    }
+    const legacy = window.localStorage.getItem(LEGACY_VOICE_PREFERENCES_STORAGE_KEY)
+    if (legacy) {
+      const migrated = sanitizeVoicePreferences(JSON.parse(legacy))
+      return {
+        elevenLabsVoice: migrated.elevenLabsVoice,
+        speechStyle: DEFAULT_VOICE_PREFERENCES.speechStyle,
+      }
+    }
+    return { ...DEFAULT_VOICE_PREFERENCES }
   } catch {
     return { ...DEFAULT_VOICE_PREFERENCES }
   }

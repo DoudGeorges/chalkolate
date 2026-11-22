@@ -43,7 +43,7 @@ export function VoiceSettings({
   const rows = useRef(new Map<string, HTMLButtonElement>())
   const displayVoices = useMemo(() => voices.map(parseVoiceLabel), [voices])
   const search = query.trim().toLowerCase()
-  const filtered = displayVoices.filter((voice) => voice.searchText.includes(search))
+  const filtered = displayVoices.filter((voice) => voice.name.toLowerCase().includes(search))
   const selectedId = preferences.elevenLabsVoice
   const focusableId = filtered.some((voice) => voice.id === selectedId) ? selectedId : filtered[0]?.id
 
@@ -163,7 +163,6 @@ export function VoiceSettings({
               {filtered.map((voice) => {
                 const selected = voice.id === selectedId
                 const previewing = previewingVoice === voice.id
-                const subtitle = [voice.tagline, ...voice.tags].filter(Boolean).join(' · ')
                 const sampleName = voice.isDefault ? 'the default voice' : voice.name
                 return (
                   <div
@@ -180,17 +179,14 @@ export function VoiceSettings({
                       aria-checked={selected}
                       tabIndex={voice.id === focusableId ? 0 : -1}
                       onClick={() => onChange({ elevenLabsVoice: voice.id })}
-                      className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1 text-left"
+                      className="flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1 text-left"
                     >
                       <span className="grid size-7 shrink-0 place-items-center rounded-full bg-accent-soft text-xs font-semibold text-accent" aria-hidden="true">
                         {voice.name.charAt(0).toUpperCase()}
                       </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-1.5">
-                          <span className="truncate text-sm font-medium text-ink">{voice.name}</span>
-                          {voice.isDefault && voice.name !== 'Default voice' && <span className="text-xs text-muted">Default</span>}
-                        </span>
-                        {subtitle && <span className="block truncate text-xs text-muted">{subtitle}</span>}
+                      <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                        <span className="truncate text-sm font-medium text-ink">{voice.name}</span>
+                        {voice.isDefault && voice.name !== 'Default voice' && <span className="text-xs text-muted">Default</span>}
                       </span>
                       {selected && <Check className="size-3.5 shrink-0 text-accent" aria-hidden="true" />}
                     </button>

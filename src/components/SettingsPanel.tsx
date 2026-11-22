@@ -36,7 +36,7 @@ export function SettingsPanel({ open, onClose, ...content }: SettingsPanelProps)
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/35 p-4 sm:p-6 animate-fade-in"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4 sm:p-6 animate-fade-in"
       onClick={(event) => {
         if (event.target === event.currentTarget) close()
       }}

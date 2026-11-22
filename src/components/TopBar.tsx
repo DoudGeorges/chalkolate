@@ -1,4 +1,4 @@
-import { Crop, LoaderCircle, Play, Settings, Square } from 'lucide-react'
+import { LoaderCircle, Play, Settings, Square } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { Brand } from './Brand'
 
@@ -10,10 +10,6 @@ export interface TopBarProps {
   onGoHome: () => void
   settingsOpen: boolean
   onToggleSettings: () => void
-  canCrop: boolean
-  cropped: boolean
-  calibrationEditing: boolean
-  onToggleCrop: () => void
 }
 
 export function TopBar({
@@ -24,12 +20,7 @@ export function TopBar({
   onGoHome,
   settingsOpen,
   onToggleSettings,
-  canCrop,
-  cropped,
-  calibrationEditing,
-  onToggleCrop,
 }: TopBarProps) {
-  const cropLabel = calibrationEditing ? 'Cancel crop' : cropped ? 'Adjust crop' : 'Crop board'
   const startButton = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     if (!onboarding) startButton.current?.focus({ preventScroll: true })
@@ -43,40 +34,22 @@ export function TopBar({
             type="button"
             onClick={onGoHome}
             aria-label="Chalkolate home"
-            title="Return to session setup"
+            title="Return to setup"
             className="inline-flex -mx-1 rounded-md px-1 transition-opacity hover:opacity-80"
           >
             <Brand />
           </button>
 
           {!onboarding && (
-            <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
-              {canCrop && (
-                <>
-                  <button
-                    type="button"
-                    id="crop-toggle"
-                    onClick={onToggleCrop}
-                    title={cropLabel}
-                    aria-label={cropLabel}
-                    aria-expanded={calibrationEditing}
-                    className="ui-button px-2.5 sm:px-3"
-                    data-selected={cropped}
-                  >
-                    <Crop aria-hidden="true" />
-                    <span className="hidden lg:inline">{cropLabel}</span>
-                  </button>
-                  <span aria-hidden="true" className="mx-1 hidden h-5 w-px bg-line sm:block" />
-                </>
-              )}
+            <div className="flex min-w-0 items-center gap-2">
               <button
                 type="button"
                 ref={startButton}
                 disabled={starting}
                 aria-busy={starting}
-                title={monitoring ? 'Stop board checks and spoken alerts' : 'Start board checks'}
+                title={monitoring ? 'Stop checking the board' : 'Start checking the board'}
                 onClick={onToggleMonitoring}
-                className="ui-button ml-auto px-2.5 sm:ml-0 sm:px-3"
+                className="ui-button px-2.5 sm:px-3"
                 data-variant={monitoring ? 'danger' : 'primary'}
               >
                 {starting ? (
@@ -86,7 +59,7 @@ export function TopBar({
                 ) : (
                   <Play className="fill-current" aria-hidden="true" />
                 )}
-                {starting ? 'Starting…' : monitoring ? 'Stop' : 'Start'}
+                {starting ? 'Starting…' : monitoring ? 'Stop checking' : 'Start checking'}
               </button>
               <button
                 type="button"

@@ -1,4 +1,4 @@
-import { ArrowRight, LoaderCircle, Play, X } from 'lucide-react'
+import { ArrowRight, Crop, LoaderCircle, Play, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { CalibrationCorners } from '../api/schemas'
 import { MonitorPhase } from '../hooks/useBoardMonitor'
@@ -34,6 +34,9 @@ export interface StageProps {
   onHoverIssue: (issueId: string | null) => void
   calibrationEditing: boolean
   calibrationDetectStatus: CalibrationDetectStatus
+  canCrop: boolean
+  cropped: boolean
+  onToggleCrop: () => void
   draftCorners: CalibrationCorners
   committedCorners: CalibrationCorners | null
   onChangeDraftCorners: (next: CalibrationCorners) => void
@@ -61,6 +64,9 @@ export function Stage({
   onHoverIssue,
   calibrationEditing,
   calibrationDetectStatus,
+  canCrop,
+  cropped,
+  onToggleCrop,
   draftCorners,
   committedCorners,
   onChangeDraftCorners,
@@ -305,14 +311,33 @@ export function Stage({
           />
         )}
 
-        {monitoring && (!canMonitor || phase === 'ANALYZING') && !calibrationEditing && (
-          <div
-            role="status"
-            aria-live="polite"
-            className="pointer-events-none absolute bottom-3 left-3 z-20 inline-flex items-center gap-2 rounded-full bg-panel px-3 py-1.5 text-xs font-medium text-ink shadow-soft animate-fade-in sm:bottom-4 sm:left-4"
-          >
-            {canMonitor && <span className="ui-spinner-dot" aria-hidden="true" />}
-            <span>{canMonitor ? 'Checking board…' : 'Waiting for the analysis service…'}</span>
+        {!calibrationEditing && (canCrop || (monitoring && (!canMonitor || phase === 'ANALYZING'))) && (
+          <div className="pointer-events-none absolute bottom-3 left-3 z-20 flex flex-wrap items-center gap-2 sm:bottom-4 sm:left-4">
+            {canCrop && (
+              <button
+                type="button"
+                id="crop-toggle"
+                onClick={onToggleCrop}
+                title={cropped ? 'Adjust crop' : 'Crop board'}
+                aria-label={cropped ? 'Adjust crop' : 'Crop board'}
+                aria-expanded={false}
+                className="ui-button ui-compact pointer-events-auto shadow-soft"
+                data-selected={cropped}
+              >
+                <Crop aria-hidden="true" />
+                <span>{cropped ? 'Adjust crop' : 'Crop board'}</span>
+              </button>
+            )}
+            {monitoring && (!canMonitor || phase === 'ANALYZING') && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="inline-flex items-center gap-2 rounded-full bg-panel px-3 py-1.5 text-xs font-medium text-ink shadow-soft animate-fade-in"
+              >
+                {canMonitor && <span className="ui-spinner-dot" aria-hidden="true" />}
+                <span>{canMonitor ? 'Checking board…' : 'Waiting for the analysis service…'}</span>
+              </div>
+            )}
           </div>
         )}
 

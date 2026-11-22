@@ -204,30 +204,23 @@ export function CalibrationToolbar({
   const validation = validateCalibrationQuad(draftCorners)
   const isDetecting = detectStatus === 'detecting'
   let statusText = 'Move each handle to a corner of the board.'
-  let statusTone = 'text-muted'
   if (!validation.valid) {
     statusText = validation.reason ?? 'Move the handles to form a four-sided crop.'
-    statusTone = 'text-danger'
   } else if (isDetecting) {
     statusText = 'Finding board corners…'
   } else if (detectStatus === 'detected') {
     statusText = 'Board found. Adjust the corners if needed.'
-    statusTone = 'text-moss'
   } else if (detectStatus === 'fallback') {
     statusText = 'The board edges are unclear. Move the handles into place.'
   } else if (detectStatus === 'error') {
     statusText = 'Corner detection is unavailable. Move the handles into place.'
-    statusTone = 'text-warn'
   }
 
   return (
-    <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-line bg-panel p-3">
-      <p role="status" className={`flex items-center gap-2 text-xs leading-relaxed ${statusTone}`}>
-        {isDetecting && (
-          <LoaderCircle className="size-3.5 shrink-0 animate-spin text-moss" aria-hidden="true" />
-        )}
+    <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-line bg-panel p-3">
+      <span role="status" className="sr-only">
         {statusText}
-      </p>
+      </span>
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -235,8 +228,12 @@ export function CalibrationToolbar({
           disabled={isDetecting}
           className="ui-button ui-compact"
         >
-          <Scan aria-hidden="true" />
-          Detect corners
+          {isDetecting ? (
+            <LoaderCircle className="animate-spin text-moss" aria-hidden="true" />
+          ) : (
+            <Scan aria-hidden="true" />
+          )}
+          {isDetecting ? 'Finding corners…' : 'Detect corners'}
         </button>
         <button
           type="button"
@@ -245,6 +242,8 @@ export function CalibrationToolbar({
         >
           Reset crop
         </button>
+      </div>
+      <div className="ml-auto flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={onCancel}
@@ -257,7 +256,7 @@ export function CalibrationToolbar({
           type="button"
           onClick={onApply}
           disabled={!validation.valid || isDetecting}
-          className="ui-button ui-compact ml-auto"
+          className="ui-button ui-compact"
           data-variant="primary"
         >
           <Check aria-hidden="true" />

@@ -1,3 +1,11 @@
 export function Brand() {
-  return <span className="shrink-0 font-chalk text-2xl leading-none text-accent">Chalkolate</span>
+  return (
+    <img
+      src="/chalkolate-wordmark.png"
+      alt="Chalkolate"
+      width={720}
+      height={136}
+      className="h-7 w-auto shrink-0 select-none object-contain sm:h-8"
+    />
+  )
 }

@@ -1,15 +1,15 @@
 @import "tailwindcss";
 
 @theme {
-  --color-surface: #FFF5E8;
+  --color-surface: #FFFFFF;
   --color-panel: #FFFFFF;
-  --color-sunken: #F6E8D5;
-  --color-stage: #EFE0CC;
-  --color-line: #E6D2B8;
+  --color-sunken: #FAF5EE;
+  --color-stage: #F4EDE4;
+  --color-line: #E7DDD0;
   --color-control-line: #B77636;
   --color-accent: #5D2B0B;
   --color-accent-hover: #401D04;
-  --color-accent-soft: #FCEAD2;
+  --color-accent-soft: #FAF1E4;
   --color-accent-light: #E9AB66;
   --color-ink: #401C07;
   --color-muted: #7E401B;
@@ -29,7 +29,6 @@
   --animate-panel-in: panel-in 240ms var(--ease-out-quint) both;
   --animate-pill-in: rise-in 160ms var(--ease-out-quint) both;
   --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif;
-  --font-chalk: var(--font-fredericka), "Chalkboard SE", "Chalkboard", cursive;
 
   @keyframes fade-in {
     from {
@@ -228,7 +227,7 @@ body {
   }
 
   .option-card:hover {
-    @apply border-control-line bg-surface;
+    @apply border-control-line bg-sunken;
   }
 
   .option-card:has(:checked) {

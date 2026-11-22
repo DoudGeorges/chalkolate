@@ -10,13 +10,6 @@ const bodyFont = localFont({
   variable: '--font-body',
   display: 'swap',
 })
-const chalk = localFont({
-  src: './fonts/fredericka-the-great.woff2',
-  weight: '400',
-  variable: '--font-fredericka',
-  adjustFontFallback: 'Times New Roman',
-  display: 'swap',
-})
 
 export const metadata: Metadata = {
   title: 'Chalkolate',
@@ -35,12 +28,12 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: '#FFF5E8',
+  themeColor: '#FFFFFF',
 }
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" className={bodyFont.variable + ' ' + chalk.variable}>
+    <html lang="en" className={bodyFont.variable}>
       <body className="bg-surface text-ink antialiased">
         {children}
       </body>

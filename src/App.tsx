@@ -2,8 +2,6 @@ import { CircleAlert } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { detectBoardCorners, fetchHealth, fetchVoices } from './api/client'
 import {
-  AnswerFormat,
-  AnswerFormatSchema,
   CalibrationCorners,
   HealthResponse,
   SpeechVoiceOption,
@@ -33,8 +31,6 @@ import { TrackedIssue } from './lib/issueTracker'
 import { exportMarkdown, exportPrintHtml } from './lib/notes'
 import { exportLatex } from './lib/notesLatex'
 
-const ANSWER_FORMAT_KEY = 'chalkolate.answerFormat.v1'
-
 const LAUNCH_TIMEOUT_MS = 60_000
 const PREVIEW_TIMEOUT_MS = 15_000
 
@@ -60,28 +56,15 @@ export function App() {
   const startSequenceRef = useRef(0)
   const [selectedSource, setSelectedSource] = useState<WelcomeSource | null>('camera')
   const [alertMode, setAlertMode] = useState<AlertMode>('voice_visual')
-  const [answerFormat, setAnswerFormat] = useState<AnswerFormat>(() => {
-    try {
-      const parsed = AnswerFormatSchema.safeParse(window.localStorage.getItem(ANSWER_FORMAT_KEY))
-      return parsed.success ? parsed.data : 'exact'
-    } catch {
-      return 'exact'
-    }
-  })
-  const handleChangeAnswerFormat = (format: AnswerFormat) => {
-    setAnswerFormat(format)
-    try {
-      window.localStorage.setItem(ANSWER_FORMAT_KEY, format)
-    } catch {
-      /* preference simply is not remembered */
-    }
-  }
   const [voicePreferences, setVoicePreferences] = useState<VoicePreferences>(loadVoicePreferences)
 
   const handleChangeVoicePreferences = useCallback((patch: Partial<VoicePreferences>) => {
-    setVoicePreferences((prev) => sanitizeVoicePreferences({ ...prev, ...patch }))
+    setVoicePreferences((prev) => {
+      const next = sanitizeVoicePreferences({ ...prev, ...patch })
+      saveVoicePreferences(next)
+      return next
+    })
   }, [])
-  useEffect(() => saveVoicePreferences(voicePreferences), [voicePreferences])
 
   const [calibrationEditing, setCalibrationEditing] = useState(false)
   const [calibrationDetectStatus, setCalibrationDetectStatus] =
@@ -361,7 +344,6 @@ export function App() {
     monitoring,
     calibrationEditing,
     committedCorners,
-    answerFormat,
     speechStyle: voicePreferences.speechStyle,
     onNewFindings: handleNewFindings,
     onInvalidateSpeech: speech.cancelAll,
@@ -612,10 +594,6 @@ export function App() {
         onGoHome={handleGoHome}
         settingsOpen={settingsOpen}
         onToggleSettings={() => setSettingsOpen((open) => !open)}
-        canCrop={media.state.ready && media.state.kind !== 'screen'}
-        cropped={committedCorners !== null}
-        calibrationEditing={calibrationEditing}
-        onToggleCrop={handleToggleCalibration}
       />
 
       {backendNeedsSetup && (
@@ -653,6 +631,9 @@ export function App() {
           onHoverIssue={setHoveredIssueId}
           calibrationEditing={calibrationEditing}
           calibrationDetectStatus={calibrationDetectStatus}
+          canCrop={media.state.ready && media.state.kind !== 'screen'}
+          cropped={committedCorners !== null}
+          onToggleCrop={handleToggleCalibration}
           draftCorners={draftCorners}
           committedCorners={committedCorners}
           onChangeDraftCorners={handleChangeDraftCorners}
@@ -699,8 +680,6 @@ export function App() {
             onClose={() => setSettingsOpen(false)}
             alertMode={alertMode}
             onChangeAlertMode={handleChangeAlertMode}
-            answerFormat={answerFormat}
-            onChangeAnswerFormat={handleChangeAnswerFormat}
             voiceSettings={{
               preferences: effectiveVoicePreferences,
               onChange: handleChangeVoicePreferences,
