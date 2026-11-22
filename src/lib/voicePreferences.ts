@@ -1,11 +1,13 @@
 /**
- * User-adjustable speech setting: how much is said about each mistake. Persisted in
- * localStorage (no secrets). The voice itself is the backend's configured default.
+ * User-adjustable voice settings: which ElevenLabs voice speaks and how much it says
+ * about each mistake. Persisted in localStorage (no secrets).
  */
 
 export type Talkativeness = 'brief' | 'standard' | 'detailed'
 
 export interface VoicePreferences {
+  /** ElevenLabs voice ID from `/api/voices`, or 'default' for the backend-configured voice. */
+  elevenLabsVoice: string
   talkativeness: Talkativeness
 }
 
@@ -36,6 +38,7 @@ export const TALKATIVENESS_OPTIONS: ReadonlyArray<{
 ]
 
 export const DEFAULT_VOICE_PREFERENCES: VoicePreferences = {
+  elevenLabsVoice: 'default',
   talkativeness: 'standard',
 }
 
@@ -63,6 +66,11 @@ export function sanitizeVoicePreferences(raw: unknown): VoicePreferences {
     }
   }
   return {
+    elevenLabsVoice:
+      typeof obj.elevenLabsVoice === 'string' &&
+      /^[A-Za-z0-9_-]{1,128}$/.test(obj.elevenLabsVoice)
+        ? obj.elevenLabsVoice
+        : DEFAULT_VOICE_PREFERENCES.elevenLabsVoice,
     talkativeness,
   }
 }
