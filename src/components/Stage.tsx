@@ -126,7 +126,9 @@ export function Stage({
       tabIndex={mediaState.kind === 'video' ? 0 : undefined}
       onKeyDown={handleStageKeyDown}
       data-testid="board-stage"
-      className="relative flex-1 min-w-0 min-h-0 overflow-hidden bg-zinc-100 focus:outline-none"
+      className={`relative flex-1 min-w-0 min-h-0 overflow-hidden focus:outline-none ${
+        mediaState.kind === 'none' ? 'bg-zinc-100' : 'bg-black'
+      }`}
     >
       {mediaState.kind === 'none' && welcome}
 
