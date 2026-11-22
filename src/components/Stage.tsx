@@ -6,8 +6,9 @@ import { MediaSourceState } from '../hooks/useMediaSource'
 import {
   ContainedImageRect,
   computeContainedImageRect,
-  computeCropViewRect,
-  intersectRects,
+  computeRectifiedCropView,
+  homographyToCssMatrix3d,
+  projectThroughRect,
 } from '../lib/geometry'
 import { TrackedIssue } from '../lib/issueTracker'
 import { CalibrationDetectStatus, CalibrationOverlay } from './CalibrationOverlay'
@@ -97,42 +98,54 @@ export function Stage({
     return () => window.removeEventListener('resize', updateSize)
   }, [containerEl])
 
-  // A committed crop (auto-detected or manual) zooms the view so the board fills the stage.
-  // While editing the crop we show the whole frame so the handles can reach anywhere.
-  const zoomToCrop = !calibrationEditing && committedCorners !== null
-  const imageRect: ContainedImageRect = zoomToCrop
-    ? computeCropViewRect(
+  // Full uncropped frame (used while editing the crop and when no crop is committed).
+  const imageRect: ContainedImageRect = computeContainedImageRect(
+    containerSize.width,
+    containerSize.height,
+    mediaState.intrinsicWidth,
+    mediaState.intrinsicHeight,
+  )
+
+  // A committed crop (auto-detected or manual) shows ONLY the board, perspective-straightened
+  // and as large as the stage allows. The full frame comes back while editing the crop.
+  const cropView = calibrationEditing
+    ? null
+    : computeRectifiedCropView(
         containerSize.width,
         containerSize.height,
         mediaState.intrinsicWidth,
         mediaState.intrinsicHeight,
         committedCorners,
       )
-    : computeContainedImageRect(
-        containerSize.width,
-        containerSize.height,
-        mediaState.intrinsicWidth,
-        mediaState.intrinsicHeight,
-      )
-  const visibleRect = intersectRects(imageRect, {
-    left: 0,
-    top: 0,
-    width: containerSize.width,
-    height: containerSize.height,
-  })
-  const hasMediaRect = imageRect.width > 0 && imageRect.height > 0
-  // Explicit placement keeps the media pixel-aligned with every overlay (same rect).
-  const mediaStyle: React.CSSProperties | undefined = hasMediaRect
+
+  // The wrapper is always rendered (so the <video> never remounts and loses its stream); in crop
+  // mode it becomes the board rectangle and clips everything outside the board.
+  const mediaWrapperStyle: React.CSSProperties | undefined = cropView
     ? {
-        position: 'absolute',
-        left: `${imageRect.left}px`,
-        top: `${imageRect.top}px`,
-        width: `${imageRect.width}px`,
-        height: `${imageRect.height}px`,
-        maxWidth: 'none',
-        maxHeight: 'none',
+        inset: 'auto',
+        left: `${cropView.rect.left}px`,
+        top: `${cropView.rect.top}px`,
+        width: `${cropView.rect.width}px`,
+        height: `${cropView.rect.height}px`,
       }
     : undefined
+  // Media drawn at intrinsic pixel size, then warped so the board corners hit the wrapper corners.
+  const mediaStyle: React.CSSProperties | undefined = cropView
+    ? {
+        position: 'absolute',
+        left: 0,
+        top: 0,
+        width: `${mediaState.intrinsicWidth}px`,
+        height: `${mediaState.intrinsicHeight}px`,
+        maxWidth: 'none',
+        maxHeight: 'none',
+        objectFit: 'fill',
+        transformOrigin: '0 0',
+        transform: homographyToCssMatrix3d(cropView.elementToRect),
+      }
+    : undefined
+  const overlayProject = cropView ? cropView.project : projectThroughRect(imageRect)
+  const overlayClipRect = cropView ? cropView.rect : imageRect
 
   const isVideoLike =
     mediaState.kind === 'camera' || mediaState.kind === 'screen' || mediaState.kind === 'video'
@@ -213,27 +226,34 @@ export function Stage({
           </div>
         )}
 
-      {/* Unmirrored video element for camera, screen share, and uploaded lecture videos */}
-      <video
-        ref={videoElRef}
-        muted
-        playsInline
-        style={isVideoLike ? mediaStyle : undefined}
-        className={`h-full w-full object-contain ${isVideoLike ? 'block' : 'hidden'}`}
-      />
-
-      {mediaState.kind === 'image' && mediaState.objectUrl && (
-        <img
-          ref={imageElRef}
-          src={mediaState.objectUrl}
-          alt="Active lecture board"
-          style={mediaStyle}
-          className="h-full w-full object-contain select-none"
+      <div
+        style={mediaWrapperStyle}
+        className={`pointer-events-none absolute inset-0 overflow-hidden ${
+          mediaState.kind === 'none' ? 'hidden' : ''
+        }`}
+      >
+        {/* Unmirrored video element for camera, screen share, and uploaded lecture videos */}
+        <video
+          ref={videoElRef}
+          muted
+          playsInline
+          style={isVideoLike ? mediaStyle : undefined}
+          className={`h-full w-full object-contain ${isVideoLike ? 'block' : 'hidden'}`}
         />
-      )}
 
-      {/* Subtle committed crop outline when not editing */}
-      {!calibrationEditing && committedCorners && imageRect.width > 0 && (
+        {mediaState.kind === 'image' && mediaState.objectUrl && (
+          <img
+            ref={imageElRef}
+            src={mediaState.objectUrl}
+            alt="Active lecture board"
+            style={mediaStyle}
+            className="h-full w-full object-contain select-none"
+          />
+        )}
+      </div>
+
+      {/* Fallback outline if a committed crop could not be straightened */}
+      {!calibrationEditing && committedCorners && !cropView && imageRect.width > 0 && (
         <svg
           viewBox="0 0 1000 1000"
           preserveAspectRatio="none"
@@ -258,8 +278,8 @@ export function Stage({
 
       {showOverlays && !calibrationEditing && (
         <DetectionOverlay
-          imageRect={imageRect}
-          visibleRect={visibleRect}
+          project={overlayProject}
+          clipRect={overlayClipRect}
           issues={openIssues}
           locationsUnverified={locationsUnverified}
           selectedIssueId={selectedIssueId}

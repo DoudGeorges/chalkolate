@@ -4,9 +4,10 @@ import { TrackedIssue } from '../lib/issueTracker'
 import { MathCorrection } from './MathCorrection'
 
 export interface DetectionOverlayProps {
-  imageRect: ContainedImageRect
-  /** Visible part of the stage; pills are kept inside it. Defaults to `imageRect`. */
-  visibleRect?: ContainedImageRect
+  /** Maps canonical normalized `[0, 1000]` source coordinates onto stage pixels. */
+  project: (x: number, y: number) => [number, number]
+  /** Visible media area in stage pixels; overlays are clipped to it and pills kept inside it. */
+  clipRect: ContainedImageRect
   issues: readonly TrackedIssue[]
   locationsUnverified?: boolean
   selectedIssueId: string | null
@@ -16,55 +17,68 @@ export interface DetectionOverlayProps {
 }
 
 export function DetectionOverlay({
-  imageRect,
-  visibleRect = imageRect,
+  project,
+  clipRect,
   issues,
   selectedIssueId,
   hoveredIssueId,
   onSelectIssue,
   onHoverIssue,
 }: DetectionOverlayProps) {
-  if (imageRect.width <= 0 || imageRect.height <= 0 || issues.length === 0) {
+  if (clipRect.width <= 0 || clipRect.height <= 0 || issues.length === 0) {
     return null
   }
+
+  const left = clipRect.left
+  const top = clipRect.top
+  const right = clipRect.left + clipRect.width
+  const bottom = clipRect.top + clipRect.height
+  const clipPath = `polygon(${left}px ${top}px, ${right}px ${top}px, ${right}px ${bottom}px, ${left}px ${bottom}px)`
+
+  // Project every box once: under a perspective crop an axis-aligned source box becomes a quad.
+  const projected = issues.map((issue) => {
+    const [ymin, xmin, ymax, xmax] = issue.box_2d
+    const quad = [
+      project(xmin, ymin),
+      project(xmax, ymin),
+      project(xmax, ymax),
+      project(xmin, ymax),
+    ]
+    const ys = quad.map(([, y]) => y)
+    return {
+      issue,
+      points: quad.map(([x, y]) => `${x},${y}`).join(' '),
+      boxPx: {
+        left: Math.min(...quad.map(([x]) => x)),
+        top: Math.min(...ys),
+        bottom: Math.max(...ys),
+      },
+    }
+  })
 
   return (
     <div
       className="pointer-events-none absolute inset-0"
+      style={{ clipPath }}
       aria-label="Detected board error overlays"
     >
-      {/* Vector boxes aligned identically to the contained image rectangle */}
-      <svg
-        viewBox="0 0 1000 1000"
-        preserveAspectRatio="none"
-        style={{
-          left: `${imageRect.left}px`,
-          top: `${imageRect.top}px`,
-          width: `${imageRect.width}px`,
-          height: `${imageRect.height}px`,
-        }}
-        className="pointer-events-none absolute"
-      >
-        {issues.map((issue) => {
-          const [ymin, xmin, ymax, xmax] = issue.box_2d
+      {/* Stage-pixel SVG so perspective-projected boxes line up with the displayed media */}
+      <svg className="pointer-events-none absolute inset-0 h-full w-full overflow-visible">
+        {projected.map(({ issue, points }) => {
           const color = CATEGORY_COLORS[issue.category]
           const isHighlighted =
             issue.id === selectedIssueId || issue.id === hoveredIssueId
 
           return (
-            <rect
+            <polygon
               key={issue.id}
-              x={xmin}
-              y={ymin}
-              width={xmax - xmin}
-              height={ymax - ymin}
+              points={points}
               fill={color}
               fillOpacity={isHighlighted ? 0.18 : 0.1}
               stroke={color}
               strokeOpacity={1}
               strokeWidth={isHighlighted ? 3 : 2}
-              vectorEffect="non-scaling-stroke"
-              rx={4}
+              strokeLinejoin="round"
               className="pointer-events-auto cursor-pointer transition-opacity duration-150"
               tabIndex={0}
               role="button"
@@ -86,10 +100,10 @@ export function DetectionOverlay({
         })}
       </svg>
 
-      {/* Separate HTML layer so non-uniform SVG scaling never warps pill text */}
+      {/* Separate HTML layer so pill text is never warped */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        {issues.map((issue) => {
-          const pos = computeOverlayPillPosition(issue.box_2d, imageRect, 220, 30, visibleRect)
+        {projected.map(({ issue, boxPx }) => {
+          const pos = computeOverlayPillPosition(boxPx, clipRect)
           const color = CATEGORY_COLORS[issue.category]
           const isHighlighted =
             issue.id === selectedIssueId || issue.id === hoveredIssueId
@@ -104,7 +118,7 @@ export function DetectionOverlay({
               style={{
                 left: `${pos.left}px`,
                 top: `${pos.top}px`,
-                maxWidth: `${Math.max(120, Math.min(280, visibleRect.width - 8))}px`,
+                maxWidth: `${Math.max(120, Math.min(280, clipRect.width - 8))}px`,
               }}
               className={`pointer-events-auto absolute flex items-center gap-1.5 rounded-lg border bg-white px-2.5 py-1 text-left text-xs shadow-md transition duration-150 animate-pill-in focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 ${
                 isHighlighted

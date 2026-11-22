@@ -1,4 +1,4 @@
-import { Box2D, CalibrationCorners, CornerPoint } from '../api/schemas'
+import { CalibrationCorners, CornerPoint } from '../api/schemas'
 
 export interface ContainedImageRect {
   left: number
@@ -192,51 +192,152 @@ export function buildNormalizedQuadMask(
   return mask
 }
 
+/** Row-major 3x3 homography with the last entry fixed to 1: `[a, b, c, d, e, f, g, h]`. */
+export type Homography = readonly [number, number, number, number, number, number, number, number]
+
+type Point = readonly [number, number]
+
+/** Solve the homography mapping four `src` points onto four `dst` points (null if degenerate). */
+export function solveHomography(
+  src: readonly [Point, Point, Point, Point],
+  dst: readonly [Point, Point, Point, Point],
+): Homography | null {
+  // 8x9 augmented system [A | b], solved by Gauss-Jordan elimination with partial pivoting.
+  // Stored flat (row-major, 9 columns) to keep indexing simple under noUncheckedIndexedAccess.
+  const m = new Float64Array(8 * 9)
+  const at = (r: number, c: number) => m[r * 9 + c] ?? 0
+  const pairs = [
+    [src[0], dst[0]],
+    [src[1], dst[1]],
+    [src[2], dst[2]],
+    [src[3], dst[3]],
+  ] as const
+  pairs.forEach(([[x, y], [u, v]], i) => {
+    m.set([x, y, 1, 0, 0, 0, -x * u, -y * u, u], 2 * i * 9)
+    m.set([0, 0, 0, x, y, 1, -x * v, -y * v, v], (2 * i + 1) * 9)
+  })
+
+  for (let col = 0; col < 8; col += 1) {
+    let pivot = col
+    for (let r = col + 1; r < 8; r += 1) {
+      if (Math.abs(at(r, col)) > Math.abs(at(pivot, col))) pivot = r
+    }
+    if (Math.abs(at(pivot, col)) < 1e-12) return null
+    if (pivot !== col) {
+      const pivotRow = m.slice(pivot * 9, pivot * 9 + 9)
+      m.copyWithin(pivot * 9, col * 9, col * 9 + 9)
+      m.set(pivotRow, col * 9)
+    }
+    const diag = at(col, col)
+    for (let r = 0; r < 8; r += 1) {
+      if (r === col) continue
+      const factor = at(r, col) / diag
+      if (factor === 0) continue
+      for (let k = col; k < 9; k += 1) m[r * 9 + k] = at(r, k) - factor * at(col, k)
+    }
+  }
+
+  const h: Homography = [
+    at(0, 8) / at(0, 0),
+    at(1, 8) / at(1, 1),
+    at(2, 8) / at(2, 2),
+    at(3, 8) / at(3, 3),
+    at(4, 8) / at(4, 4),
+    at(5, 8) / at(5, 5),
+    at(6, 8) / at(6, 6),
+    at(7, 8) / at(7, 7),
+  ]
+  return h.every(Number.isFinite) ? h : null
+}
+
+export function applyHomography(h: Homography, x: number, y: number): [number, number] {
+  const w = h[6] * x + h[7] * y + 1
+  return [(h[0] * x + h[1] * y + h[2]) / w, (h[3] * x + h[4] * y + h[5]) / w]
+}
+
+/** CSS `matrix3d(...)` that applies `h` to an element with `transform-origin: 0 0`. */
+export function homographyToCssMatrix3d(h: Homography): string {
+  const [a, b, c, d, e, f, g, hh] = h
+  return `matrix3d(${a}, ${d}, 0, ${g}, ${b}, ${e}, 0, ${hh}, 0, 0, 1, 0, ${c}, ${f}, 0, 1)`
+}
+
+export interface RectifiedCropView {
+  /** Stage-space rectangle the straightened board fills. */
+  rect: ContainedImageRect
+  /** Maps media element pixels (intrinsic size) onto `rect`-local pixels. */
+  elementToRect: Homography
+  /** Maps canonical normalized `[0, 1000]` source coordinates onto stage pixels. */
+  project: (x: number, y: number) => [number, number]
+}
+
 /**
- * Where to draw the full frame so the committed crop fills the stage.
- *
- * The crop quad's axis-aligned bounding box is fitted (object-contain style) and centered in the
- * container; the returned rect is the resulting placement of the WHOLE frame, so it may extend
- * past the container edges (the stage clips it). Because it keeps the frame's aspect ratio, every
- * normalized `[0, 1000]` overlay mapping that accepts a `ContainedImageRect` works unchanged.
- * Falls back to the plain contained rect when there is no usable crop.
+ * Perspective-correct view of the committed crop: the board quad is straightened into a rectangle
+ * that is as large as possible inside the stage. The rectified aspect ratio matches the backend
+ * (`max(top, bottom)` x `max(left, right)` edge length in source pixels), so writing is not
+ * stretched. Returns null when the crop cannot be rectified.
  */
-export function computeCropViewRect(
+export function computeRectifiedCropView(
   containerWidth: number,
   containerHeight: number,
   intrinsicWidth: number,
   intrinsicHeight: number,
   corners: CalibrationCorners | null,
-): ContainedImageRect {
-  const base = computeContainedImageRect(
+): RectifiedCropView | null {
+  if (
+    !corners ||
+    containerWidth <= 0 ||
+    containerHeight <= 0 ||
+    intrinsicWidth <= 0 ||
+    intrinsicHeight <= 0 ||
+    !validateCalibrationQuad(corners).valid
+  ) {
+    return null
+  }
+
+  const px = corners.map(
+    ([x, y]) => [(x / 1000) * intrinsicWidth, (y / 1000) * intrinsicHeight] as const,
+  ) as unknown as [Point, Point, Point, Point]
+  const dist = (p: Point, q: Point) => Math.hypot(p[0] - q[0], p[1] - q[1])
+  const boardWidth = Math.max(dist(px[0], px[1]), dist(px[3], px[2]))
+  const boardHeight = Math.max(dist(px[0], px[3]), dist(px[1], px[2]))
+  if (!(boardWidth > 0) || !(boardHeight > 0)) return null
+
+  const rect = computeContainedImageRect(
     containerWidth,
     containerHeight,
-    intrinsicWidth,
-    intrinsicHeight,
+    boardWidth,
+    boardHeight,
   )
-  if (!corners || base.width <= 0 || base.height <= 0) return base
+  if (rect.width <= 0 || rect.height <= 0) return null
 
-  const xs = corners.map(([x]) => clampNorm(x))
-  const ys = corners.map(([, y]) => clampNorm(y))
-  const minX = Math.min(...xs)
-  const maxX = Math.max(...xs)
-  const minY = Math.min(...ys)
-  const maxY = Math.max(...ys)
-  const cropWidthPx = ((maxX - minX) / 1000) * intrinsicWidth
-  const cropHeightPx = ((maxY - minY) / 1000) * intrinsicHeight
-  if (!(cropWidthPx > 0) || !(cropHeightPx > 0)) return base
+  const elementToRect = solveHomography(px, [
+    [0, 0],
+    [rect.width, 0],
+    [rect.width, rect.height],
+    [0, rect.height],
+  ])
+  if (!elementToRect) return null
 
-  const scale = Math.min(containerWidth / cropWidthPx, containerHeight / cropHeightPx)
-  if (!Number.isFinite(scale) || scale <= 0) return base
-
-  const width = intrinsicWidth * scale
-  const height = intrinsicHeight * scale
   return {
-    left: containerWidth / 2 - ((minX + maxX) / 2000) * width,
-    top: containerHeight / 2 - ((minY + maxY) / 2000) * height,
-    width,
-    height,
+    rect,
+    elementToRect,
+    project: (x, y) => {
+      const [u, v] = applyHomography(
+        elementToRect,
+        (x / 1000) * intrinsicWidth,
+        (y / 1000) * intrinsicHeight,
+      )
+      return [rect.left + u, rect.top + v]
+    },
   }
+}
+
+/** Linear normalized `[0, 1000]` -> stage pixel mapping for an uncropped contained image. */
+export function projectThroughRect(rect: ContainedImageRect) {
+  return (x: number, y: number): [number, number] => [
+    rect.left + (x / 1000) * rect.width,
+    rect.top + (y / 1000) * rect.height,
+  ]
 }
 
 export interface PillPosition {
@@ -245,42 +346,30 @@ export interface PillPosition {
   placement: 'above' | 'below'
 }
 
+/**
+ * Places a finding pill above (or below) a box given in stage pixels, kept inside `clipRect`
+ * (the visible media area).
+ */
 export function computeOverlayPillPosition(
-  box: Box2D,
-  imageRect: ContainedImageRect,
+  boxPx: { left: number; top: number; bottom: number },
+  clipRect: ContainedImageRect,
   estimatedPillWidth = 220,
   estimatedPillHeight = 30,
-  /** Visible area to keep the pill inside (defaults to `imageRect`; smaller when zoomed in). */
-  clipRect: ContainedImageRect = imageRect,
 ): PillPosition {
-  const [ymin, xmin, ymax] = box
-  const boxLeftPx = imageRect.left + (xmin / 1000) * imageRect.width
-  const boxTopPx = imageRect.top + (ymin / 1000) * imageRect.height
-  const boxBottomPx = imageRect.top + (ymax / 1000) * imageRect.height
-
   const minLeft = clipRect.left + 4
   const maxLeft = Math.max(minLeft, clipRect.left + clipRect.width - estimatedPillWidth - 4)
-  const left = Math.max(minLeft, Math.min(maxLeft, boxLeftPx))
+  const left = Math.max(minLeft, Math.min(maxLeft, boxPx.left))
 
   const minTop = clipRect.top + 4
   let placement: 'above' | 'below' = 'above'
-  let top = boxTopPx - estimatedPillHeight - 6
+  let top = boxPx.top - estimatedPillHeight - 6
   if (top < minTop) {
     placement = 'below'
     top = Math.max(
       minTop,
-      Math.min(clipRect.top + clipRect.height - estimatedPillHeight - 4, boxBottomPx + 6),
+      Math.min(clipRect.top + clipRect.height - estimatedPillHeight - 4, boxPx.bottom + 6),
     )
   }
 
   return { left, top, placement }
-}
-
-/** Intersection of two rects (zero-size when they do not overlap). */
-export function intersectRects(a: ContainedImageRect, b: ContainedImageRect): ContainedImageRect {
-  const left = Math.max(a.left, b.left)
-  const top = Math.max(a.top, b.top)
-  const right = Math.min(a.left + a.width, b.left + b.width)
-  const bottom = Math.min(a.top + a.height, b.top + b.height)
-  return { left, top, width: Math.max(0, right - left), height: Math.max(0, bottom - top) }
 }
