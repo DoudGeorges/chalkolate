@@ -130,7 +130,7 @@ export function CalibrationOverlay({
           width: `${imageRect.width}px`,
           height: `${imageRect.height}px`,
         }}
-        className="pointer-events-none absolute"
+        className="pointer-events-none absolute overflow-visible"
       >
         <defs>
           <mask id="chalkolate-cal-mask">
@@ -203,66 +203,62 @@ export function CalibrationToolbar({
 }: CalibrationToolbarProps) {
   const validation = validateCalibrationQuad(draftCorners)
   const isDetecting = detectStatus === 'detecting'
-  let statusText = 'Move each handle to a corner of the board.'
+  let statusText = 'Move each corner into place around the board.'
   if (!validation.valid) {
-    statusText = validation.reason ?? 'Move the handles to form a four-sided crop.'
+    statusText = validation.reason ?? 'Move the corners to form a four-sided crop.'
   } else if (isDetecting) {
     statusText = 'Finding board corners…'
   } else if (detectStatus === 'detected') {
     statusText = 'Board found. Adjust the corners if needed.'
   } else if (detectStatus === 'fallback') {
-    statusText = 'The board edges are unclear. Move the handles into place.'
+    statusText = 'The board edges are unclear. Move the corners into place.'
   } else if (detectStatus === 'error') {
-    statusText = 'Corner detection is unavailable. Move the handles into place.'
+    statusText = 'Corner detection is unavailable. Move the corners into place.'
   }
 
   return (
-    <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-line bg-panel p-3">
+    <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-line bg-panel p-3">
       <span role="status" className="sr-only">
         {statusText}
       </span>
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={onAutoDetect}
-          disabled={isDetecting}
-          className="ui-button ui-compact"
-        >
-          {isDetecting ? (
-            <LoaderCircle className="animate-spin text-moss" aria-hidden="true" />
-          ) : (
-            <Scan aria-hidden="true" />
-          )}
-          {isDetecting ? 'Finding corners…' : 'Detect corners'}
-        </button>
-        <button
-          type="button"
-          onClick={onResetCrop}
-          className="ui-button ui-compact"
-        >
-          Reset crop
-        </button>
-      </div>
-      <div className="ml-auto flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="ui-button ui-compact"
-          data-variant="quiet"
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={onApply}
-          disabled={!validation.valid || isDetecting}
-          className="ui-button ui-compact"
-          data-variant="primary"
-        >
-          <Check aria-hidden="true" />
-          Apply crop
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={onAutoDetect}
+        disabled={isDetecting}
+        className="ui-button ui-compact"
+      >
+        {isDetecting ? (
+          <LoaderCircle className="animate-spin text-moss" aria-hidden="true" />
+        ) : (
+          <Scan aria-hidden="true" />
+        )}
+        {isDetecting ? 'Finding corners…' : 'Detect corners'}
+      </button>
+      <button
+        type="button"
+        onClick={onResetCrop}
+        className="ui-button ui-compact"
+      >
+        Reset crop
+      </button>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="ui-button ui-compact"
+        data-variant="quiet"
+      >
+        Cancel
+      </button>
+      <button
+        type="button"
+        onClick={onApply}
+        disabled={!validation.valid || isDetecting}
+        className="ui-button ui-compact"
+        data-variant="primary"
+      >
+        <Check aria-hidden="true" />
+        Apply
+      </button>
     </div>
   )
 }

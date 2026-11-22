@@ -12,10 +12,6 @@ The server applies a separate notes concurrency gate and Gemini deadline. Board 
 
 ## Storage and export
 
-The current lecture is stored in sessionStorage, which belongs to one browser tab. Notes survive reloads and source changes in that tab. They are discarded when the tab closes, and other tabs or later visitors on the same browser profile never see them. If storage quota is exceeded, the browser tries again with text only. Builds before this change kept notes in shared localStorage; that key is deleted on load and never read. Use **Clear** to empty the document, and export before closing the tab.
+Active-session notes are stored locally in `sessionStorage`, which belongs to one browser tab and user session. Notes reset automatically whenever the session restarts (on page reload, returning to setup, or switching sources), and other tabs or later visitors on the same browser profile never see them. If storage quota is exceeded, the browser tries again with text only. Builds before this change kept notes in shared `localStorage`; that key is deleted on load and never read. Use **Clear** to empty the document during a session, and **Download** to save the Markdown notes (`.md` with section text, source math, and JPEG thumbnails).
 
 The server keeps no notes. Each POST /api/notes is answered only from its own image and note context, and every API response is sent with `Cache-Control: no-store, private`.
-
-- **Markdown** includes section text, source math, and JPEG thumbnails.
-- **LaTeX** uses standard math commands. Unsupported formulas appear as literal text. Figures are available in the Markdown and print exports.
-- **Print / PDF** opens standalone HTML with MathML and embedded JPEGs. Use the browser print dialog to save a PDF.

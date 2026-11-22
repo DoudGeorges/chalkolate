@@ -208,8 +208,8 @@ function snapshotForm(imageBlob: Blob, filename: string, metadata?: object): For
 
 export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
   return sendJsonRequest('/api/health', { signal }, HealthResponseSchema, {
-    network: 'Unable to reach the analysis service.',
-    unreadable: 'The analysis service returned an unreadable status.',
+    network: 'Unable to reach the Chalkolate service.',
+    unreadable: 'The Chalkolate service returned an unreadable status.',
     timeoutMs: 8000,
   })
 }

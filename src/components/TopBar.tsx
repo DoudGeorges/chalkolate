@@ -35,7 +35,7 @@ export function TopBar({
             onClick={onGoHome}
             aria-label="Chalkolate home"
             title="Return to setup"
-            className="inline-flex -mx-1 rounded-md px-1 transition-opacity hover:opacity-80"
+            className="inline-flex -m-1 rounded-lg p-1 transition-opacity hover:opacity-80"
           >
             <Brand />
           </button>

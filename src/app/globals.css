@@ -226,7 +226,7 @@ body {
     @apply relative flex min-h-15 min-w-0 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-line bg-panel px-2 py-2 text-center text-sm leading-5 font-medium text-ink transition-colors;
   }
 
-  .option-card:hover {
+  .option-card:not(:has(:disabled)):hover {
     @apply border-control-line bg-sunken;
   }
 
@@ -240,7 +240,7 @@ body {
   }
 
   .option-card:has(:disabled) {
-    @apply cursor-wait;
+    @apply cursor-wait opacity-55;
   }
 
   .option-description {

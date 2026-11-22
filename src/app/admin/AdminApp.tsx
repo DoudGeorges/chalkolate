@@ -233,7 +233,7 @@ export function AdminApp() {
         throw new Error('Sign-in unavailable')
       }
     } catch {
-      setActionError('Couldn’t sign in. Check your connection and try again.')
+      setActionError('Could not sign in. Check your connection and try again.')
     } finally {
       setToken('')
       setAction(null)
@@ -259,7 +259,7 @@ export function AdminApp() {
         await load()
       }
     } catch {
-      setActionError(operation === 'logout' ? 'Couldn’t sign out. Try again.' : 'Couldn’t clear the logs. Try again.')
+      setActionError(operation === 'logout' ? 'Could not sign out. Try again.' : 'Could not clear the logs. Try again.')
     } finally {
       setAction(null)
     }
@@ -305,7 +305,7 @@ export function AdminApp() {
               </form>
             ) : loadError ? (
               <div className="mt-5 space-y-3">
-                <AdminNotice>Couldn’t connect to the admin console.</AdminNotice>
+                <AdminNotice>Could not connect to the admin console.</AdminNotice>
                 <button type="button" onClick={() => void load()} className="ui-button">
                   <RefreshCw aria-hidden="true" /> Retry
                 </button>
@@ -345,7 +345,7 @@ export function AdminApp() {
           <label className="ui-label min-w-40 flex-[2]">
             Search
             <span className="relative mt-2 block">
-              <Search className="pointer-events-none absolute top-3 left-3 size-4 text-muted" aria-hidden="true" />
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" aria-hidden="true" />
               <input
                 type="search"
                 value={query}
@@ -384,7 +384,7 @@ export function AdminApp() {
             {filtered.length} of {entries.length} {entries.length === 1 ? 'request' : 'requests'}
           </p>
           {actionError && <AdminNotice>{actionError}</AdminNotice>}
-          {loadError && <AdminNotice>Couldn’t refresh the request log. Select Refresh to try again.</AdminNotice>}
+          {loadError && <AdminNotice>Could not refresh the request log. Select Refresh to try again.</AdminNotice>}
         </div>
 
         <div role="region" aria-label="Request log table" tabIndex={0} className="overflow-x-auto rounded-xl border border-line bg-panel">

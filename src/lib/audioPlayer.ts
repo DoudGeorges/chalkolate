@@ -1,7 +1,7 @@
 import { isAbortError } from './abort'
 
-/** Playback speed multiplier for streamed ElevenLabs audio (30% faster). */
-export const ELEVENLABS_PLAYBACK_RATE = 1.3
+/** Playback speed multiplier for streamed ElevenLabs audio (20% faster). */
+export const ELEVENLABS_PLAYBACK_RATE = 1.2
 
 export interface PlayAudioStreamOptions {
   signal: AbortSignal

@@ -411,7 +411,7 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
               continue
             }
 
-            const effectiveErr = timedOut ? new Error('Speech playback timed out.') : err
+            const effectiveErr = timedOut ? new Error('Voice playback timed out.') : err
             const browserFallback = !didStart && getSpeechSynthesisApi() !== null
             const reportFallback = (message: string) => {
               if (browserFallback) onFallbackRef.current?.(`${message} Trying the browser voice.`)
@@ -424,7 +424,7 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
                 reportFallback(
                   effectiveErr instanceof Error && effectiveErr.message
                     ? effectiveErr.message
-                    : 'Selected ElevenLabs voice is unavailable.',
+                    : 'The selected voice is unavailable.',
                 )
               }
             } else if (cooldownMs === Number.POSITIVE_INFINITY) {
@@ -434,7 +434,7 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
                 const msg =
                   effectiveErr instanceof Error && effectiveErr.message
                     ? effectiveErr.message
-                    : 'ElevenLabs is unavailable.'
+                    : 'The voice service is unavailable.'
                 reportFallback(msg)
               }
             } else {

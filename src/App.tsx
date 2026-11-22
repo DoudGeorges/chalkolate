@@ -28,8 +28,7 @@ import {
 import { captureJpegBlob } from './lib/frameCapture'
 import { DEFAULT_CALIBRATION_CORNERS, validateCalibrationQuad } from './lib/geometry'
 import { TrackedIssue } from './lib/issueTracker'
-import { exportMarkdown, exportPrintHtml } from './lib/notes'
-import { exportLatex } from './lib/notesLatex'
+import { exportMarkdown } from './lib/notes'
 
 const LAUNCH_TIMEOUT_MS = 60_000
 const PREVIEW_TIMEOUT_MS = 15_000
@@ -359,37 +358,17 @@ export function App() {
     committedCorners,
   })
 
-  const handleExportMarkdown = () => {
-    downloadText(exportMarkdown(notesBuilder.notes), 'text/markdown;charset=utf-8', 'lecture-notes.md')
-  }
-
-  const handleExportLatex = () => {
-    downloadText(exportLatex(notesBuilder.notes), 'application/x-tex', 'lecture-notes.tex')
-  }
-
-  const handleExportPrint = () => {
-    const win = window.open('', '_blank')
-    if (!win) {
-      pushToast({ message: 'Allow pop-ups to open the printable notes.', tone: 'info' })
-      return
-    }
-    win.opener = null
-    win.document.open()
-    win.addEventListener('load', async () => {
-      // A print window has its own font set. Load the studio face before opening the dialog.
-      try {
-        const url = new URL('./app/fonts/dm-sans.woff2', import.meta.url)
-        const font = new FontFace('DM Sans', 'url("' + url.href + '")', { weight: '100 1000' })
-        win.document.fonts.add(await font.load())
-      } catch {
-        // The printable document also has a built-in sans serif fallback.
-      }
-      if (win.closed) return
-      win.focus()
-      win.print()
-    }, { once: true })
-    win.document.write(exportPrintHtml(notesBuilder.notes))
-    win.document.close()
+  const handleDownloadNotes = () => {
+    const slug = notesBuilder.notes.title
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '')
+    downloadText(
+      exportMarkdown(notesBuilder.notes),
+      'text/markdown;charset=utf-8',
+      `${slug || 'lecture-notes'}.md`,
+    )
   }
 
   markSpokenRef.current = monitor.markSpoken
@@ -431,6 +410,7 @@ export function App() {
   const runAutomaticBoardDetection = async () => {
     const mediaEl = media.videoElRef.current
     if (!mediaEl || !media.state.ready) {
+      setDraftCorners(DEFAULT_CALIBRATION_CORNERS)
       setCalibrationDetectStatus('fallback')
       return
     }
@@ -454,11 +434,13 @@ export function App() {
         setDraftCorners(result.corners)
         setCalibrationDetectStatus('detected')
       } else {
+        setDraftCorners(DEFAULT_CALIBRATION_CORNERS)
         setCalibrationDetectStatus('fallback')
       }
     } catch (err) {
       if (controller.signal.aborted) return
       if (isAbortError(err)) return
+      setDraftCorners(DEFAULT_CALIBRATION_CORNERS)
       setCalibrationDetectStatus('error')
     } finally {
       if (detectAbortRef.current === controller) {
@@ -491,7 +473,7 @@ export function App() {
       return isCurrentSource()
     } catch (err) {
       if (isCurrentSource() && !isAbortError(err)) {
-        pushToast({ message: 'The preview couldn’t start. Try playing it again.', tone: 'error' })
+        pushToast({ message: 'The preview could not start. Try playing it again.', tone: 'error' })
       }
       return false
     }
@@ -659,17 +641,11 @@ export function App() {
         {!onboarding && (
           <NotesPanel
             open={notesOpen}
-            active={analysisConfigured && !healthFailed && processingReady && !calibrationEditing}
-            configured={analysisConfigured && !healthFailed}
-            editingCrop={calibrationEditing}
-            phase={notesBuilder.phase}
-            error={notesBuilder.error}
+            active={processingReady}
             notes={notesBuilder.notes}
             onToggle={() => setNotesOpen((open) => !open)}
             onClose={() => setNotesOpen(false)}
-            onExportMarkdown={handleExportMarkdown}
-            onExportLatex={handleExportLatex}
-            onExportPrint={handleExportPrint}
+            onDownload={handleDownloadNotes}
             onClear={() => notesBuilder.clear()}
           />
         )}

@@ -91,9 +91,9 @@ export function VoiceSettings({
     <section className="space-y-2">
       <h3 className="ui-label">Voice</h3>
       {!elevenLabsConfigured ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-surface p-3">
+        <div className="flex flex-wrap items-center gap-2.5 rounded-lg border border-line bg-panel p-3">
           <AudioLines className="size-4 shrink-0 text-accent" aria-hidden="true" />
-          <p className="min-w-0 flex-1 text-sm text-muted">
+          <p className={onPreviewVoice ? 'min-w-0 flex-1 text-sm font-medium text-ink' : 'min-w-0 flex-1 text-sm text-muted'}>
             {onPreviewVoice ? 'Browser voice' : 'This browser has no voice available.'}
           </p>
           {onPreviewVoice && (
@@ -134,7 +134,7 @@ export function VoiceSettings({
           )}
 
           {voicesError && (
-            <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-warn-line bg-warn-soft p-3 text-xs text-warn">
+            <div role="alert" className="flex items-start gap-2.5 rounded-lg border border-warn-line bg-warn-soft p-3 text-xs text-warn">
               <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
               <div>
                 <p className="leading-relaxed">{voicesError}</p>
@@ -148,7 +148,7 @@ export function VoiceSettings({
           )}
 
           {voicesLoading && displayVoices.length === 0 ? (
-            <p role="status" className="flex items-center gap-2 rounded-xl border border-dashed border-line p-3 text-xs text-muted">
+            <p role="status" className="flex items-center gap-2 rounded-lg border border-dashed border-line p-3 text-xs text-muted">
               <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
               Loading voices…
             </p>
@@ -181,14 +181,17 @@ export function VoiceSettings({
                       onClick={() => onChange({ elevenLabsVoice: voice.id })}
                       className="flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1 text-left"
                     >
-                      <span className="grid size-7 shrink-0 place-items-center rounded-full bg-accent-soft text-xs font-semibold text-accent" aria-hidden="true">
+                      <span
+                        className={selected ? 'grid size-7 shrink-0 place-items-center rounded-full bg-accent text-xs font-semibold text-surface' : 'grid size-7 shrink-0 place-items-center rounded-full bg-accent-soft text-xs font-semibold text-accent'}
+                        aria-hidden="true"
+                      >
                         {voice.name.charAt(0).toUpperCase()}
                       </span>
                       <span className="flex min-w-0 flex-1 items-center gap-1.5">
                         <span className="truncate text-sm font-medium text-ink">{voice.name}</span>
-                        {voice.isDefault && voice.name !== 'Default voice' && <span className="text-xs text-muted">Default</span>}
+                        {voice.isDefault && voice.name !== 'Default voice' && <span className="shrink-0 text-xs font-medium text-muted">Default</span>}
                       </span>
-                      {selected && <Check className="size-3.5 shrink-0 text-accent" aria-hidden="true" />}
+                      {selected && <Check className="size-4 shrink-0 text-accent" aria-hidden="true" />}
                     </button>
                     {onPreviewVoice && (
                       <button
@@ -206,7 +209,7 @@ export function VoiceSettings({
               })}
             </div>
           ) : !voicesError ? (
-            <p role="status" className="rounded-xl border border-dashed border-line p-3 text-xs text-muted">
+            <p role="status" className="rounded-lg border border-dashed border-line p-3 text-xs text-muted">
               {search ? 'No voices match your search.' : 'No voices are available.'}
             </p>
           ) : null}

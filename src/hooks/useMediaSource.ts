@@ -108,7 +108,7 @@ function formatCaptureError(err: unknown, mode: 'camera' | 'screen'): string {
     if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
       return mode === 'camera'
         ? 'Allow camera access in your browser settings, then try again.'
-        : 'Screen sharing did not start. Select Share screen to try again.'
+        : 'Screen sharing did not start. Try again.'
     }
     if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
       return mode === 'camera'
@@ -118,7 +118,7 @@ function formatCaptureError(err: unknown, mode: 'camera' | 'screen'): string {
     if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
       return mode === 'camera'
         ? 'The camera could not start. Close any other app using it and try again.'
-        : 'The screen share could not start. Select Share screen to try again.'
+        : 'Screen sharing could not start. Try again.'
     }
     if (err.name === 'OverconstrainedError') {
       return 'This camera does not support the requested video settings.'

@@ -17,7 +17,6 @@ import {
   buildNotesContext,
   createEmptyNotes,
   cropRect,
-  loadNotes,
   purgeLegacyNotes,
   saveNotes,
 } from '../lib/notes'
@@ -76,7 +75,9 @@ const DEFAULT_DEPS: NotesBuilderDeps = {
   createUuid: createRequestId,
   loadInitial: () => {
     purgeLegacyNotes()
-    return loadNotes()
+    const empty = createEmptyNotes()
+    saveNotes(empty)
+    return empty
   },
   persist: (doc) => saveNotes(doc),
 }
@@ -282,13 +283,18 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
     setPhase(rt.enabled && rt.mediaReady && !rt.calibrationEditing ? 'watching' : 'idle')
   }, [cancelWork])
 
+  const clear = useCallback(() => {
+    resetTracking()
+    commitNotes(createEmptyNotes())
+  }, [commitNotes, resetTracking])
+
   const prevGenRef = useRef(sourceGeneration)
   useEffect(() => {
     if (prevGenRef.current !== sourceGeneration) {
       prevGenRef.current = sourceGeneration
-      resetTracking()
+      clear()
     }
-  }, [resetTracking, sourceGeneration])
+  }, [clear, sourceGeneration])
 
   const cornersKey = useMemo(() => JSON.stringify(committedCorners), [committedCorners])
   const prevCornersKeyRef = useRef(cornersKey)
@@ -380,11 +386,6 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
   }, [calibrationEditing, cancelWork, enabled, mediaReady, tick])
 
   useEffect(() => cancelWork, [cancelWork])
-
-  const clear = useCallback(() => {
-    resetTracking()
-    commitNotes(createEmptyNotes())
-  }, [commitNotes, resetTracking])
 
   return { notes, phase, error, resetTracking, clear }
 }

@@ -51,7 +51,7 @@ export function MathCorrection({
   }
 
   return (
-    <span className={`font-medium text-moss break-words ${className}`}>
+    <span className={`font-medium text-moss wrap-break-word ${className}`}>
       {correctionText}
     </span>
   )

@@ -13,10 +13,10 @@ export interface ValidationResult {
 }
 
 export const DEFAULT_CALIBRATION_CORNERS: CalibrationCorners = [
-  [80, 80],
-  [920, 80],
-  [920, 920],
-  [80, 920],
+  [0, 0],
+  [1000, 0],
+  [1000, 1000],
+  [0, 1000],
 ]
 
 const MIN_CORNER_SEPARATION_NORM = 20
@@ -125,14 +125,14 @@ export function validateCalibrationQuad(corners: CalibrationCorners): Validation
     if (crossZ <= 0) {
       return {
         valid: false,
-        reason: 'Place the handles around the board in clockwise order, starting at the top left.',
+        reason: 'Place the corners around the board in clockwise order, starting at the top left.',
       }
     }
     const sinTheta = crossZ / (n1 * n2)
     if (sinTheta < MIN_CORNER_SIN) {
       return {
         valid: false,
-        reason: 'Three handles are nearly in a line. Move each one to a separate corner.',
+        reason: 'Three corners are nearly in a line. Move each one to a separate corner.',
       }
     }
   }
@@ -145,14 +145,14 @@ export function validateCalibrationQuad(corners: CalibrationCorners): Validation
   }
   const area = Math.abs(area2) / 2
   if (area < MIN_QUAD_AREA_NORM) {
-    return { valid: false, reason: 'Move the handles apart to include more of the board.' }
+    return { valid: false, reason: 'Move the corners apart to include more of the board.' }
   }
 
   const [tl, tr, br, bl] = corners
   if (!(tr[0] > tl[0] && br[0] > bl[0] && bl[1] > tl[1] && br[1] > tr[1])) {
     return {
       valid: false,
-      reason: 'Keep the top handles above the bottom handles and the left handles on the left.',
+      reason: 'Keep the top corners above the bottom corners and the left corners on the left.',
     }
   }
 
