@@ -120,6 +120,7 @@ describe('useBoardMonitor near-real-time pipeline', () => {
       await Promise.resolve()
     })
     expect(analyzeSpy).toHaveBeenCalledTimes(1)
+    expect(analyzeSpy.mock.calls[0]?.[1].answer_format).toBe('exact')
     expect(spokenIds).toHaveLength(1)
     expect(spokenIds[0]).toBe(result.current.state.tracker.issues[0]?.id)
 

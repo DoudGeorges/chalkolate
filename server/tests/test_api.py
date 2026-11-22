@@ -11,12 +11,16 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
+import pytest
 from google.genai import errors as genai_errors
 from google.genai import types
 from PIL import Image
+from starlette.requests import ClientDisconnect
+from starlette.types import Message, Scope
 
 from config import Settings
-from main import create_app
+from main import PARTIAL_ANALYSIS_HEADER, ConcurrencyGate, SpeechStreamingResponse, create_app
+from speech import OpenedSpeechStream
 
 
 def _png_bytes(width: int = 800, height: int = 600) -> bytes:
@@ -211,6 +215,33 @@ async def test_analyze_configuration_errors_and_metadata_validation() -> None:
     assert fake.aio.aclosed and fake.closed
 
 
+async def test_speech_closes_upstream_when_client_disconnects_before_first_chunk() -> None:
+    class Stream(httpx.AsyncByteStream):
+        closed = False
+
+        async def __aiter__(self) -> AsyncIterator[bytes]:
+            yield b"audio"
+
+        async def aclose(self) -> None:
+            self.closed = True
+
+    async def receive() -> Message:
+        return {"type": "http.disconnect"}
+
+    async def send(_message: Message) -> None:
+        raise OSError("Disconnected")
+
+    stream = Stream()
+    gate = ConcurrencyGate(1)
+    assert gate.try_acquire()
+    response = SpeechStreamingResponse(OpenedSpeechStream(httpx.Response(200, stream=stream)), gate)
+    scope: Scope = {"type": "http", "asgi": {"spec_version": "2.4"}}
+    with pytest.raises(ClientDisconnect):
+        await response(scope, receive, send)
+    assert stream.closed
+    assert gate.active == 0
+
+
 async def test_analyze_success_projects_coordinates_and_rejects_bad_images_before_gemini() -> None:
     req_id = str(uuid4())
 
@@ -228,7 +259,8 @@ async def test_analyze_success_projects_coordinates_and_rejects_bad_images_befor
                         "explanation": ("Mass in kg times acceleration in m/s^2 produces Newtons."),
                         "box_2d": [0, 0, 500, 500],
                         "confidence": 0.95,
-                    }
+                    },
+                    {},
                 ],
             }
         )
@@ -256,6 +288,7 @@ async def test_analyze_success_projects_coordinates_and_rejects_bad_images_befor
                 },
             )
             assert resp.status_code == 200
+            assert resp.headers[PARTIAL_ANALYSIS_HEADER] == "1"
             data = resp.json()
             assert data["request_id"] == req_id
             assert data["image_width"] == 800

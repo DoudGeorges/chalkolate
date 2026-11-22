@@ -11,7 +11,7 @@ def test_defaults_redaction_and_validation() -> None:
     default_settings = load_settings(load_env_files=False, environ={})
     assert default_settings.gemini_model == "gemini-3.8-flash"
     assert default_settings.gemini_thinking_level == "low"
-    assert default_settings.analysis_timeout_seconds == 20.0
+    assert default_settings.analysis_timeout_seconds == 12.0
     assert default_settings.max_model_long_edge == 1600
     assert default_settings.elevenlabs_model_id == "eleven_v4_turbo"
     assert default_settings.speech_configured is False

@@ -5,6 +5,7 @@ export default defineConfig({
   plugins: [react()],
   test: {
     environment: 'jsdom',
+    environmentOptions: { jsdom: { url: 'https://chalkolate.test' } },
     setupFiles: ['./src/test/setup.ts'],
     globals: false,
   },

@@ -5,7 +5,7 @@ import nextTs from 'eslint-config-next/typescript'
 export default defineConfig([
   ...nextVitals,
   ...nextTs,
-  globalIgnores(['.next/**', 'out/**', 'build/**', 'next-env.d.ts', '.venv/**', 'server/**', 'api/**', 'experiments/**']),
+  globalIgnores(['**/.next/**', '**/out/**', '**/dist/**', '**/build/**', '**/next-env.d.ts', '**/.venv/**']),
   {
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',

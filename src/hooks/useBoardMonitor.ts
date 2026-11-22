@@ -3,6 +3,7 @@ import { ApiClientError, analyzeSnapshot } from '../api/client'
 import {
   AnalysisMetadataPayload,
   AnalysisResponse,
+  AnswerFormat,
   CalibrationCorners,
 } from '../api/schemas'
 import {
@@ -211,6 +212,7 @@ export interface UseBoardMonitorOptions {
   calibrationEditing: boolean
   committedCorners: CalibrationCorners | null
   clientDeadlineMs?: number
+  answerFormat?: AnswerFormat
   onNewFindings?: (newlyOpened: readonly TrackedIssue[]) => void
   onInvalidateSpeech?: () => void
   onVerificationResult?: (result: VerificationResultSummary) => void
@@ -226,6 +228,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     calibrationEditing,
     committedCorners,
     clientDeadlineMs = 30_000,
+    answerFormat = 'exact',
     onNewFindings,
     onInvalidateSpeech,
     onVerificationResult,
@@ -258,6 +261,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     calibrationEditing,
     committedCorners,
     clientDeadlineMs,
+    answerFormat,
     settingsSig,
     onNewFindings,
     onInvalidateSpeech,
@@ -272,6 +276,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     calibrationEditing,
     committedCorners,
     clientDeadlineMs,
+    answerFormat,
     settingsSig,
     onNewFindings,
     onInvalidateSpeech,
@@ -460,6 +465,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
         const metadata: AnalysisMetadataPayload = {
           request_id: snapshotRequestId,
           previous_board_summary: snapshotPrevSummary,
+          answer_format: rt.answerFormat,
           corners: snapshotCorners,
         }
 
@@ -487,7 +493,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
           : null
 
         const classifyIssueRegion = (issue: TrackedIssue): RegionStatus => {
-          if (!commitSample) return 'obscured'
+          if (response.incomplete || !commitSample) return 'obscured'
           const atDispatch = classifyRegion(
             issue.box_2d,
             issue.lastSeenSample,
