@@ -4,6 +4,7 @@ import { AnswerFormat } from '../api/schemas'
 import { ALERT_MODE_OPTIONS } from './alertModeOptions'
 import { optionCardClass } from './optionStyles'
 import { TalkativenessPicker } from './TalkativenessPicker'
+import { VoiceSettings, VoiceSettingsProps } from './VoiceSettings'
 
 export interface SettingsContentProps {
   alertMode: AlertMode
@@ -12,6 +13,8 @@ export interface SettingsContentProps {
   onChangeTalkativeness: (value: Talkativeness) => void
   answerFormat: AnswerFormat
   onChangeAnswerFormat: (format: AnswerFormat) => void
+  /** ElevenLabs voice picker; hidden in visual-only mode. */
+  voiceSettings: VoiceSettingsProps
 }
 
 const ANSWER_FORMATS = [
@@ -28,7 +31,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
-/** Settings tab body of the right side panel: alert mode, how much is said, answer format. */
+/** Settings tab body of the right side panel: alert mode, voice, how much is said, answer format. */
 export function SettingsContent({
   alertMode,
   onChangeAlertMode,
@@ -36,6 +39,7 @@ export function SettingsContent({
   onChangeTalkativeness,
   answerFormat,
   onChangeAnswerFormat,
+  voiceSettings,
 }: SettingsContentProps) {
   return (
     <div className="space-y-5">
@@ -64,6 +68,12 @@ export function SettingsContent({
           })}
         </div>
       </section>
+
+      {alertMode !== 'visual_only' && (
+        <div className="border-t border-line pt-4">
+          <VoiceSettings {...voiceSettings} />
+        </div>
+      )}
 
       {alertMode !== 'visual_only' && (
         <section className="space-y-2 border-t border-line pt-4">

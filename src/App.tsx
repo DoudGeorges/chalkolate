@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { detectBoardCorners, fetchHealth } from './api/client'
-import { AnswerFormat, AnswerFormatSchema, CalibrationCorners, HealthResponse } from './api/schemas'
+import { detectBoardCorners, fetchHealth, fetchVoices } from './api/client'
+import {
+  AnswerFormat,
+  AnswerFormatSchema,
+  CalibrationCorners,
+  HealthResponse,
+  SpeechVoiceOption,
+} from './api/schemas'
 import { CalibrationDetectStatus } from './components/CalibrationOverlay'
 import { NotesPanel } from './components/NotesPanel'
 import { SettingsPanel } from './components/SettingsPanel'
@@ -146,12 +152,55 @@ export function App() {
 
   const speechConfigured = health?.speech_configured ?? false
 
+  const [elevenLabsVoices, setElevenLabsVoices] = useState<SpeechVoiceOption[]>([])
+  const [voicesError, setVoicesError] = useState<string | null>(null)
+  const [voicesLoading, setVoicesLoading] = useState(false)
+  const [voicesReloadKey, setVoicesReloadKey] = useState(0)
+  const retryVoices = useCallback(() => setVoicesReloadKey((k) => k + 1), [])
+
+  useEffect(() => {
+    if (!speechConfigured) {
+      setElevenLabsVoices([])
+      setVoicesError(null)
+      setVoicesLoading(false)
+      return
+    }
+    const controller = new AbortController()
+    setVoicesLoading(true)
+    setVoicesError(null)
+    fetchVoices(controller.signal)
+      .then((res) => {
+        setElevenLabsVoices(res.voices)
+        setVoicesError(null)
+      })
+      .catch((err) => {
+        if (isAbortError(err)) return
+        setVoicesError(
+          err instanceof Error && err.message
+            ? `Couldn't load voices: ${err.message}`
+            : "Couldn't load ElevenLabs voices.",
+        )
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setVoicesLoading(false)
+      })
+    return () => controller.abort()
+  }, [speechConfigured, voicesReloadKey])
+
+  // A saved voice the backend no longer offers falls back to the configured default.
+  const effectiveVoicePreferences = useMemo<VoicePreferences>(() => {
+    return elevenLabsVoices.some((v) => v.id === voicePreferences.elevenLabsVoice)
+      ? voicePreferences
+      : { ...voicePreferences, elevenLabsVoice: 'default' }
+  }, [elevenLabsVoices, voicePreferences])
+
   const markSpokenRef = useRef<(id: string) => void>(() => {})
   const speech = useSpeechAlerts({
     elevenLabsConfigured: speechConfigured,
-    preferences: voicePreferences,
+    preferences: effectiveVoicePreferences,
     onUtteranceStarted: (id) => markSpokenRef.current(id),
-    // The hook already deduplicates: once per session.
+    // The hook already deduplicates: once per session for account-wide failures and
+    // once per voice for voices the account cannot use.
     onProviderFallback: (reason) => {
       pushToast({ message: `${reason} Using browser voice.`, tone: 'info' }, 6000)
     },
@@ -610,6 +659,18 @@ export function App() {
             onChangeTalkativeness={(talkativeness) =>
               handleChangeVoicePreferences({ talkativeness })
             }
+            voiceSettings={{
+              preferences: effectiveVoicePreferences,
+              onChange: handleChangeVoicePreferences,
+              elevenLabsConfigured: speechConfigured,
+              voices: elevenLabsVoices,
+              voicesLoading,
+              voicesError,
+              onRetryVoices: retryVoices,
+              previewingVoice: speech.previewingVoice,
+              onPreviewVoice: speech.isSupported ? speech.previewVoice : undefined,
+              onStopPreview: speech.cancelAll,
+            }}
           />
         )}
       </div>
