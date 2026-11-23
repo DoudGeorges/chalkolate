@@ -35,27 +35,24 @@ const DEFAULT_DEPS: SpeechAlertDeps = {
 
 export const SPEECH_REQUEST_TIMEOUT_MS = 12_000
 const SPEECH_PLAYBACK_TIMEOUT_MS = 30_000
-export const BROWSER_SPEECH_START_TIMEOUT_MS = 4_000
-export const BROWSER_SPEECH_MAX_MS = 20_000
 export const PREVIEW_ALERT_ID = '__voice-preview__'
 const PREVIEW_SAMPLE: SpeakableIssueText = {
   spoken_alert: 'The derivative of x squared should be two x.',
   explanation: 'The power rule brings the two down and reduces the exponent by one.',
 }
-const BROWSER_VOICE_UNAVAILABLE = 'This browser cannot play spoken alerts. Corrections appear on the board.'
+const SPEECH_UNAVAILABLE_MESSAGE = 'Spoken alerts are unavailable. Corrections appear on the board.'
 
 export interface UseSpeechAlertsOptions {
   elevenLabsConfigured?: boolean
   preferences?: VoicePreferences
   onUtteranceStarted?: (issueId: string) => void
-  onProviderFallback?: (reason: string) => void
   deps?: Partial<SpeechAlertDeps>
 }
 
 interface QueuedSpeechItem {
   id: string
   issue: SpeakableIssueText
-  mode: 'auto' | 'manual' | 'preview'
+  mode: 'auto' | 'preview'
   /** Voice override for previews; alerts use the current preference. */
   voice?: string
 }
@@ -63,20 +60,7 @@ interface QueuedSpeechItem {
 interface ActivePlaybackControl {
   issueId: string
   gen: number
-  provider: 'elevenlabs' | 'browser'
   cancel: () => void
-}
-
-function getSpeechSynthesisApi(): SpeechSynthesis | null {
-  if (
-    typeof window === 'undefined' ||
-    !('speechSynthesis' in window) ||
-    typeof window.speechSynthesis === 'undefined' ||
-    typeof SpeechSynthesisUtterance === 'undefined'
-  ) {
-    return null
-  }
-  return window.speechSynthesis
 }
 
 function isPermanentSpeechConfigFailure(err: unknown): boolean {
@@ -118,7 +102,6 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
     elevenLabsConfigured = false,
     preferences = DEFAULT_VOICE_PREFERENCES,
     onUtteranceStarted,
-    onProviderFallback,
     deps: partialDeps,
   } = options
 
@@ -128,55 +111,26 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
   const onStartedRef = useRef(onUtteranceStarted)
   onStartedRef.current = onUtteranceStarted
 
-  const onFallbackRef = useRef(onProviderFallback)
-  onFallbackRef.current = onProviderFallback
-
   const elevenLabsConfiguredRef = useRef(elevenLabsConfigured)
   elevenLabsConfiguredRef.current = elevenLabsConfigured
 
   const preferencesRef = useRef(preferences)
   preferencesRef.current = preferences
 
-  const browserSupported = getSpeechSynthesisApi() !== null
-  const isSupported = elevenLabsConfigured || browserSupported
+  const isSupported = elevenLabsConfigured
 
   /** Voice key whose preview is currently queued or playing, for UI feedback. */
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null)
-  const [speechError, setSpeechError] = useState<string | null>(
-    isSupported ? null : BROWSER_VOICE_UNAVAILABLE,
-  )
+  const [speechError, setSpeechError] = useState<string | null>(null)
 
   const queueRef = useRef<QueuedSpeechItem[]>([])
   const queuedIdsRef = useRef<Set<string>>(new Set())
   const startedIdsRef = useRef<Set<string>>(new Set())
-  const activeUtterancesRef = useRef<Set<SpeechSynthesisUtterance>>(new Set())
   const activeControlRef = useRef<ActivePlaybackControl | null>(null)
   const isProcessingRef = useRef(false)
   const cancelGenRef = useRef(0)
   const elevenLabsCooldownUntilRef = useRef(0)
-  const fallbackNotifiedRef = useRef(false)
-  const blockedVoicesRef = useRef<Set<string>>(new Set())
-
-  const refreshUnavailableMessage = useCallback(() => {
-    const anySupported = elevenLabsConfiguredRef.current || getSpeechSynthesisApi() !== null
-    setSpeechError(
-      anySupported
-        ? null
-        : BROWSER_VOICE_UNAVAILABLE,
-    )
-  }, [])
-
-  useEffect(() => {
-    if (elevenLabsConfigured) {
-      if (elevenLabsCooldownUntilRef.current === Number.POSITIVE_INFINITY) {
-        elevenLabsCooldownUntilRef.current = 0
-        fallbackNotifiedRef.current = false
-      }
-      setSpeechError((prev) =>
-        prev === BROWSER_VOICE_UNAVAILABLE ? null : prev,
-      )
-    }
-  }, [elevenLabsConfigured])
+  const blockedVoicesRef = useRef<Map<string, string>>(new Map())
 
   const unlockAudio = useCallback(() => {
     unlockAudioPlayback()
@@ -190,154 +144,28 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
     const active = activeControlRef.current
     activeControlRef.current = null
     active?.cancel()
-    activeUtterancesRef.current.clear()
     setPreviewingVoice(null)
-    if (active?.provider !== 'browser') {
-      const synth = getSpeechSynthesisApi()
-      if (synth) {
-        try {
-          synth.cancel()
-        } catch {
-          // Ignore browser speech cancel quirks.
-        }
-      }
-    }
   }, [])
+
+  useEffect(() => {
+    if (elevenLabsConfigured) {
+      if (elevenLabsCooldownUntilRef.current === Number.POSITIVE_INFINITY) {
+        elevenLabsCooldownUntilRef.current = 0
+      }
+      setSpeechError((prev) =>
+        prev === SPEECH_UNAVAILABLE_MESSAGE ? null : prev,
+      )
+    } else {
+      cancelAll()
+      setSpeechError(null)
+    }
+  }, [cancelAll, elevenLabsConfigured])
 
   const resetHistory = useCallback(() => {
     cancelAll()
     startedIdsRef.current.clear()
-    refreshUnavailableMessage()
-  }, [cancelAll, refreshUnavailableMessage])
-
-  const speakViaBrowser = useCallback(
-    (item: QueuedSpeechItem, text: string, gen: number): Promise<void> => {
-      const synth = getSpeechSynthesisApi()
-      if (!synth) {
-        return Promise.resolve()
-      }
-
-      return new Promise<void>((resolve) => {
-        if (gen !== cancelGenRef.current) {
-          resolve()
-          return
-        }
-
-        const utterance = new SpeechSynthesisUtterance(text)
-        utterance.rate = 1.0
-        utterance.pitch = 1.0
-
-        let settled = false
-        let startWatchdog: number | undefined
-        let maxWatchdog: number | undefined
-
-        const clearWatchdogs = () => {
-          if (startWatchdog !== undefined) {
-            window.clearTimeout(startWatchdog)
-            startWatchdog = undefined
-          }
-          if (maxWatchdog !== undefined) {
-            window.clearTimeout(maxWatchdog)
-            maxWatchdog = undefined
-          }
-        }
-
-        const finish = () => {
-          if (settled) return
-          settled = true
-          clearWatchdogs()
-          activeUtterancesRef.current.delete(utterance)
-          resolve()
-        }
-
-        activeUtterancesRef.current.add(utterance)
-        activeControlRef.current = {
-          issueId: item.id,
-          gen,
-          provider: 'browser',
-          cancel: () => {
-            try {
-              synth.cancel()
-            } catch {
-              // Ignore browser cancel errors.
-            }
-            finish()
-          },
-        }
-
-        startWatchdog = window.setTimeout(() => {
-          if (settled) return
-          if (gen === cancelGenRef.current) setSpeechError('Browser voice playback timed out.')
-          try {
-            synth.cancel()
-          } catch {
-            // Ignore stalled cancel error.
-          }
-          queuedIdsRef.current.delete(item.id)
-          finish()
-        }, BROWSER_SPEECH_START_TIMEOUT_MS)
-
-        maxWatchdog = window.setTimeout(() => {
-          if (settled) return
-          try {
-            synth.cancel()
-          } catch {
-            // Ignore stalled cancel error.
-          }
-          queuedIdsRef.current.delete(item.id)
-          finish()
-        }, Math.max(BROWSER_SPEECH_MAX_MS, text.length * 120))
-
-        utterance.onstart = () => {
-          if (startWatchdog !== undefined) {
-            window.clearTimeout(startWatchdog)
-            startWatchdog = undefined
-          }
-          if (gen !== cancelGenRef.current || settled) return
-          queuedIdsRef.current.delete(item.id)
-          setSpeechError(null)
-          if (item.mode === 'preview') return
-          startedIdsRef.current.add(item.id)
-          onStartedRef.current?.(item.id)
-        }
-
-        utterance.onend = () => {
-          if (gen === cancelGenRef.current && !settled) queuedIdsRef.current.delete(item.id)
-          finish()
-        }
-
-        utterance.onerror = (event) => {
-          if (gen === cancelGenRef.current && !settled) {
-            queuedIdsRef.current.delete(item.id)
-            const errCode = event.error
-            if (errCode !== 'canceled' && errCode !== 'interrupted') {
-              setSpeechError(
-                errCode === 'not-allowed'
-                  ? 'The browser blocked spoken alerts. Check this site’s audio permissions.'
-                  : 'The browser could not play the spoken alert.',
-              )
-            }
-          }
-          finish()
-        }
-
-        try {
-          // Chromium on Windows occasionally leaves speechSynthesis paused across focus changes.
-          if ('paused' in synth && synth.paused && typeof synth.resume === 'function') {
-            synth.resume()
-          }
-          synth.speak(utterance)
-        } catch {
-          queuedIdsRef.current.delete(item.id)
-          if (gen === cancelGenRef.current) {
-            setSpeechError('The browser could not start the spoken alert.')
-          }
-          finish()
-        }
-      })
-    },
-    [],
-  )
+    setSpeechError(null)
+  }, [cancelAll])
 
   const pumpQueue = useCallback(async () => {
     if (isProcessingRef.current) return
@@ -353,9 +181,10 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
         let didStart = false
 
         const selectedVoice = item.voice ?? preferencesRef.current.elevenLabsVoice
+        const blockedReason = blockedVoicesRef.current.get(selectedVoice)
         const canTryElevenLabs =
           elevenLabsConfiguredRef.current &&
-          !blockedVoicesRef.current.has(selectedVoice) &&
+          blockedReason === undefined &&
           depsRef.current.now() >= elevenLabsCooldownUntilRef.current
 
         if (canTryElevenLabs) {
@@ -370,14 +199,12 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
           activeControlRef.current = {
             issueId: item.id,
             gen,
-            provider: 'elevenlabs',
             cancel: () => {
               window.clearTimeout(timeoutId)
               abortController.abort()
             },
           }
 
-          let needBrowserFallback = false
           try {
             for (const chunk of speechRequestChunks(text)) {
               if (gen !== cancelGenRef.current || abortController.signal.aborted) break
@@ -412,65 +239,36 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
             }
 
             const effectiveErr = timedOut ? new Error('Voice playback timed out.') : err
-            const browserFallback = !didStart && getSpeechSynthesisApi() !== null
-            const reportFallback = (message: string) => {
-              if (browserFallback) onFallbackRef.current?.(`${message} Trying the browser voice.`)
-            }
             const cooldownMs = computeCooldownMs(effectiveErr)
+            const errorMessage =
+              effectiveErr instanceof Error && effectiveErr.message
+                ? effectiveErr.message
+                : SPEECH_UNAVAILABLE_MESSAGE
+
             if (isVoiceSpecificFailure(effectiveErr)) {
               // Only this voice is unusable (e.g. needs a paid plan); keep ElevenLabs for others.
-              if (!blockedVoicesRef.current.has(selectedVoice)) {
-                blockedVoicesRef.current.add(selectedVoice)
-                reportFallback(
-                  effectiveErr instanceof Error && effectiveErr.message
-                    ? effectiveErr.message
-                    : 'The selected voice is unavailable.',
-                )
-              }
+              blockedVoicesRef.current.set(selectedVoice, errorMessage)
             } else if (cooldownMs === Number.POSITIVE_INFINITY) {
               elevenLabsCooldownUntilRef.current = Number.POSITIVE_INFINITY
-              if (!fallbackNotifiedRef.current) {
-                fallbackNotifiedRef.current = true
-                const msg =
-                  effectiveErr instanceof Error && effectiveErr.message
-                    ? effectiveErr.message
-                    : 'The voice service is unavailable.'
-                reportFallback(msg)
-              }
             } else {
               elevenLabsCooldownUntilRef.current = depsRef.current.now() + cooldownMs
             }
 
-            if (!didStart) {
-              if (browserFallback) {
-                needBrowserFallback = true
-              } else {
-                queuedIdsRef.current.delete(item.id)
-                setSpeechError(
-                  effectiveErr instanceof Error && effectiveErr.message
-                    ? effectiveErr.message
-                    : 'Spoken alerts are unavailable. Corrections appear on the board.',
-                )
-              }
-            } else {
-              queuedIdsRef.current.delete(item.id)
-              setSpeechError('The spoken alert was interrupted.')
-            }
+            queuedIdsRef.current.delete(item.id)
+            setSpeechError(didStart ? 'The spoken alert was interrupted.' : errorMessage)
           } finally {
             window.clearTimeout(timeoutId)
             if (activeControlRef.current?.gen === gen) {
               activeControlRef.current = null
             }
           }
-
-          if (needBrowserFallback && gen === cancelGenRef.current) {
-            await speakViaBrowser(item, text, gen)
-          }
-        } else if (getSpeechSynthesisApi() !== null) {
-          await speakViaBrowser(item, text, gen)
         } else {
           queuedIdsRef.current.delete(item.id)
-          setSpeechError(BROWSER_VOICE_UNAVAILABLE)
+          if (blockedReason !== undefined) {
+            setSpeechError(blockedReason)
+          } else if (!elevenLabsConfiguredRef.current) {
+            setSpeechError(SPEECH_UNAVAILABLE_MESSAGE)
+          }
         }
         if (item.mode === 'preview' && gen === cancelGenRef.current) {
           setPreviewingVoice(null)
@@ -483,10 +281,11 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
         setPreviewingVoice(null)
       }
     }
-  }, [speakViaBrowser])
+  }, [])
 
   const enqueueAutoAlerts = useCallback(
     (issues: readonly SpeakableAlert[]) => {
+      if (!elevenLabsConfiguredRef.current) return
       let added = false
       for (const issue of issues) {
         if (queuedIdsRef.current.has(issue.id) || startedIdsRef.current.has(issue.id)) {
@@ -501,17 +300,6 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
       }
     },
     [pumpQueue],
-  )
-
-  const speakNow = useCallback(
-    (issue: SpeakableAlert) => {
-      cancelAll()
-      unlockAudioPlayback()
-      queuedIdsRef.current.add(issue.id)
-      queueRef.current.push({ id: issue.id, issue, mode: 'manual' })
-      void pumpQueue()
-    },
-    [cancelAll, pumpQueue],
   )
 
   const removePreview = useCallback(() => {
@@ -534,6 +322,7 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
   /** Queues a short sample ahead of waiting alerts while preserving active speech. */
   const previewVoice = useCallback(
     (voice?: string) => {
+      if (!elevenLabsConfiguredRef.current) return
       removePreview()
       unlockAudioPlayback()
       const voiceKey = voice ?? preferencesRef.current.elevenLabsVoice
@@ -550,8 +339,8 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
   )
 
   /**
-   * Cancels queued or active announcements for findings that have resolved or been
-   * dismissed so stale audio never finishes speaking after an issue leaves the board.
+   * Cancels queued or active announcements for findings that have resolved so stale audio
+   * never finishes speaking after an issue leaves the board.
    */
   const syncActiveIssueIds = useCallback(
     (activeIds: ReadonlySet<string>) => {
@@ -595,7 +384,6 @@ export function useSpeechAlerts(options: UseSpeechAlertsOptions = {}) {
     isSupported,
     speechError,
     enqueueAutoAlerts,
-    speakNow,
     previewVoice,
     stopPreview,
     previewingVoice,

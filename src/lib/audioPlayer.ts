@@ -31,7 +31,7 @@ function getSharedAudioElement(): HTMLAudioElement | null {
 }
 
 /**
- * Primes the shared audio element synchronously inside a user gesture (Start / Speak)
+ * Primes the shared audio element synchronously inside a user gesture (Start checking / voice preview)
  * so follow-up async ElevenLabs responses satisfy per-element autoplay rules without
  * interrupting active speech playback.
  */
@@ -70,7 +70,6 @@ export function unlockAudioPlayback(): void {
 function createAbortError(): DOMException {
   return new DOMException('Speech playback aborted.', 'AbortError')
 }
-
 
 function waitForEvent(
   target: EventTarget,

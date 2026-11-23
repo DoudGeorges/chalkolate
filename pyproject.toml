@@ -29,7 +29,7 @@ package = false
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["server", "api"]
+src = ["server"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
@@ -37,7 +37,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 [tool.mypy]
 python_version = "3.12"
 mypy_path = "server"
-files = ["server", "api"]
+files = ["server"]
 strict = true
 warn_unreachable = true
 warn_redundant_casts = true

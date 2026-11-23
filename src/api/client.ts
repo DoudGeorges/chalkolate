@@ -83,13 +83,6 @@ async function parseErrorResponse(response: Response): Promise<ApiClientError> {
   )
 }
 
-/** Random per-page-load id sent on every request so the owner-only debug log can group a session. */
-const SESSION_ID =
-  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : Math.random().toString(16).slice(2)
-const SESSION_HEADERS = { 'X-Chalkolate-Session': SESSION_ID }
-
 /**
  * Sends one API request and returns the successful response. Responses are per-user data, so
  * the browser HTTP cache is bypassed (the backend also replies `Cache-Control: no-store`).
@@ -100,13 +93,10 @@ async function sendRequest(
   networkErrorMessage: string,
 ): Promise<Response> {
   let response: Response
-  const headers = new Headers(init.headers)
-  for (const [name, value] of Object.entries(SESSION_HEADERS)) headers.set(name, value)
   try {
     response = await fetch(url, {
       ...init,
       cache: 'no-store',
-      headers,
     })
   } catch (err) {
     if (isAbortError(err)) {

@@ -1,8 +1,9 @@
 import { Box2D, ErrorCategory, SourceSpaceDetectedError } from '../api/schemas'
 import { RegionStatus } from './changeDetector'
 import { GrayscaleSample } from './frameCapture'
+import { createRequestId } from './requestId'
 
-export type IssueLifecycleStatus = 'open' | 'dismissed' | 'resolved'
+export type IssueLifecycleStatus = 'open' | 'resolved'
 
 export interface TrackedIssue {
   id: string
@@ -24,26 +25,21 @@ export interface TrackedIssue {
   lastSeenSeq: number
   lastSeenSample: GrayscaleSample | null
   spoken: boolean
-  pendingVerification: boolean
 }
 
 export interface IssueTrackerState {
   analysisSeq: number
   issues: TrackedIssue[]
-  dismissalHistoryIds: string[]
 }
 
 export interface ReconcileContext {
   sample: GrayscaleSample
   classify: (issue: TrackedIssue) => RegionStatus
-  relaxSpatial: boolean
 }
 
 export interface ReconcileResult {
   nextState: IssueTrackerState
   newlyOpened: TrackedIssue[]
-  verifiedResolved: TrackedIssue[]
-  verifiedStillPresent: TrackedIssue[]
 }
 
 /**
@@ -64,7 +60,6 @@ export function createInitialTrackerState(): IssueTrackerState {
   return {
     analysisSeq: 0,
     issues: [],
-    dismissalHistoryIds: [],
   }
 }
 
@@ -294,13 +289,6 @@ export function deduplicateFindings(
   return clusters.map(pickPreferredClusterFinding)
 }
 
-function generateLocalUuid(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
-  return `issue-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
-}
-
 export function reconcileAnalysis(
   state: IssueTrackerState,
   findings: readonly SourceSpaceDetectedError[],
@@ -319,7 +307,7 @@ export function reconcileAnalysis(
 
   // Tier 1: exact normalized text; Tier 2: compact text;
   // Tier 3: in-place open revision (IoU + Levenshtein);
-  // Tier 4: conceptual equivalence on open/dismissed issues (consolidates box granularity drift).
+  // Tier 4: conceptual equivalence on open issues (consolidates box granularity drift).
   const candidates: Array<{
     issueIndex: number
     findingIndex: number
@@ -340,30 +328,30 @@ export function reconcileAnalysis(
             computeBoxContainment(existing.box_2d, f.finding.box_2d) >= 0.85)
 
         if (existing.normalized_text === f.norm) {
-          if (ctx.relaxSpatial || spatiallyClose) {
+          if (spatiallyClose) {
             candidates.push({
               issueIndex: i,
               findingIndex: j,
               tier: 1,
-              score: ctx.relaxSpatial ? -dist : iou * 1000 - dist,
+              score: iou * 1000 - dist,
             })
           }
           continue
         }
 
         if (existing.compact_text === f.compact) {
-          if (ctx.relaxSpatial || spatiallyClose) {
+          if (spatiallyClose) {
             candidates.push({
               issueIndex: i,
               findingIndex: j,
               tier: 2,
-              score: ctx.relaxSpatial ? -dist : iou * 1000 - dist,
+              score: iou * 1000 - dist,
             })
           }
           continue
         }
 
-        // Tier 3 applies strictly to currently open issues (never dismissed/resolved).
+        // Tier 3 applies strictly to currently open issues (never resolved).
         if (existing.status === 'open' && iou >= REVISION_MIN_IOU) {
           const sim = levenshteinSimilarity(existing.compact_text, f.compact)
           if (sim >= REVISION_MIN_SIMILARITY) {
@@ -415,8 +403,6 @@ export function reconcileAnalysis(
 
   const nextIssues: TrackedIssue[] = []
   const newlyOpened: TrackedIssue[] = []
-  const verifiedResolved: TrackedIssue[] = []
-  const verifiedStillPresent: TrackedIssue[] = []
 
   for (let i = 0; i < state.issues.length; i++) {
     const existing = state.issues[i]!
@@ -424,14 +410,11 @@ export function reconcileAnalysis(
 
     if (match !== undefined) {
       const f = preparedFindings[match.findingIndex]!
-      const nextStatus: IssueLifecycleStatus =
-        existing.status === 'dismissed' ? 'dismissed' : 'open'
 
       // Preserve a verified term box if the model later encloses it in the whole line.
       const keepTighterExistingBox =
         match.tier !== 3 &&
         existing.status === 'open' &&
-        !ctx.relaxSpatial &&
         computeBoxContainment(existing.box_2d, f.finding.box_2d) >= 0.85 &&
         boxArea(existing.box_2d) < boxArea(f.finding.box_2d) * 0.75
 
@@ -440,7 +423,6 @@ export function reconcileAnalysis(
       const keepAnchoredBox =
         (match.tier === 1 || match.tier === 2) &&
         existing.status === 'open' &&
-        !ctx.relaxSpatial &&
         computeBoxIoU(existing.box_2d, f.finding.box_2d) >= 0.65 &&
         boxArea(f.finding.box_2d) >= boxArea(existing.box_2d) * 0.85
 
@@ -457,44 +439,23 @@ export function reconcileAnalysis(
         explanation: f.finding.explanation,
         box_2d: keepTighterExistingBox || keepAnchoredBox ? existing.box_2d : f.finding.box_2d,
         confidence: f.finding.confidence,
-        status: nextStatus,
+        status: 'open',
         missCount: 0,
         needsRecheck: false,
         lastSeenSeq: nextSeq,
         lastSeenSample: ctx.sample,
-        pendingVerification: false,
       }
 
       nextIssues.push(updated)
-      if (existing.pendingVerification) {
-        verifiedStillPresent.push(updated)
-      }
     } else if (existing.status === 'open') {
       const region = ctx.classify(existing)
-      if (existing.pendingVerification) {
-        if (ctx.relaxSpatial || region === 'obscured') {
-          nextIssues.push({ ...existing, needsRecheck: true })
-        } else {
-          const resolved: TrackedIssue = {
-            ...existing,
-            status: 'resolved',
-            missCount: existing.missCount + 1,
-            needsRecheck: false,
-            pendingVerification: false,
-          }
-          nextIssues.push(resolved)
-          verifiedResolved.push(resolved)
-        }
-      } else if (region === 'obscured') {
+      if (region === 'obscured') {
         // Hold open while hand/presenter motion obscures the region; recheck once calm.
         nextIssues.push({ ...existing, needsRecheck: true })
       } else {
         const nextMiss = existing.missCount + 1
-        // After a full scene shift (relaxSpatial), require two calm misses before resolving.
         const threshold =
-          !ctx.relaxSpatial && region === 'changed'
-            ? MISSES_TO_RESOLVE_CHANGED
-            : MISSES_TO_RESOLVE_UNCHANGED
+          region === 'changed' ? MISSES_TO_RESOLVE_CHANGED : MISSES_TO_RESOLVE_UNCHANGED
         const isResolved = nextMiss >= threshold
         nextIssues.push({
           ...existing,
@@ -507,7 +468,6 @@ export function reconcileAnalysis(
       nextIssues.push({
         ...existing,
         needsRecheck: false,
-        pendingVerification: false,
       })
     }
   }
@@ -516,7 +476,7 @@ export function reconcileAnalysis(
     if (matchedFindingIndices.has(j)) continue
     const f = preparedFindings[j]!
     const created: TrackedIssue = {
-      id: generateLocalUuid(),
+      id: createRequestId(),
       category: f.finding.category,
       detected_text: f.finding.detected_text,
       normalized_text: f.norm,
@@ -534,24 +494,19 @@ export function reconcileAnalysis(
       lastSeenSeq: nextSeq,
       lastSeenSample: ctx.sample,
       spoken: false,
-      pendingVerification: false,
     }
     nextIssues.push(created)
     newlyOpened.push(created)
   }
 
   const pruned = pruneBoundedHistory(nextIssues)
-  const keptIds = new Set(pruned.map((item) => item.id))
 
   return {
     nextState: {
       analysisSeq: nextSeq,
       issues: pruned,
-      dismissalHistoryIds: state.dismissalHistoryIds.filter((id) => keptIds.has(id)),
     },
     newlyOpened,
-    verifiedResolved,
-    verifiedStillPresent,
   }
 }
 
@@ -564,21 +519,15 @@ export function getIssuesPendingRecheck(state: IssueTrackerState): TrackedIssue[
 function pruneBoundedHistory(issues: TrackedIssue[]): TrackedIssue[] {
   if (issues.length <= MAX_TRACKED_HISTORY) return issues
   const open = issues.filter((item) => item.status === 'open')
-  const dismissed = issues
-    .filter((item) => item.status === 'dismissed')
-    .sort((a, b) => b.lastSeenSeq - a.lastSeenSeq)
   const resolved = issues
     .filter((item) => item.status === 'resolved')
     .sort((a, b) => b.lastSeenSeq - a.lastSeenSeq)
 
-  // Prune resolved (oldest lastSeenSeq) first, then oldest dismissed if still over limit.
+  // Prune oldest resolved issues (by lastSeenSeq) first while preserving open findings.
   const keepAfterOpen = Math.max(0, MAX_TRACKED_HISTORY - open.length)
-  const keptDismissed = dismissed.slice(0, keepAfterOpen)
-  const remainingForResolved = Math.max(0, keepAfterOpen - keptDismissed.length)
-  const keptResolved = resolved.slice(0, remainingForResolved)
+  const keptResolved = resolved.slice(0, keepAfterOpen)
 
-  const combined = [...open, ...keptDismissed, ...keptResolved]
-  return combined.slice(0, MAX_TRACKED_HISTORY)
+  return [...open, ...keptResolved].slice(0, MAX_TRACKED_HISTORY)
 }
 
 export function markIssueSpoken(state: IssueTrackerState, issueId: string): IssueTrackerState {
@@ -586,67 +535,6 @@ export function markIssueSpoken(state: IssueTrackerState, issueId: string): Issu
     ...state,
     issues: state.issues.map((issue) =>
       issue.id === issueId ? { ...issue, spoken: true } : issue,
-    ),
-  }
-}
-
-export function dismissIssue(state: IssueTrackerState, issueId: string): IssueTrackerState {
-  const target = state.issues.find((item) => item.id === issueId)
-  if (!target || target.status === 'dismissed') return state
-  return {
-    ...state,
-    issues: state.issues.map((issue) =>
-      issue.id === issueId
-        ? { ...issue, status: 'dismissed', needsRecheck: false, pendingVerification: false }
-        : issue,
-    ),
-    dismissalHistoryIds: [...state.dismissalHistoryIds.filter((id) => id !== issueId), issueId],
-  }
-}
-
-export function undoLastDismissal(state: IssueTrackerState): IssueTrackerState {
-  if (state.dismissalHistoryIds.length === 0) return state
-  const targetId = state.dismissalHistoryIds[state.dismissalHistoryIds.length - 1]
-  return {
-    ...state,
-    issues: state.issues.map((issue) =>
-      issue.id === targetId
-        ? { ...issue, status: 'open', missCount: 0, needsRecheck: false }
-        : issue,
-    ),
-    dismissalHistoryIds: state.dismissalHistoryIds.slice(0, -1),
-  }
-}
-
-export function resetDismissed(state: IssueTrackerState): IssueTrackerState {
-  if (state.dismissalHistoryIds.length === 0) return state
-  return {
-    ...state,
-    issues: state.issues.map((issue) =>
-      issue.status === 'dismissed'
-        ? { ...issue, status: 'open', missCount: 0, needsRecheck: false }
-        : issue,
-    ),
-    dismissalHistoryIds: [],
-  }
-}
-
-export function requestVerification(state: IssueTrackerState, issueId: string): IssueTrackerState {
-  return {
-    ...state,
-    issues: state.issues.map((issue) =>
-      issue.id === issueId && issue.status === 'open'
-        ? { ...issue, pendingVerification: true }
-        : issue,
-    ),
-  }
-}
-
-export function clearPendingVerification(state: IssueTrackerState): IssueTrackerState {
-  return {
-    ...state,
-    issues: state.issues.map((issue) =>
-      issue.pendingVerification ? { ...issue, pendingVerification: false } : issue,
     ),
   }
 }

@@ -4,7 +4,7 @@
  * which could collide across tabs or users.
  */
 export function createRequestId(): string {
-  if (typeof crypto.randomUUID === 'function') {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
   }
   const bytes = crypto.getRandomValues(new Uint8Array(16))

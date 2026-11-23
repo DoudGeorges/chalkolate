@@ -70,14 +70,13 @@ class ImageEncodingError(VisionError):
 
 @dataclass(frozen=True)
 class PreparedImage:
-    """Prepared JPEG bytes plus exact forward/inverse continuous-space coordinate maps."""
+    """Prepared JPEG bytes plus exact inverse continuous-space coordinate map."""
 
     jpeg_bytes: bytes
     source_width: int
     source_height: int
     model_width: int
     model_height: int
-    forward_homography: HomographyMatrix
     inverse_homography: HomographyMatrix
 
 
@@ -224,7 +223,7 @@ def validate_calibration_corners(corners: Sequence[tuple[float, float]]) -> Poin
         sin_theta = cross_z / (n1 * n2)
         if sin_theta < MIN_CORNER_SIN:
             raise InvalidCalibrationError(
-                "Calibration corners are nearly collinear; adjust handles into a clear quad."
+                "Calibration corners are nearly collinear. Adjust handles into a clear quad."
             )
 
     # Shoelace area in normalized units
@@ -280,7 +279,7 @@ def _compute_calibrated_warp(
     bgr: BGRImage,
     corners: Sequence[tuple[float, float]],
     max_long_edge: int,
-) -> tuple[BGRImage, HomographyMatrix, HomographyMatrix]:
+) -> tuple[BGRImage, HomographyMatrix]:
     src_height, src_width = bgr.shape[:2]
     norm_pts = validate_calibration_corners(corners)
 
@@ -326,9 +325,8 @@ def _compute_calibrated_warp(
         and model_w == src_width
         and model_h == src_height
     ):
-        h_cont = np.eye(3, dtype=np.float64)
         h_cont_inv = np.eye(3, dtype=np.float64)
-        return bgr.copy(), h_cont, h_cont_inv
+        return bgr.copy(), h_cont_inv
 
     h_cont = cast(
         HomographyMatrix,
@@ -347,7 +345,7 @@ def _compute_calibrated_warp(
     h_unit = s_dst @ h_cont @ np.linalg.inv(s_src)
     cond = float(np.linalg.cond(h_unit))
     if not math.isfinite(cond) or cond > HOMOGRAPHY_MAX_NORM_COND:
-        raise InvalidCalibrationError("Perspective transform is ill-conditioned; widen board quad.")
+        raise InvalidCalibrationError("Perspective transform is ill-conditioned. Widen board quad.")
 
     try:
         h_cont_inv = cast(HomographyMatrix, np.linalg.inv(h_cont))
@@ -371,13 +369,13 @@ def _compute_calibrated_warp(
             borderMode=cv2.BORDER_REPLICATE,
         ),
     )
-    return warped, h_cont, h_cont_inv
+    return warped, h_cont_inv
 
 
 def _compute_uncalibrated_resize(
     bgr: BGRImage,
     max_long_edge: int,
-) -> tuple[BGRImage, HomographyMatrix, HomographyMatrix]:
+) -> tuple[BGRImage, HomographyMatrix]:
     src_height, src_width = bgr.shape[:2]
     long_edge = max(src_width, src_height)
     scale = min(1.0, max_long_edge / long_edge)
@@ -396,9 +394,8 @@ def _compute_uncalibrated_resize(
 
     sx = model_w / float(src_width)
     sy = model_h / float(src_height)
-    h_cont = np.diag([sx, sy, 1.0]).astype(np.float64)
     h_cont_inv = np.diag([1.0 / sx, 1.0 / sy, 1.0]).astype(np.float64)
-    return resized, h_cont, h_cont_inv
+    return resized, h_cont_inv
 
 
 def prepare_image(
@@ -413,9 +410,9 @@ def prepare_image(
     src_height, src_width = bgr.shape[:2]
 
     if corners is not None:
-        processed, h_cont, h_cont_inv = _compute_calibrated_warp(bgr, corners, max_long_edge)
+        processed, h_cont_inv = _compute_calibrated_warp(bgr, corners, max_long_edge)
     else:
-        processed, h_cont, h_cont_inv = _compute_uncalibrated_resize(bgr, max_long_edge)
+        processed, h_cont_inv = _compute_uncalibrated_resize(bgr, max_long_edge)
 
     processed = _auto_enhance(processed)
 
@@ -430,7 +427,6 @@ def prepare_image(
         source_height=src_height,
         model_width=model_width,
         model_height=model_height,
-        forward_homography=h_cont,
         inverse_homography=h_cont_inv,
     )
 

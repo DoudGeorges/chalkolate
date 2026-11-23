@@ -47,8 +47,8 @@ export function WelcomeGuide({
           <img
             src="/chalkolate-logo.png"
             alt="Chalkolate"
-            width={880}
-            height={428}
+            width={882}
+            height={430}
             className="h-auto w-64 max-w-full select-none sm:w-80"
           />
           <p className="mt-2.5 text-sm italic tracking-wide text-muted sm:text-[15px]">

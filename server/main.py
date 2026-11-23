@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -23,7 +22,6 @@ from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from admin_log import AdminLogMiddleware, build_admin_router, build_store
 from analyzer import (
     AnalysisTimeoutError,
     AnalyzerError,
@@ -37,7 +35,7 @@ from analyzer import (
     UpstreamUnavailableError,
     analyze_board_image,
 )
-from config import REPO_ROOT, Settings, load_settings
+from config import Settings, load_settings
 from notes import build_notes_update
 from schemas import (
     MAX_NOTES_METADATA_BYTES,
@@ -88,7 +86,7 @@ logger = logging.getLogger("chalkolate.api")
 MAX_SPEECH_BODY_BYTES = 4096
 PARTIAL_ANALYSIS_HEADER = "X-Chalkolate-Partial-Analysis"
 # Every API response is per-request user data (board findings, notes, audio). Forbid browsers,
-# Vercel's CDN, and any intermediary from storing or replaying one to another caller.
+# CDNs, and any intermediary from storing or replaying one to another caller.
 NO_STORE_CACHE_CONTROL = "no-store, private"
 
 
@@ -133,7 +131,7 @@ class PerClientGate:
 
 
 def _client_key(request: Request) -> str:
-    """Best-effort client identity; behind Vercel the first X-Forwarded-For hop is the caller."""
+    """Best-effort client identity; uses the first X-Forwarded-For hop when proxied."""
     forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
     if forwarded:
         return forwarded[:64]
@@ -510,21 +508,12 @@ def create_app(
         60.0,
     )
     voice_catalog = VoiceCatalog()
-    # Opt-in debug logging (docs/admin.md). With the flag off, no store, middleware or routes
-    # exist, so nothing is recorded and /api/admin/* is a plain 404.
-    admin_store = build_store(
-        resolved_settings,
-        on_vercel=bool(os.environ.get("VERCEL")),
-        root=REPO_ROOT / ".admin-logs",
-    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         async with AsyncExitStack() as stack:
             app.state.genai_client = None
             app.state.speech_client = None
-            if admin_store is not None:
-                stack.push_async_callback(admin_store.aclose)
             if resolved_settings.analysis_configured:
                 client = resolved_factory(resolved_settings)
                 stack.callback(client.close)
@@ -557,29 +546,11 @@ def create_app(
             CORSMiddleware,
             allow_origins=list(resolved_settings.cors_allowed_origins),
             allow_methods=["GET", "POST", "OPTIONS"],
-            allow_headers=["Content-Type", "X-Chalkolate-Session"],
+            allow_headers=["Content-Type"],
             expose_headers=["Retry-After", PARTIAL_ANALYSIS_HEADER],
         )
     # Added last so it is the outermost user middleware and also covers early 413/400 replies.
     app.add_middleware(NoStoreCacheMiddleware)
-
-    if resolved_settings.admin_enabled:
-        app.include_router(
-            build_admin_router(
-                resolved_settings,
-                admin_store,
-                rate_limiter=SlidingWindowRateLimiter(10, 60.0),
-                client_key=_client_key,
-            )
-        )
-        if admin_store is not None:
-            # Added last so it is the outermost middleware and also sees 4xx/413 rejections.
-            app.add_middleware(
-                AdminLogMiddleware,
-                store=admin_store,
-                settings=resolved_settings,
-                max_request_bytes=upload_limit + MAX_NOTES_METADATA_BYTES,
-            )
 
     @app.exception_handler(RequestValidationError)
     async def handle_request_validation(
@@ -639,7 +610,7 @@ def create_app(
             return _error_response(
                 status_code=503,
                 code="CAPACITY_EXCEEDED",
-                message="Board detection is busy; try again shortly.",
+                message="Board detection is busy. Try again shortly.",
                 headers={"Retry-After": "2"},
             )
         try:
@@ -713,7 +684,7 @@ def create_app(
             return _error_response(
                 status_code=429,
                 code="SPEECH_RATE_LIMITED",
-                message="Too many speech synthesis requests; slow down briefly.",
+                message="Too many speech synthesis requests. Slow down briefly.",
                 headers={"Retry-After": str(retry_after)},
             )
 
@@ -732,7 +703,7 @@ def create_app(
             return _error_response(
                 status_code=503,
                 code="CAPACITY_EXCEEDED",
-                message="Speech synthesis service is busy; try again shortly.",
+                message="Speech synthesis service is busy. Try again shortly.",
                 headers={"Retry-After": "2"},
             )
 
@@ -831,7 +802,7 @@ def create_app(
             return _error_response(
                 status_code=503,
                 code="CAPACITY_EXCEEDED",
-                message="Analysis server is busy; try again shortly.",
+                message="Analysis server is busy. Try again shortly.",
                 request_id=request_id_str,
                 headers={"Retry-After": "2"},
             )
@@ -842,8 +813,6 @@ def create_app(
             )
             if isinstance(prepared, JSONResponse):
                 return prepared
-            if resolved_settings.admin_enabled:
-                request.state.admin_model_image = prepared.jpeg_bytes
 
             try:
                 model_result = await analyze_board_image(
@@ -892,7 +861,7 @@ def create_app(
         image: Annotated[UploadFile, File(...)],
         metadata: Annotated[str, Form(...)],
     ) -> NotesResponse | JSONResponse:
-        """Incremental Permanotes update; fully independent of /api/analyze state and gate."""
+        """Incremental Permanotes update, fully independent of /api/analyze state and gate."""
         started_ns = time.perf_counter_ns()
         request_id_str: str | None = None
 
@@ -954,7 +923,7 @@ def create_app(
             return _error_response(
                 status_code=503,
                 code="CAPACITY_EXCEEDED",
-                message="Notes service is busy; try again shortly.",
+                message="Notes service is busy. Try again shortly.",
                 request_id=request_id_str,
                 headers={"Retry-After": "2"},
             )
@@ -965,8 +934,6 @@ def create_app(
             )
             if isinstance(prepared, JSONResponse):
                 return prepared
-            if resolved_settings.admin_enabled:
-                request.state.admin_model_image = prepared.jpeg_bytes
 
             try:
                 result = await build_notes_update(

@@ -250,7 +250,7 @@ async def _raise_upstream_error(response: httpx.Response, operation: str) -> Non
         )
     if status_code == 402 or "paid_plan_required" in (detail_code, detail_status):
         raise SpeechPlanError(
-            "Configured ElevenLabs voice requires a paid plan; choose another voice or upgrade."
+            "Configured ElevenLabs voice requires a paid plan. Choose another voice or upgrade."
         )
     if status_code == 429:
         raise SpeechRateLimitError(

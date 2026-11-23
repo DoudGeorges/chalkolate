@@ -191,7 +191,6 @@ export function Stage({
       tabIndex={mediaState.kind === 'video' ? 0 : undefined}
       onKeyDown={handleStageKeyDown}
       aria-label={calibrationEditing ? 'Board crop editor' : 'Board studio'}
-      data-testid="board-stage"
       className={`flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden focus-visible:outline-offset-[-3px] group-data-[panel-open=true]:min-h-56 lg:group-data-[panel-open=true]:min-h-0 ${
         mediaState.kind === 'none' ? 'bg-surface' : 'rounded-xl bg-stage ring-1 ring-line'
       }`}

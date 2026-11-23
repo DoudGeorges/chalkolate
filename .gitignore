@@ -23,8 +23,6 @@ dist/
 build/
 next-env.d.ts
 *.tsbuildinfo
-.vite/
-.vercel/
 coverage/
 
 # Local tooling
@@ -32,7 +30,3 @@ coverage/
 .DS_Store
 .idea/
 .vscode/
-.admin-logs/
-
-# Local Claude Code worktrees
-.claude/worktrees/

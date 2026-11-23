@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -10,8 +11,8 @@ from typing import Literal, cast
 
 from dotenv import load_dotenv
 
-BACKEND_DIR = Path(__file__).resolve().parent
-REPO_ROOT = BACKEND_DIR.parent
+SERVER_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SERVER_DIR.parent
 
 ThinkingLevelName = Literal["minimal", "low", "medium", "high"]
 VALID_THINKING_LEVELS = frozenset({"minimal", "low", "medium", "high"})
@@ -49,14 +50,6 @@ class Settings:
     max_model_long_edge: int = 1600
     cors_allowed_origins: tuple[str, ...] = ()
     log_level: str = "INFO"
-    # Opt-in owner-only debug logging; see docs/admin.md. Inert unless both flag and token are set.
-    admin_debug_logging: bool = False
-    admin_token: str = field(default="", repr=False)
-    admin_redis_url: str = ""
-    admin_redis_token: str = field(default="", repr=False)
-    admin_log_ttl_seconds: int = 3 * 24 * 3600
-    admin_log_max_entries: int = 200
-    admin_log_max_image_bytes: int = 512 * 1024
 
     def __post_init__(self) -> None:
         if self.gemini_thinking_level not in VALID_THINKING_LEVELS:
@@ -95,20 +88,10 @@ class Settings:
             raise ConfigurationError("MAX_MODEL_LONG_EDGE must be >= 64.")
         if any(origin == "*" for origin in self.cors_allowed_origins):
             raise ConfigurationError(
-                "CORS_ALLOWED_ORIGINS cannot contain '*'; list explicit development origins only."
+                "CORS_ALLOWED_ORIGINS cannot contain '*'. List explicit development origins only."
             )
-        if self.admin_log_ttl_seconds < 60 or self.admin_log_max_entries < 1:
-            raise ConfigurationError("ADMIN_LOG_TTL_SECONDS must be >= 60 and ENTRIES >= 1.")
-        if self.admin_log_max_image_bytes < 1024:
-            raise ConfigurationError("ADMIN_LOG_MAX_IMAGE_BYTES must be >= 1024.")
         if self.log_level not in VALID_LOG_LEVELS:
             raise ConfigurationError(f"LOG_LEVEL must be one of {sorted(VALID_LOG_LEVELS)}.")
-
-    @property
-    def admin_enabled(self) -> bool:
-        """Whether the admin debug logger and its API are active (both flag and token set)."""
-        # A missing/short token keeps everything inert rather than failing the whole app.
-        return self.admin_debug_logging and len(self.admin_token) >= 16
 
     @property
     def analysis_configured(self) -> bool:
@@ -148,7 +131,7 @@ def _get_float(env: Mapping[str, str], key: str, default: float) -> float:
         value = float(raw.strip())
     except ValueError as exc:
         raise ConfigurationError(f"{key} must be a number.") from exc
-    if value != value or value in (float("inf"), float("-inf")):
+    if not math.isfinite(value):
         raise ConfigurationError(f"{key} must be finite.")
     return value
 
@@ -169,7 +152,7 @@ def _parse_origins(raw: str) -> tuple[str, ...]:
     for origin in origins:
         if origin == "*":
             raise ConfigurationError(
-                "CORS_ALLOWED_ORIGINS cannot contain '*'; list explicit origins only."
+                "CORS_ALLOWED_ORIGINS cannot contain '*'. List explicit origins only."
             )
         if not (origin.startswith("http://") or origin.startswith("https://")):
             raise ConfigurationError(
@@ -187,11 +170,11 @@ def load_settings(
     """Load settings from process environment and deterministic .env paths.
 
     Process environment variables take precedence over .env files. When loading
-    files, repo-root .env is loaded before backend/.env with override=False.
+    files, repo-root .env is loaded before server/.env with override=False.
     """
     if load_env_files and environ is None:
         load_dotenv(REPO_ROOT / ".env", override=False)
-        load_dotenv(BACKEND_DIR / ".env", override=False)
+        load_dotenv(SERVER_DIR / ".env", override=False)
 
     env: Mapping[str, str] = os.environ if environ is None else environ
 
@@ -219,13 +202,4 @@ def load_settings(
         max_model_long_edge=_get_int(env, "MAX_MODEL_LONG_EDGE", 1600),
         cors_allowed_origins=_parse_origins(_get_str(env, "CORS_ALLOWED_ORIGINS", "")),
         log_level=_get_str(env, "LOG_LEVEL", "INFO").upper(),
-        admin_debug_logging=_get_str(env, "ADMIN_DEBUG_LOGGING", "") == "1",
-        admin_token=_get_str(env, "ADMIN_TOKEN", ""),
-        admin_redis_url=_get_str(env, "UPSTASH_REDIS_REST_URL", "")
-        or _get_str(env, "KV_REST_API_URL", ""),
-        admin_redis_token=_get_str(env, "UPSTASH_REDIS_REST_TOKEN", "")
-        or _get_str(env, "KV_REST_API_TOKEN", ""),
-        admin_log_ttl_seconds=_get_int(env, "ADMIN_LOG_TTL_SECONDS", 3 * 24 * 3600),
-        admin_log_max_entries=_get_int(env, "ADMIN_LOG_MAX_ENTRIES", 200),
-        admin_log_max_image_bytes=_get_int(env, "ADMIN_LOG_MAX_IMAGE_BYTES", 512 * 1024),
     )

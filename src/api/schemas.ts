@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { SpeechStyle } from '../lib/voicePreferences'
 
 /** Match Pydantic's character limits for strings containing supplementary Unicode characters. */
-export function textWithLimit(limit: number, nonEmpty = false) {
+function textWithLimit(limit: number, nonEmpty = false) {
   const schema = nonEmpty ? z.string().trim().min(1) : z.string()
   return schema.refine((value) => Array.from(value).length <= limit, {
     message: `Use at most ${limit} characters.`,

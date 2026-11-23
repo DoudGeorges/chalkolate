@@ -4,14 +4,12 @@ import { useEffect, useRef } from 'react'
 export function StudioPanel({
   id,
   open,
-  side,
   title,
   onClose,
   children,
 }: {
   id: string
   open: boolean
-  side: 'left' | 'right'
   title: string
   onClose: () => void
   children: React.ReactNode
@@ -33,7 +31,6 @@ export function StudioPanel({
     >
       <aside
         id={id}
-        data-side={side}
         aria-labelledby={id + '-heading'}
         className="studio-panel"
         onKeyDown={(event) => {

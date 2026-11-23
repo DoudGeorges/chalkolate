@@ -26,7 +26,6 @@
   --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
   --animate-fade-in: fade-in 180ms var(--ease-out-quint) both;
   --animate-rise-in: rise-in 240ms var(--ease-out-quint) both;
-  --animate-panel-in: panel-in 240ms var(--ease-out-quint) both;
   --animate-pill-in: rise-in 160ms var(--ease-out-quint) both;
   --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif;
 
@@ -48,28 +47,6 @@
       opacity: 1;
       transform: translateY(0);
     }
-  }
-
-  @keyframes panel-in {
-    from {
-      opacity: 0;
-      transform: translateX(-6px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
-  }
-}
-
-@keyframes panel-in-right {
-  from {
-    opacity: 0;
-    transform: translateX(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
   }
 }
 
@@ -216,10 +193,6 @@ body {
 
   .ui-label {
     @apply text-sm leading-5 font-semibold text-ink;
-  }
-
-  .ui-badge {
-    @apply inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-accent-light px-1.5 text-xs font-semibold tabular-nums text-ink;
   }
 
   .option-card {

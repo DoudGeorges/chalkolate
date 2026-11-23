@@ -91,17 +91,11 @@ export function VoiceSettings({
     <section className="space-y-2">
       <h3 className="ui-label">Voice</h3>
       {!elevenLabsConfigured ? (
-        <div className="flex flex-wrap items-center gap-2.5 rounded-lg border border-line bg-panel p-3">
-          <AudioLines className="size-4 shrink-0 text-accent" aria-hidden="true" />
-          <p className={onPreviewVoice ? 'min-w-0 flex-1 text-sm font-medium text-ink' : 'min-w-0 flex-1 text-sm text-muted'}>
-            {onPreviewVoice ? 'Browser voice' : 'This browser has no voice available.'}
+        <div className="flex items-start gap-2.5 rounded-lg border border-line bg-panel p-3">
+          <AudioLines className="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
+          <p className="min-w-0 flex-1 text-sm text-muted">
+            Voice alerts need an ElevenLabs connection. Corrections still appear on the board.
           </p>
-          {onPreviewVoice && (
-            <button type="button" onClick={() => togglePreview(selectedId)} className="ui-button ui-compact">
-              {previewingVoice ? <Square aria-hidden="true" /> : <Play aria-hidden="true" />}
-              {previewingVoice ? 'Stop sample' : 'Play sample'}
-            </button>
-          )}
         </div>
       ) : (
         <>

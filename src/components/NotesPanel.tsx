@@ -82,7 +82,7 @@ export function NotesPanel({
         <span className="lg:hidden">Notes</span>
       </button>
 
-      <StudioPanel id="lecture-notes-panel" side="right" title="Notes" open={open} onClose={close}>
+      <StudioPanel id="lecture-notes-panel" title="Notes" open={open} onClose={close}>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
           {hasNotes ? (
             <>

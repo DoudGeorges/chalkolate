@@ -396,7 +396,6 @@ export function projectBoxThroughRect(rect: ContainedImageRect): FindingBoxProje
 export interface PillPosition {
   left: number
   top: number
-  placement: 'above' | 'below'
 }
 
 /**
@@ -416,8 +415,8 @@ export function computeOverlayPillPosition(
   const minTop = clipRect.top + 4
   const maxTop = Math.max(minTop, clipRect.top + clipRect.height - estimatedPillHeight - 4)
   const above = boxPx.top - estimatedPillHeight - 6
-  const placement = above >= minTop ? 'above' : 'below'
-  const top = Math.max(minTop, Math.min(maxTop, placement === 'above' ? above : boxPx.bottom + 6))
+  const fitsAbove = above >= minTop
+  const top = Math.max(minTop, Math.min(maxTop, fitsAbove ? above : boxPx.bottom + 6))
 
-  return { left, top, placement }
+  return { left, top }
 }

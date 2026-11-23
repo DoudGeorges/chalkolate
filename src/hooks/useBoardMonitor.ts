@@ -21,21 +21,16 @@ import {
   sampleGrayscaleFrame,
 } from '../lib/frameCapture'
 import { buildNormalizedQuadMask } from '../lib/geometry'
-import { createRequestId } from '../lib/requestId'
-import type { SpeechStyle } from '../lib/voicePreferences'
 import {
   IssueTrackerState,
   TrackedIssue,
-  clearPendingVerification,
   createInitialTrackerState,
-  dismissIssue,
   getIssuesPendingRecheck,
   markIssueSpoken,
   reconcileAnalysis,
-  requestVerification,
-  resetDismissed,
-  undoLastDismissal,
 } from '../lib/issueTracker'
+import { createRequestId } from '../lib/requestId'
+import type { SpeechStyle } from '../lib/voicePreferences'
 
 export type MonitorPhase = 'STOPPED' | 'WATCHING' | 'WRITING' | 'ANALYZING'
 
@@ -67,10 +62,6 @@ type MonitorAction =
       fallbackPhase: MonitorPhase
     }
   | { type: 'CLEAR_API_ERROR' }
-  | { type: 'DISMISS_ISSUE'; issueId: string }
-  | { type: 'UNDO_DISMISSAL' }
-  | { type: 'RESET_DISMISSED' }
-  | { type: 'REQUEST_VERIFICATION'; issueId: string }
   | { type: 'MARK_SPOKEN'; issueId: string }
 
 function createInitialMonitorState(monitoring: boolean): MonitorState {
@@ -107,7 +98,6 @@ function monitorReducer(state: MonitorState, action: MonitorAction): MonitorStat
         ...state,
         phase: state.phase === 'STOPPED' ? 'STOPPED' : action.fallbackPhase,
         apiError: action.error,
-        tracker: clearPendingVerification(state.tracker),
         consecutiveFailures: state.consecutiveFailures + 1,
       }
 
@@ -115,30 +105,6 @@ function monitorReducer(state: MonitorState, action: MonitorAction): MonitorStat
       return {
         ...state,
         apiError: null,
-      }
-
-    case 'DISMISS_ISSUE':
-      return {
-        ...state,
-        tracker: dismissIssue(state.tracker, action.issueId),
-      }
-
-    case 'UNDO_DISMISSAL':
-      return {
-        ...state,
-        tracker: undoLastDismissal(state.tracker),
-      }
-
-    case 'RESET_DISMISSED':
-      return {
-        ...state,
-        tracker: resetDismissed(state.tracker),
-      }
-
-    case 'REQUEST_VERIFICATION':
-      return {
-        ...state,
-        tracker: requestVerification(state.tracker, action.issueId),
       }
 
     case 'MARK_SPOKEN':
@@ -179,11 +145,6 @@ const DEFAULT_DEPS: BoardMonitorDeps = {
   createUuid: createRequestId,
 }
 
-export interface VerificationResultSummary {
-  resolved: readonly TrackedIssue[]
-  stillPresent: readonly TrackedIssue[]
-}
-
 export interface UseBoardMonitorOptions {
   mediaSource: MediaFrameSource | null
   mediaReady: boolean
@@ -196,7 +157,6 @@ export interface UseBoardMonitorOptions {
   speechStyle?: SpeechStyle
   onNewFindings?: (newlyOpened: readonly TrackedIssue[]) => void
   onInvalidateSpeech?: () => void
-  onVerificationResult?: (result: VerificationResultSummary) => void
   deps?: Partial<BoardMonitorDeps>
 }
 
@@ -213,7 +173,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     speechStyle = 'student',
     onNewFindings,
     onInvalidateSpeech,
-    onVerificationResult,
     deps: partialDeps,
   } = options
 
@@ -248,7 +207,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     settingsSig,
     onNewFindings,
     onInvalidateSpeech,
-    onVerificationResult,
     deps,
   })
   runtimeRef.current = {
@@ -264,7 +222,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     settingsSig,
     onNewFindings,
     onInvalidateSpeech,
-    onVerificationResult,
     deps,
   }
 
@@ -518,7 +475,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
             commitSample ??
             ({ width: 1, height: 1, data: new Uint8Array(1) } as GrayscaleSample),
           classify: classifyIssueRegion,
-          relaxSpatial: false,
         })
 
         dispatch({
@@ -530,15 +486,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
 
         if (reconciled.newlyOpened.length > 0) {
           rt.onNewFindings?.(reconciled.newlyOpened)
-        }
-        if (
-          reconciled.verifiedResolved.length > 0 ||
-          reconciled.verifiedStillPresent.length > 0
-        ) {
-          rt.onVerificationResult?.({
-            resolved: reconciled.verifiedResolved,
-            stillPresent: reconciled.verifiedStillPresent,
-          })
         }
       } catch (err) {
         if (!isStillOwner() || (abortController.signal.aborted && !timedOut)) {
@@ -641,7 +588,7 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
       return
     }
 
-    // Manual Check Now bypasses backoff and quiet waits.
+    // Retry requests bypass backoff and quiet waits.
     if (manualCheckPendingRef.current) {
       manualCheckPendingRef.current = false
       void dispatchAnalysis()
@@ -751,30 +698,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     void dispatchAnalysis()
   }, [dispatchAnalysis])
 
-  const handleVideoSeek = useCallback(() => {
-    resetSession()
-  }, [resetSession])
-
-  const dismiss = useCallback((issueId: string) => {
-    dispatch({ type: 'DISMISS_ISSUE', issueId })
-  }, [])
-
-  const undoDismissal = useCallback(() => {
-    dispatch({ type: 'UNDO_DISMISSAL' })
-  }, [])
-
-  const restoreDismissed = useCallback(() => {
-    dispatch({ type: 'RESET_DISMISSED' })
-  }, [])
-
-  const markFixed = useCallback(
-    (issueId: string) => {
-      dispatch({ type: 'REQUEST_VERIFICATION', issueId })
-      requestCheckNow()
-    },
-    [requestCheckNow],
-  )
-
   const markSpoken = useCallback((issueId: string) => {
     dispatch({ type: 'MARK_SPOKEN', issueId })
   }, [])
@@ -783,11 +706,6 @@ export function useBoardMonitor(options: UseBoardMonitorOptions) {
     state,
     requestCheckNow,
     resetSession,
-    handleVideoSeek,
-    dismiss,
-    undoDismissal,
-    restoreDismissed,
-    markFixed,
     markSpoken,
   }
 }

@@ -12,6 +12,6 @@ The server applies a separate notes concurrency gate and Gemini deadline. Board 
 
 ## Storage and export
 
-Active-session notes are stored locally in `sessionStorage`, which belongs to one browser tab and user session. Notes reset automatically whenever the session restarts (on page reload, returning to setup, or switching sources), and other tabs or later visitors on the same browser profile never see them. If storage quota is exceeded, the browser tries again with text only. Builds before this change kept notes in shared `localStorage`; that key is deleted on load and never read. Use **Clear** to empty the document during a session, and **Download** to save the Markdown notes (`.md` with section text, source math, and JPEG thumbnails).
+Active-session notes are stored locally in `sessionStorage`, which belongs to one browser tab and user session. Notes reset automatically whenever the session restarts (on page reload, returning to setup, or switching sources), and other tabs or later visitors on the same browser profile never see them. If storage quota is exceeded, the browser tries again with text only. Builds before this change kept notes in shared `localStorage`. That key is deleted on load and never read. Use **Clear** to empty the document during a session, and **Download** to save the Markdown notes (`.md` with section text, source math, and JPEG thumbnails).
 
 The server keeps no notes. Each POST /api/notes is answered only from its own image and note context, and every API response is sent with `Cache-Control: no-store, private`.

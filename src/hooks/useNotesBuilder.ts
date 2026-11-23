@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiClientError, requestNotesUpdate } from '../api/client'
-import { isAbortError } from '../lib/abort'
-import { createRequestId } from '../lib/requestId'
 import { Box2D, CalibrationCorners, NotesMetadataPayload, NotesResponse } from '../api/schemas'
+import { isAbortError } from '../lib/abort'
 import { DetectorState, createDetectorState, updateDetector } from '../lib/changeDetector'
 import {
   GrayscaleSample,
@@ -27,8 +26,7 @@ import {
   changedTileFraction,
   decideNotesAction,
 } from '../lib/notesTrigger'
-
-export type NotesPhase = 'idle' | 'watching' | 'building'
+import { createRequestId } from '../lib/requestId'
 
 export interface NotesBuilderDeps {
   sampleFrame: (source: MediaFrameSource, canvas: HTMLCanvasElement) => GrayscaleSample | null
@@ -131,8 +129,6 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
   const [notes, setNotes] = useState<NotesDocument>(() => deps.loadInitial())
   const notesRef = useRef(notes)
   notesRef.current = notes
-  const [phase, setPhase] = useState<NotesPhase>('idle')
-  const [error, setError] = useState<string | null>(null)
   const runtime = { mediaSource, mediaReady, sourceGeneration, committedCorners, enabled, calibrationEditing }
   const runtimeRef = useRef(runtime)
   runtimeRef.current = runtime
@@ -176,7 +172,6 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
       const controller = new AbortController()
       const request = { controller, sample: item.sample, startedAt: d.now() }
       inFlightRef.current = request
-      setPhase('building')
       const { committedCorners, sourceGeneration } = runtimeRef.current
       const ownsRequest = () => {
         const current = runtimeRef.current
@@ -207,7 +202,6 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
           stableRef.current = null
         }
         backoffUntilRef.current = 0
-        setError(null)
       } catch (err) {
         if (!ownsRequest() || isAbortError(err)) return
         const retryMs =
@@ -216,7 +210,6 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
             : FAILURE_BACKOFF_MS
         backoffUntilRef.current = d.now() + retryMs
         pendingRef.current ??= item
-        setError(err instanceof Error && err.message ? err.message : 'The notes could not be updated.')
       } finally {
         if (inFlightRef.current === request) {
           inFlightRef.current = null
@@ -225,8 +218,6 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
           if (next && ownsRequest() && rt.mediaReady && d.now() >= backoffUntilRef.current) {
             pendingRef.current = null
             submitRef.current(next)
-          } else {
-            setPhase(rt.enabled && rt.mediaReady && !rt.calibrationEditing ? 'watching' : 'idle')
           }
         }
       }
@@ -278,9 +269,6 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
     backoffUntilRef.current = 0
     calmTicksRef.current = 0
     detectorRef.current = createDetectorState()
-    setError(null)
-    const rt = runtimeRef.current
-    setPhase(rt.enabled && rt.mediaReady && !rt.calibrationEditing ? 'watching' : 'idle')
   }, [cancelWork])
 
   const clear = useCallback(() => {
@@ -371,15 +359,12 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
       cancelWork()
       stableRef.current = null
       calmTicksRef.current = 0
-      setPhase('idle')
       return
     }
     if (!mediaReady) {
       calmTicksRef.current = 0
-      setPhase(inFlightRef.current ? 'building' : 'idle')
       return
     }
-    setPhase((prev) => (prev === 'building' ? prev : 'watching'))
     const timer = window.setInterval(tick, NOTES_SAMPLE_INTERVAL_MS)
     tick()
     return () => window.clearInterval(timer)
@@ -387,5 +372,5 @@ export function useNotesBuilder(options: UseNotesBuilderOptions) {
 
   useEffect(() => cancelWork, [cancelWork])
 
-  return { notes, phase, error, resetTracking, clear }
+  return { notes, resetTracking, clear }
 }

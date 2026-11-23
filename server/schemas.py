@@ -70,6 +70,21 @@ def _normalize_required_text(value: str, field_name: str, max_len: int) -> str:
     return cleaned
 
 
+def _validate_corners_list(
+    value: list[tuple[float, float]] | None,
+) -> list[tuple[float, float]] | None:
+    if value is None:
+        return None
+    if len(value) != 4:
+        raise ValueError("corners must contain exactly four [x, y] points.")
+    validated: list[tuple[float, float]] = []
+    for point in value:
+        if len(point) != 2:
+            raise ValueError("Each corner must contain exactly two coordinates [x, y].")
+        validated.append((_validate_finite_coord(point[0]), _validate_finite_coord(point[1])))
+    return validated
+
+
 class StrictModel(BaseModel):
     """Base model forbidding extra fields and nonfinite floats."""
 
@@ -137,18 +152,7 @@ class AnalysisMetadata(StrictModel):
     def _validate_corners(
         cls, value: list[tuple[float, float]] | None
     ) -> list[tuple[float, float]] | None:
-        if value is None:
-            return None
-        if len(value) != 4:
-            raise ValueError("corners must contain exactly four [x, y] points.")
-        validated: list[tuple[float, float]] = []
-        for point in value:
-            if len(point) != 2:
-                raise ValueError("Each corner must contain exactly two coordinates [x, y].")
-            x = _validate_finite_coord(point[0])
-            y = _validate_finite_coord(point[1])
-            validated.append((x, y))
-        return validated
+        return _validate_corners_list(value)
 
 
 # Using list[Annotated[int, ...]] ensures Gemini structured JSON Schema uses
@@ -171,9 +175,9 @@ class _FindingBase(StrictModel):
 
     category: ErrorCategory = Field(
         description=(
-            "Use math for mathematics (including false mathematical statements), logic or code; "
-            "physics for physical science or engineering; spelling for clear spelling or grammar "
-            "errors; factual for any other demonstrably false assertion."
+            "Use math for mathematics (including false mathematical statements), logic, or code. "
+            "Use physics for physical science or engineering, spelling for clear spelling or "
+            "grammar errors, and factual for any other demonstrably false assertion."
         ),
     )
     detected_text: str = Field(
@@ -258,10 +262,12 @@ class _FindingBase(StrictModel):
         return num
 
 
-def _validate_box_order(box_2d: list[int]) -> list[int]:
-    if len(box_2d) != 4:
+def _validate_box_order(value: object) -> list[int]:
+    if not isinstance(value, list):
+        raise ValueError("box_2d must be a list of four integers.")
+    if len(value) != 4:
         raise ValueError("box_2d must have exactly four integers [ymin, xmin, ymax, xmax].")
-    ymin, xmin, ymax, xmax = (_validate_box_int(coord) for coord in box_2d)
+    ymin, xmin, ymax, xmax = (_validate_box_int(coord) for coord in value)
     if not (ymin < ymax):
         raise ValueError("box_2d must satisfy ymin < ymax.")
     if not (xmin < xmax):
@@ -282,8 +288,6 @@ class DetectedError(_FindingBase):
     @field_validator("box_2d", mode="before")
     @classmethod
     def _check_box_order(cls, value: object) -> list[int]:
-        if not isinstance(value, list):
-            raise ValueError("box_2d must be a list of four integers.")
         return _validate_box_order(value)
 
 
@@ -300,8 +304,6 @@ class SourceSpaceDetectedError(_FindingBase):
     @field_validator("box_2d", mode="before")
     @classmethod
     def _check_box_order(cls, value: object) -> list[int]:
-        if not isinstance(value, list):
-            raise ValueError("box_2d must be a list of four integers.")
         return _validate_box_order(value)
 
 
@@ -311,15 +313,15 @@ class BoardAnalysisResult(StrictModel):
     board_summary: str = Field(
         max_length=MAX_BOARD_SUMMARY_LENGTH,
         description=(
-            "One short sentence describing currently visible work; "
-            "empty string if the board is blank or illegible."
+            "One short sentence describing currently visible work, "
+            "or an empty string if the board is blank or illegible."
         ),
     )
     errors: list[DetectedError] = Field(
         max_length=MAX_FINDINGS,
         description=(
             "Up to 20 distinct, demonstrable mistakes from the current image, including false "
-            "written assertions; empty when none are justified."
+            "written assertions, or empty when none are justified."
         ),
     )
 
@@ -403,7 +405,7 @@ class NotesMetadata(StrictModel):
     sections: list[NotesSectionContext] = Field(
         default_factory=list,
         max_length=MAX_NOTES_CONTEXT_SECTIONS,
-        description="Notes built so far, in order; older bodies may be empty to save space.",
+        description="Notes built so far, in order. Older bodies may be empty to save space.",
     )
     corners: list[tuple[float, float]] | None = Field(
         default=None,
@@ -417,9 +419,7 @@ class NotesMetadata(StrictModel):
     def _validate_corners(
         cls, value: list[tuple[float, float]] | None
     ) -> list[tuple[float, float]] | None:
-        if value is None:
-            return None
-        return [(_validate_finite_coord(x), _validate_finite_coord(y)) for x, y in value]
+        return _validate_corners_list(value)
 
 
 class NoteSectionUpdate(StrictModel):
@@ -447,7 +447,7 @@ class NoteSectionUpdate(StrictModel):
     has_figure: bool = Field(
         description=(
             "True only when this section depends on a diagram, graph, or drawing that the "
-            "text cannot convey; the client then attaches a snapshot."
+            "text cannot convey, in which case the client attaches a snapshot."
         ),
     )
     figure_box_2d: Box2D | None = Field(
@@ -471,8 +471,6 @@ class NoteSectionUpdate(StrictModel):
     def _check_figure_box(cls, value: object) -> list[int] | None:
         if value is None:
             return None
-        if not isinstance(value, list):
-            raise ValueError("figure_box_2d must be a list of four integers or null.")
         return _validate_box_order(value)
 
     @field_validator("heading", "body_markdown")
@@ -496,7 +494,7 @@ class BoardNotesResult(StrictModel):
         default_factory=list,
         max_length=MAX_NOTES_UPDATES,
         description=(
-            "At most 8 create-or-replace section updates; empty when the board adds nothing "
+            "At most 8 create-or-replace section updates, or empty when the board adds nothing "
             "new to the notes."
         ),
     )
@@ -524,7 +522,7 @@ class SpeechVoiceOption(StrictModel):
 
 
 class VoicesResponse(StrictModel):
-    """Voices available to the configured ElevenLabs account; 'default' is always first."""
+    """Voices available to the configured ElevenLabs account, with 'default' always first."""
 
     voices: list[SpeechVoiceOption]
 

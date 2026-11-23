@@ -10,25 +10,25 @@ import { CalibrationDetectStatus } from './components/CalibrationOverlay'
 import { NotesPanel } from './components/NotesPanel'
 import { SettingsPanel } from './components/SettingsPanel'
 import { Stage } from './components/Stage'
-import { LiveSource, WelcomeGuide, WelcomeSource } from './components/WelcomeGuide'
 import { ToastItem, Toasts } from './components/Toasts'
 import { TopBar } from './components/TopBar'
-import { VerificationResultSummary, useBoardMonitor } from './hooks/useBoardMonitor'
+import { LiveSource, WelcomeGuide, WelcomeSource } from './components/WelcomeGuide'
+import { useBoardMonitor } from './hooks/useBoardMonitor'
 import { useMediaSource } from './hooks/useMediaSource'
 import { useNotesBuilder } from './hooks/useNotesBuilder'
 import { useSpeechAlerts } from './hooks/useSpeechAlerts'
 import { isAbortError } from './lib/abort'
 import { AlertMode } from './lib/categoryColors'
+import { captureJpegBlob } from './lib/frameCapture'
+import { DEFAULT_CALIBRATION_CORNERS, validateCalibrationQuad } from './lib/geometry'
+import { TrackedIssue } from './lib/issueTracker'
+import { exportMarkdown } from './lib/notes'
 import {
   VoicePreferences,
   loadVoicePreferences,
   sanitizeVoicePreferences,
   saveVoicePreferences,
 } from './lib/voicePreferences'
-import { captureJpegBlob } from './lib/frameCapture'
-import { DEFAULT_CALIBRATION_CORNERS, validateCalibrationQuad } from './lib/geometry'
-import { TrackedIssue } from './lib/issueTracker'
-import { exportMarkdown } from './lib/notes'
 
 const LAUNCH_TIMEOUT_MS = 60_000
 const PREVIEW_TIMEOUT_MS = 15_000
@@ -188,11 +188,6 @@ export function App() {
     elevenLabsConfigured: speechConfigured,
     preferences: effectiveVoicePreferences,
     onUtteranceStarted: (id) => markSpokenRef.current(id),
-    // The hook already deduplicates: once per session for account-wide failures and
-    // once per voice for voices the account cannot use.
-    onProviderFallback: (reason) => {
-      pushToast({ message: reason, tone: 'info' }, 6000)
-    },
   })
   const { syncActiveIssueIds } = speech
 
@@ -204,6 +199,7 @@ export function App() {
   }, [alertMode, pushToast, speech.isSupported, speech.speechError])
   useEffect(() => {
     if (
+      health !== null &&
       monitoring &&
       alertMode !== 'visual_only' &&
       !speech.isSupported &&
@@ -215,7 +211,7 @@ export function App() {
         tone: 'info',
       })
     }
-  }, [alertMode, monitoring, pushToast, speech.isSupported])
+  }, [alertMode, health, monitoring, pushToast, speech.isSupported])
 
   const monitorCallbacksRef = useRef<{
     onGeometryChange: () => void
@@ -317,24 +313,6 @@ export function App() {
     [speech],
   )
 
-  const handleVerificationResult = useCallback(
-    (result: VerificationResultSummary) => {
-      for (const resolved of result.resolved) {
-        pushToast({
-          message: `Fixed: ${resolved.detected_text}`,
-          tone: 'success',
-        })
-      }
-      if (result.stillPresent.length > 0) {
-        pushToast({
-          message: `Still visible: ${result.stillPresent[0]!.detected_text}`,
-          tone: 'info',
-        })
-      }
-    },
-    [pushToast],
-  )
-
   const analysisConfigured = health?.analysis_configured ?? false
   const monitor = useBoardMonitor({
     mediaSource: activeMediaElement,
@@ -346,7 +324,6 @@ export function App() {
     speechStyle: voicePreferences.speechStyle,
     onNewFindings: handleNewFindings,
     onInvalidateSpeech: speech.cancelAll,
-    onVerificationResult: handleVerificationResult,
   })
 
   const notesBuilder = useNotesBuilder({
@@ -378,7 +355,7 @@ export function App() {
       notesBuilder.resetTracking()
     },
     onVideoSeek: () => {
-      monitor.handleVideoSeek()
+      monitor.resetSession()
       notesBuilder.resetTracking()
     },
   }
